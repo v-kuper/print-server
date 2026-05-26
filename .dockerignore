@@ -1,0 +1,15 @@
+.git
+.DS_Store
+.idea/
+.gocache/
+data/
+/atol-server
+*.test
+coverage.out
+tmp/
+
+.env
+.env.*
+!.env.example
+
+*.log
