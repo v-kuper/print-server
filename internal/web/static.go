@@ -27,3 +27,10 @@ func writeStaticClientFile(w http.ResponseWriter, contentType string, content []
 	w.Header().Set("Content-Type", contentType)
 	_, _ = w.Write(content)
 }
+
+func noStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}

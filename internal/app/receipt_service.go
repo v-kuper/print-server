@@ -583,17 +583,46 @@ func containsCyrillic(value string) bool {
 
 func weatherContextFromSnapshot(snapshot weather.Snapshot) motivation.WeatherContext {
 	return motivation.WeatherContext{
-		LocationName:         snapshot.LocationName,
-		ObservedAt:           snapshot.ObservedAt.In(snapshot.TimeLocation()),
-		Condition:            weather.ConditionLabel(snapshot),
-		TemperatureC:         snapshot.TemperatureC,
-		ApparentTemperatureC: snapshot.ApparentTemperatureC,
-		PrecipitationMm:      snapshot.PrecipitationMm,
-		WindSpeedMs:          snapshot.WindSpeedMs,
-		SurfacePressureHpa:   snapshot.SurfacePressureHpa,
-		DayTemperatureC:      snapshot.DayTemperatureC,
-		NightTemperatureC:    snapshot.NightTemperatureC,
+		LocationName:                   snapshot.LocationName,
+		ObservedAt:                     snapshot.ObservedAt.In(snapshot.TimeLocation()),
+		Condition:                      weather.ConditionLabel(snapshot),
+		TemperatureC:                   snapshot.TemperatureC,
+		ApparentTemperatureC:           snapshot.ApparentTemperatureC,
+		RelativeHumidityPct:            snapshot.RelativeHumidityPct,
+		PrecipitationMm:                snapshot.PrecipitationMm,
+		WindSpeedMs:                    snapshot.WindSpeedMs,
+		WindGustsMs:                    snapshot.WindGustsMs,
+		WindDirectionDeg:               snapshot.WindDirectionDeg,
+		UVIndex:                        snapshot.UVIndex,
+		UVIndexMax:                     snapshot.UVIndexMax,
+		PrecipitationProbabilityMaxPct: snapshot.PrecipitationProbabilityMaxPct,
+		VisibilityM:                    snapshot.VisibilityM,
+		DewPointC:                      snapshot.DewPointC,
+		SurfacePressureHpa:             snapshot.SurfacePressureHpa,
+		DayTemperatureC:                snapshot.DayTemperatureC,
+		NightTemperatureC:              snapshot.NightTemperatureC,
+		Forecast:                       weatherForecastContext(snapshot.Forecast),
 	}
+}
+
+func weatherForecastContext(points []weather.ForecastPoint) []motivation.WeatherForecastPoint {
+	if len(points) == 0 {
+		return nil
+	}
+	result := make([]motivation.WeatherForecastPoint, 0, len(points))
+	for _, point := range points {
+		result = append(result, motivation.WeatherForecastPoint{
+			ObservedAt:                  point.ObservedAt,
+			TemperatureC:                point.TemperatureC,
+			ApparentTemperatureC:        point.ApparentTemperatureC,
+			PrecipitationProbabilityPct: point.PrecipitationProbabilityPct,
+			PrecipitationMm:             point.PrecipitationMm,
+			WindSpeedMs:                 point.WindSpeedMs,
+			WindGustsMs:                 point.WindGustsMs,
+			WeatherCode:                 point.WeatherCode,
+		})
+	}
+	return result
 }
 
 func optionalWarnings(values ...string) []string {

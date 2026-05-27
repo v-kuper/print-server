@@ -78,7 +78,7 @@ func WeatherReceiptWithStyle(snapshot weather.Snapshot, styleSettings StyleSetti
 		result = append(result, weatherIcon(iconKey, normalStyle))
 	}
 	result = append(result, center(weather.ConditionLabel(snapshot), normalStyle))
-	result = append(result, center(formatTemperature(snapshot.TemperatureC), temperatureStyle))
+	result = append(result, center(formatTemperature(displayTemperature(snapshot)), temperatureStyle))
 	result = append(result, blankLine(normalStyle))
 
 	if snapshot.DayTemperatureC != nil {
@@ -88,7 +88,19 @@ func WeatherReceiptWithStyle(snapshot weather.Snapshot, styleSettings StyleSetti
 		result = append(result, wrappedCenter("Ночью "+formatTemperature(*snapshot.NightTemperatureC), normalStyle)...)
 	}
 	if snapshot.WindSpeedMs != nil {
-		result = append(result, wrappedCenter(fmt.Sprintf("Ветер %d м/с", round(*snapshot.WindSpeedMs)), normalStyle)...)
+		result = append(result, wrappedCenter(formatWindLine(snapshot.WindSpeedMs, snapshot.WindDirectionDeg), normalStyle)...)
+	}
+	if snapshot.WindGustsMs != nil {
+		result = append(result, wrappedCenter(fmt.Sprintf("Порывы до %d м/с", round(*snapshot.WindGustsMs)), normalStyle)...)
+	}
+	if snapshot.RelativeHumidityPct != nil {
+		result = append(result, wrappedCenter(fmt.Sprintf("Влажность %d%%", round(*snapshot.RelativeHumidityPct)), normalStyle)...)
+	}
+	if uvLine := formatUVLine(snapshot.UVIndexMax, snapshot.UVIndex); uvLine != "" {
+		result = append(result, wrappedCenter(uvLine, normalStyle)...)
+	}
+	if snapshot.PrecipitationProbabilityMaxPct != nil {
+		result = append(result, wrappedCenter(fmt.Sprintf("Вероятность осадков %d%%", round(*snapshot.PrecipitationProbabilityMaxPct)), normalStyle)...)
 	}
 	if snapshot.SurfacePressureHpa != nil {
 		result = append(result, wrappedCenter(fmt.Sprintf("Давление %d гПа", round(*snapshot.SurfacePressureHpa)), normalStyle)...)
@@ -330,11 +342,39 @@ func formatTemperature(value float64) string {
 	return fmt.Sprintf("%d C", rounded)
 }
 
+func displayTemperature(snapshot weather.Snapshot) float64 {
+	if snapshot.ApparentTemperatureC != nil {
+		return *snapshot.ApparentTemperatureC
+	}
+	return snapshot.TemperatureC
+}
+
 func formatDecimal(value float64) string {
 	if math.Abs(value-math.Round(value)) < 0.05 {
 		return fmt.Sprintf("%d", round(value))
 	}
 	return fmt.Sprintf("%.1f", value)
+}
+
+func formatWindLine(speedMs *float64, directionDeg *float64) string {
+	if speedMs == nil {
+		return ""
+	}
+	direction := weather.WindDirectionLabel(directionDeg)
+	if direction == "" {
+		return fmt.Sprintf("Ветер %d м/с", round(*speedMs))
+	}
+	return fmt.Sprintf("%s ветер %d м/с", direction, round(*speedMs))
+}
+
+func formatUVLine(maxUV *float64, currentUV *float64) string {
+	if maxUV != nil {
+		return fmt.Sprintf("UV сегодня %s %s", formatDecimal(*maxUV), weather.UVIndexLevel(*maxUV))
+	}
+	if currentUV != nil {
+		return fmt.Sprintf("UV сейчас %s %s", formatDecimal(*currentUV), weather.UVIndexLevel(*currentUV))
+	}
+	return ""
 }
 
 func round(value float64) int {

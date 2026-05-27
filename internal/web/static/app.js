@@ -31,6 +31,7 @@ let imageEditorPointerDown = false;
 let imageEditorShapeStart = null;
 let imageEditorShapeBasePixels = null;
 let imageEditorLastSavedState = null;
+const assetVersion = String(Date.now());
 const fallbackFontMetrics = [
   { font: 0, lineLength: 32, fontWidth: 12 },
   { font: 1, lineLength: 42, fontWidth: 9 },
@@ -1395,7 +1396,7 @@ function renderPreview(lines) {
   paper.style.setProperty("--paper-chars", normalMetric.lineLength || 32);
   for (const line of lines) {
     const node = document.createElement("div");
-    const imageURL = line.ImageURL || (line.ImageKey ? "/assets/weather-icons/print/" + encodeURIComponent(line.ImageKey) + ".png" : "");
+    const imageURL = line.ImageURL || (line.ImageKey ? withAssetVersion("/assets/weather-icons/print/" + encodeURIComponent(line.ImageKey) + ".png") : "");
     if (imageURL) {
       node.className = [
         "receipt-line",
@@ -1440,6 +1441,10 @@ function renderPreview(lines) {
     paper.appendChild(node);
   }
   previewEl.replaceChildren(paper);
+}
+
+function withAssetVersion(url) {
+  return url + (url.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(assetVersion);
 }
 
 function styledPreviewLines(lines) {

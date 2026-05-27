@@ -187,6 +187,7 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`function applyImageEditorProcessing`,
 				`function createBlankImageEditorCanvas`,
 				`function applyImageEditorShape`,
+				`assetVersion`,
 			},
 		},
 	} {
@@ -210,6 +211,30 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				t.Fatalf("expected %s to contain %q", asset.path, want)
 			}
 		}
+	}
+}
+
+func TestRuntimeAssetsServedWithoutCache(t *testing.T) {
+	assetsPath := t.TempDir()
+	iconDir := filepath.Join(assetsPath, "weather-icons", "print")
+	if err := os.MkdirAll(iconDir, 0o755); err != nil {
+		t.Fatalf("create icon dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(iconDir, "partly_cloudy.png"), []byte("png"), 0o644); err != nil {
+		t.Fatalf("write icon: %v", err)
+	}
+
+	server := NewServer(&fakeStore{config: printer.DefaultConfig()}, &fakePrinter{}, fixedClock, WithAssetsPath(assetsPath))
+	request := httptest.NewRequest(http.MethodGet, "/assets/weather-icons/print/partly_cloudy.png", nil)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected asset 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected runtime asset to disable browser cache, got %q", got)
 	}
 }
 

@@ -86,6 +86,28 @@ func TestConditionIconKeyFallsBackToWindAndPrecipitation(t *testing.T) {
 	}
 }
 
+func TestConditionDisplayTreatsDryHailCodeAsCloudCover(t *testing.T) {
+	code := 99
+	precipitation := 0.0
+	rain := 0.0
+	showers := 0.0
+	snowfall := 0.0
+	cloudCover := 94.0
+
+	got := ConditionDisplayForSnapshot(Snapshot{
+		WeatherCode:     &code,
+		PrecipitationMm: &precipitation,
+		RainMm:          &rain,
+		ShowersMm:       &showers,
+		SnowfallCm:      &snowfall,
+		CloudCoverPct:   &cloudCover,
+	})
+
+	if got.IconKey != "cloudy" || got.Label != "Пасмурно" {
+		t.Fatalf("expected dry hail code to fall back to overcast, got %#v", got)
+	}
+}
+
 func TestPrecipitationIconUsesWeatherCodeFamily(t *testing.T) {
 	tests := []struct {
 		name string
@@ -101,6 +123,26 @@ func TestPrecipitationIconUsesWeatherCodeFamily(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := PrecipitationIconForCode(&tt.code); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestWindDirectionLabelUsesRussianCompassPoints(t *testing.T) {
+	tests := []struct {
+		degrees float64
+		want    string
+	}{
+		{degrees: 0, want: "Северный"},
+		{degrees: 90, want: "Восточный"},
+		{degrees: 225, want: "Юго-западный"},
+		{degrees: 315, want: "Северо-западный"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := WindDirectionLabel(&tt.degrees); got != tt.want {
 				t.Fatalf("expected %q, got %q", tt.want, got)
 			}
 		})

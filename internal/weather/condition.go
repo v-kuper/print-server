@@ -1,5 +1,7 @@
 package weather
 
+import "math"
+
 const strongWindMs = 10.0
 
 type ConditionInfo struct {
@@ -8,8 +10,18 @@ type ConditionInfo struct {
 	Label   string
 }
 
+type conditionInput struct {
+	code            *int
+	precipitationMm *float64
+	rainMm          *float64
+	showersMm       *float64
+	snowfallCm      *float64
+	cloudCoverPct   *float64
+	windSpeedMs     *float64
+}
+
 func ConditionLabel(snapshot Snapshot) string {
-	return ConditionDisplayForCode(snapshot.WeatherCode, snapshot.PrecipitationMm, snapshot.WindSpeedMs).Label
+	return ConditionDisplayForSnapshot(snapshot).Label
 }
 
 func ConditionLabelForCode(code *int, precipitationMm *float64, windSpeedMs *float64) string {
@@ -25,13 +37,33 @@ func ConditionTextForCode(code *int, precipitationMm *float64, windSpeedMs *floa
 }
 
 func ConditionDisplay(snapshot Snapshot) ConditionInfo {
-	return ConditionDisplayForCode(snapshot.WeatherCode, snapshot.PrecipitationMm, snapshot.WindSpeedMs)
+	return ConditionDisplayForSnapshot(snapshot)
+}
+
+func ConditionDisplayForSnapshot(snapshot Snapshot) ConditionInfo {
+	return conditionDisplay(conditionInput{
+		code:            snapshot.WeatherCode,
+		precipitationMm: snapshot.PrecipitationMm,
+		rainMm:          snapshot.RainMm,
+		showersMm:       snapshot.ShowersMm,
+		snowfallCm:      snapshot.SnowfallCm,
+		cloudCoverPct:   snapshot.CloudCoverPct,
+		windSpeedMs:     snapshot.WindSpeedMs,
+	})
 }
 
 func ConditionDisplayForCode(code *int, precipitationMm *float64, windSpeedMs *float64) ConditionInfo {
+	return conditionDisplay(conditionInput{
+		code:            code,
+		precipitationMm: precipitationMm,
+		windSpeedMs:     windSpeedMs,
+	})
+}
+
+func conditionDisplay(input conditionInput) ConditionInfo {
 	display := ConditionInfo{Icon: "☁", IconKey: "cloudy", Label: "Облачно"}
-	if code != nil {
-		switch *code {
+	if input.code != nil {
+		switch *input.code {
 		case 0:
 			display = ConditionInfo{Icon: "☀", IconKey: "clear", Label: "Ясно"}
 		case 1:
@@ -83,21 +115,57 @@ func ConditionDisplayForCode(code *int, precipitationMm *float64, windSpeedMs *f
 		case 96, 99:
 			display = ConditionInfo{Icon: "⚡", IconKey: "thunderstorm", Label: "Гроза с градом"}
 		default:
-			if precipitationMm != nil && *precipitationMm > 0 {
+			if input.precipitationMm != nil && *input.precipitationMm > 0 {
 				display = ConditionInfo{Icon: "☔", IconKey: "rain", Label: "Дождь"}
 			}
 		}
-	} else if precipitationMm != nil && *precipitationMm > 0 {
+	} else if input.precipitationMm != nil && *input.precipitationMm > 0 {
 		display = ConditionInfo{Icon: "☔", IconKey: "rain", Label: "Дождь"}
 	}
 
-	if windSpeedMs != nil && *windSpeedMs >= strongWindMs {
+	if isDryHailCode(input) {
+		display = cloudCoverDisplay(input.cloudCoverPct)
+	}
+
+	if input.windSpeedMs != nil && *input.windSpeedMs >= strongWindMs {
 		switch display.Label {
 		case "Ясно", "Малооблачно", "Переменная облачность", "Пасмурно", "Облачно":
 			return ConditionInfo{Icon: "↗", IconKey: "wind", Label: "Ветрено"}
 		}
 	}
 	return display
+}
+
+func isDryHailCode(input conditionInput) bool {
+	if input.code == nil || (*input.code != 96 && *input.code != 99) || input.cloudCoverPct == nil {
+		return false
+	}
+	hasAmount := false
+	total := 0.0
+	for _, value := range []*float64{input.precipitationMm, input.rainMm, input.showersMm, input.snowfallCm} {
+		if value == nil {
+			continue
+		}
+		hasAmount = true
+		total += *value
+	}
+	return hasAmount && total <= 0
+}
+
+func cloudCoverDisplay(cloudCoverPct *float64) ConditionInfo {
+	if cloudCoverPct == nil {
+		return ConditionInfo{Icon: "☁", IconKey: "cloudy", Label: "Облачно"}
+	}
+	switch {
+	case *cloudCoverPct >= 85:
+		return ConditionInfo{Icon: "☁", IconKey: "cloudy", Label: "Пасмурно"}
+	case *cloudCoverPct >= 50:
+		return ConditionInfo{Icon: "⛅", IconKey: "partly_cloudy", Label: "Переменная облачность"}
+	case *cloudCoverPct >= 15:
+		return ConditionInfo{Icon: "☀", IconKey: "partly_cloudy", Label: "Малооблачно"}
+	default:
+		return ConditionInfo{Icon: "☀", IconKey: "clear", Label: "Ясно"}
+	}
 }
 
 func ConditionIconKey(snapshot Snapshot) string {
@@ -133,5 +201,42 @@ func PrecipitationIconForCode(code *int) string {
 		return "⚡"
 	default:
 		return "☔"
+	}
+}
+
+func WindDirectionLabel(degrees *float64) string {
+	if degrees == nil || math.IsNaN(*degrees) || math.IsInf(*degrees, 0) {
+		return ""
+	}
+	normalized := math.Mod(*degrees, 360)
+	if normalized < 0 {
+		normalized += 360
+	}
+	labels := []string{
+		"Северный",
+		"Северо-восточный",
+		"Восточный",
+		"Юго-восточный",
+		"Южный",
+		"Юго-западный",
+		"Западный",
+		"Северо-западный",
+	}
+	index := int(math.Floor((normalized+22.5)/45.0)) % len(labels)
+	return labels[index]
+}
+
+func UVIndexLevel(value float64) string {
+	switch {
+	case value < 3:
+		return "низкий"
+	case value < 6:
+		return "умеренный"
+	case value < 8:
+		return "высокий"
+	case value < 11:
+		return "очень высокий"
+	default:
+		return "экстремальный"
 	}
 }

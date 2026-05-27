@@ -301,7 +301,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /static/app.css", handleAppCSS)
 	mux.HandleFunc("GET /static/app.js", handleAppJS)
-	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(s.assetsPathOrDefault()))))
+	mux.Handle("GET /assets/", noStore(http.StripPrefix("/assets/", http.FileServer(http.Dir(s.assetsPathOrDefault())))))
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /api/bootstrap", s.handleBootstrap)
 	mux.HandleFunc("POST /api/settings/printer", s.handleSavePrinter)

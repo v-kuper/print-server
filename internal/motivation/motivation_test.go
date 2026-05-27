@@ -83,15 +83,35 @@ func TestOllamaProviderBuildsWeatherAdvicePrompt(t *testing.T) {
 		BaseURL: server.URL,
 		Model:   "gemma4:31b-cloud",
 	}, WeatherContext{
-		LocationName:       "Гомель",
-		ObservedAt:         time.Date(2026, 5, 25, 19, 20, 0, 0, time.FixedZone("MSK", 3*60*60)),
-		Condition:          "Небольшой дождь",
-		TemperatureC:       12.4,
-		DayTemperatureC:    ptrFloat(14.2),
-		NightTemperatureC:  ptrFloat(6.1),
-		WindSpeedMs:        ptrFloat(8.8),
-		PrecipitationMm:    ptrFloat(1.8),
-		SurfacePressureHpa: ptrFloat(1011.4),
+		LocationName:                   "Гомель",
+		ObservedAt:                     time.Date(2026, 5, 25, 19, 20, 0, 0, time.FixedZone("MSK", 3*60*60)),
+		Condition:                      "Небольшой дождь",
+		TemperatureC:                   12.4,
+		ApparentTemperatureC:           ptrFloat(11.7),
+		DayTemperatureC:                ptrFloat(14.2),
+		NightTemperatureC:              ptrFloat(6.1),
+		WindSpeedMs:                    ptrFloat(8.8),
+		WindGustsMs:                    ptrFloat(14.2),
+		WindDirectionDeg:               ptrFloat(315),
+		RelativeHumidityPct:            ptrFloat(64),
+		UVIndexMax:                     ptrFloat(6.2),
+		PrecipitationProbabilityMaxPct: ptrFloat(83),
+		VisibilityM:                    ptrFloat(12000),
+		DewPointC:                      ptrFloat(6.2),
+		PrecipitationMm:                ptrFloat(1.8),
+		SurfacePressureHpa:             ptrFloat(1011.4),
+		Forecast: []WeatherForecastPoint{
+			{
+				ObservedAt:                  time.Date(2026, 5, 25, 20, 0, 0, 0, time.FixedZone("MSK", 3*60*60)),
+				TemperatureC:                ptrFloat(11.8),
+				ApparentTemperatureC:        ptrFloat(9.9),
+				PrecipitationProbabilityPct: ptrFloat(60),
+				PrecipitationMm:             ptrFloat(0.3),
+				WindSpeedMs:                 ptrFloat(8.9),
+				WindGustsMs:                 ptrFloat(14.0),
+				WeatherCode:                 ptrInt(61),
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("generate weather advice: %v", err)
@@ -109,8 +129,18 @@ func TestOllamaProviderBuildsWeatherAdvicePrompt(t *testing.T) {
 		"25.05.2026 19:20",
 		"Небольшой дождь",
 		"12 C",
-		"Ветер 9 м/с",
+		"Ощущается как: 12 C",
+		"Северо-западный ветер 9 м/с",
+		"Порывы до 14 м/с",
+		"Влажность 64%",
+		"UV сегодня 6.2 высокий",
+		"Вероятность осадков 83%",
 		"Осадки 1.8 мм",
+		"Видимость 12 км",
+		"Точка росы 6 C",
+		"Ближайшие часы",
+		"20:00",
+		"осадки 60%",
 		"практичный совет",
 		"Опирайся только на эти данные",
 		"Не выдумывай",
@@ -272,6 +302,10 @@ func (p *fakeProvider) TranslateNewsTitles(context.Context, Settings, []NewsTitl
 }
 
 func ptrFloat(value float64) *float64 {
+	return &value
+}
+
+func ptrInt(value int) *int {
 	return &value
 }
 

@@ -17,7 +17,13 @@ func TestWeatherReceiptFormatsCalendarAndWeatherDetails(t *testing.T) {
 	weatherCode := 61
 	precipitation := 0.2
 	wind := 11.3
+	gusts := 15.2
+	windDirection := 315.0
 	pressure := 1012.4
+	humidity := 64.0
+	uvMax := 6.2
+	precipitationProbability := 83.0
+	apparentTemperature := 18.8
 	day := 24.1
 	night := 12.6
 	minsk, err := time.LoadLocation("Europe/Minsk")
@@ -26,15 +32,21 @@ func TestWeatherReceiptFormatsCalendarAndWeatherDetails(t *testing.T) {
 	}
 
 	lines := WeatherReceipt(weather.Snapshot{
-		Timezone:           "Europe/Minsk",
-		ObservedAt:         time.Date(2026, 5, 24, 9, 15, 0, 0, minsk),
-		TemperatureC:       21.4,
-		WeatherCode:        &weatherCode,
-		PrecipitationMm:    &precipitation,
-		WindSpeedMs:        &wind,
-		SurfacePressureHpa: &pressure,
-		DayTemperatureC:    &day,
-		NightTemperatureC:  &night,
+		Timezone:                       "Europe/Minsk",
+		ObservedAt:                     time.Date(2026, 5, 24, 9, 15, 0, 0, minsk),
+		TemperatureC:                   23.4,
+		ApparentTemperatureC:           &apparentTemperature,
+		WeatherCode:                    &weatherCode,
+		PrecipitationMm:                &precipitation,
+		WindSpeedMs:                    &wind,
+		WindGustsMs:                    &gusts,
+		WindDirectionDeg:               &windDirection,
+		SurfacePressureHpa:             &pressure,
+		RelativeHumidityPct:            &humidity,
+		UVIndexMax:                     &uvMax,
+		PrecipitationProbabilityMaxPct: &precipitationProbability,
+		DayTemperatureC:                &day,
+		NightTemperatureC:              &night,
 	})
 
 	got := texts(lines)
@@ -45,11 +57,15 @@ func TestWeatherReceiptFormatsCalendarAndWeatherDetails(t *testing.T) {
 		" ",
 		"",
 		"Небольшой дождь",
-		"+21 C",
+		"+19 C",
 		" ",
 		"Днем +24 C",
 		"Ночью +13 C",
-		"Ветер 11 м/с",
+		"Северо-западный ветер 11 м/с",
+		"Порывы до 15 м/с",
+		"Влажность 64%",
+		"UV сегодня 6.2 высокий",
+		"Вероятность осадков 83%",
 		"Давление 1012 гПа",
 		"Осадки 0.2 мм",
 	}
