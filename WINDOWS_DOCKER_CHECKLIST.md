@@ -128,6 +128,9 @@ Start-Process http://localhost:8080/
 http://<IP Windows-машины>:8080/
 ```
 
+Команды изменения сетевого профиля и firewall-правил выполняй в PowerShell от
+имени администратора.
+
 Сначала проверь, что Windows считает текущую сеть доверенной:
 
 ```powershell
@@ -135,14 +138,32 @@ Get-NetConnectionProfile
 ```
 
 В колонке `NetworkCategory` должно быть `Private`. Если там `Public`, поменяй
-категорию для нужного интерфейса, например для Wi-Fi:
+категорию для нужного интерфейса. Надежнее использовать `InterfaceIndex` из
+вывода команды:
+
+```powershell
+Set-NetConnectionProfile -InterfaceIndex 17 -NetworkCategory Private
+Get-NetConnectionProfile -InterfaceIndex 17
+```
+
+Если у твоего интерфейса другой `InterfaceIndex`, подставь его вместо `17`.
+Например, для вывода:
+
+```text
+InterfaceAlias  : Беспроводная сеть
+InterfaceIndex  : 17
+NetworkCategory : Public
+```
+
+нужно выполнить именно команду с `-InterfaceIndex 17`.
+
+Можно использовать и имя интерфейса:
 
 ```powershell
 Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
 ```
 
-Если интерфейс называется иначе, возьми имя из колонки `InterfaceAlias` в
-выводе `Get-NetConnectionProfile`.
+Если интерфейс называется иначе, возьми имя из колонки `InterfaceAlias`.
 
 Открой входящий TCP-порт `8080` в Windows Firewall только для приватной сети:
 

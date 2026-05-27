@@ -14,6 +14,7 @@ Use the Windows machine as the LAN host:
 
 - Run `atol-server` through Docker Compose on Windows.
 - Keep the container published on TCP port `8080`.
+- Switch the active Windows network profile from `Public` to `Private` before opening the LAN firewall rule.
 - Open inbound TCP `8080` in Windows Firewall for the `Private` network profile only.
 - Use the Windows machine's LAN IPv4 address from Mac and phone browsers: `http://<windows-lan-ip>:8080/`.
 - Prefer a DHCP reservation in the router so the Windows LAN IP stays stable.
