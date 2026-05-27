@@ -3,6 +3,9 @@
 Этот файл лежит внутри папки `server`. На Windows открой PowerShell прямо в
 папке `server` и выполняй команды сверху вниз.
 
+Если это не первый запуск, а обновление после `git pull`, переходи сразу к
+разделу `11. Обновить релиз после git pull`.
+
 ## 1. Проверить, что ты внутри server
 
 ```powershell
@@ -222,7 +225,7 @@ http://<IP Windows-машины>:8080/oauth/google/callback
 `http://localhost:8080/oauth/google/callback` продолжает работать только при
 авторизации прямо на Windows-машине.
 
-## 10. Настроить в UI
+## 10. Настроить и проверить в UI
 
 В браузере:
 
@@ -233,8 +236,91 @@ http://<IP Windows-машины>:8080/oauth/google/callback
 5. В блоке `Состав чека` включи нужные секции.
 6. Нажми `Показать превью`.
 7. Нажми большую кнопку `Напечатать чек`.
+8. При необходимости проверь разовую печать:
+   - `Изображение на чек` печатает сохраненный pixel buffer 384 px;
+   - `Текст на чек` печатает заметку с выбранными шрифтами и выравниванием.
 
-## 11. Команды на каждый день
+## 11. Обновить релиз после git pull
+
+Этот сценарий используй на Windows-машине после того, как изменения уже
+запушены и ты хочешь подтянуть их, пересобрать Docker image и запустить новую
+версию на том же порту `8080`.
+
+Открой PowerShell в папке `server` и проверь, что ты в правильном месте:
+
+```powershell
+Test-Path .\docker-compose.yml
+```
+
+Должно вывести `True`.
+
+Подтяни свежий код:
+
+```powershell
+git pull --ff-only
+```
+
+Если Git пишет про локальные изменения, сначала посмотри их:
+
+```powershell
+git status --short
+```
+
+Не удаляй папку `data\`: там лежат настройки, Google token и сохраненное
+изображение редактора.
+
+Собери image без cache. Это важно после изменений в Go-коде, HTML/CSS/JS,
+иконках или Dockerfile:
+
+```powershell
+docker compose build --no-cache atol-server
+```
+
+Пересоздай контейнер:
+
+```powershell
+docker compose up -d --force-recreate atol-server
+```
+
+Проверь статус:
+
+```powershell
+docker compose ps atol-server
+```
+
+В колонке `STATUS` должно быть `Up`.
+
+Проверь API bootstrap:
+
+```powershell
+Invoke-WebRequest http://localhost:8080/api/bootstrap -UseBasicParsing
+```
+
+Проверь UI:
+
+```powershell
+Start-Process http://localhost:8080/
+```
+
+Если открываешь с Mac или телефона, используй LAN-адрес Windows-машины:
+
+```text
+http://<IP Windows-машины>:8080/
+```
+
+После релиза быстро проверь:
+
+1. `Проверить связь`.
+2. `Показать превью`.
+3. `Тестовый чек`.
+4. Если менялись новые фичи: `Текст на чек` и `Изображение на чек`.
+5. Если менялся дневной чек: `Напечатать чек`.
+
+Если UI выглядит старым, открой страницу заново или сделай hard refresh.
+Сервер отдает HTML/CSS/JS с `Cache-Control: no-store`, поэтому обычно
+достаточно перезагрузки вкладки.
+
+## 12. Команды на каждый день
 
 Запустить:
 
@@ -268,7 +354,7 @@ docker compose logs -f --tail=80 atol-server
 
 Остановить просмотр логов: `Ctrl+C`.
 
-## 12. Если меняешь weather icons
+## 13. Если меняешь weather icons
 
 Готовые для кассы иконки лежат здесь:
 
@@ -292,7 +378,7 @@ docker compose build --no-cache atol-server
 docker compose up -d --force-recreate atol-server
 ```
 
-## 13. Частые проблемы
+## 14. Частые проблемы
 
 ### Порт 8080 занят
 
@@ -314,7 +400,25 @@ docker compose down
 http://localhost:8080/oauth/google/callback
 ```
 
+Если авторизуешься с Mac или телефона по LAN-адресу, добавь также:
+
+```text
+http://<IP Windows-машины>:8080/oauth/google/callback
+```
+
 После изменения в Google Cloud заново нажми `Авторизовать` в UI.
+
+### docker compose пишет `no configuration file provided`
+
+Ты запускаешь команду не из папки `server`. Перейди туда, где лежит
+`docker-compose.yml`:
+
+```powershell
+cd D:\server
+Test-Path .\docker-compose.yml
+```
+
+Если путь другой, подставь свой путь до папки `server`.
 
 ### print picture failed: Размер картинки слишком большой (156)
 

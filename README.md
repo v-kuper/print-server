@@ -1,7 +1,8 @@
 # ATOL Go Server
 
-Первый серверный MVP печатает нефискальные чеки на ATOL по TCP/IP:
-тестовый чек и дневной чек с погодой, курсами валют и RSS-новостями.
+Локальный сервер печатает нефискальные чеки на ATOL по TCP/IP:
+тестовый чек, дневной чек с погодой/курсами/новостями/Google Calendar,
+изображение из pixel buffer и разовый форматированный текст.
 
 По умолчанию Docker-образ использует plain-драйвер из
 `driver/linux-amd64`. Сейчас туда положен ATOL Driver 10.10.7.0,
@@ -26,8 +27,8 @@ UEMA target для 10.10.8.0 оставлен в Dockerfile как `runtime-uem`
 Из корня этого репозитория:
 
 ```bash
-docker compose build --no-cache
-docker compose up -d
+docker compose build --no-cache atol-server
+docker compose up -d --force-recreate atol-server
 ```
 
 После запуска открой:
@@ -38,13 +39,18 @@ http://localhost:8080
 
 Настройки сохраняются в `data/settings.json`.
 
+Для Windows-машины с кассой используй подробный чеклист:
+`WINDOWS_DOCKER_CHECKLIST.md`.
+
 ## Проверка
 
 1. Введи IP кассы, например `192.168.0.118`.
 2. Введи порт, например `5555`.
 3. Нажми `Проверить связь`.
 4. Нажми `Напечатать тестовый чек`.
-5. Для дневного чека проверь город/координаты, TON-настройки, RSS-ленты и нажми `Напечатать чек`.
+5. Для дневного чека проверь город/координаты, TON-настройки, RSS-ленты,
+   Google Calendar и нажми `Напечатать чек`.
+6. Для разовой печати используй блоки `Изображение на чек` и `Текст на чек`.
 
 Погода берется из Open-Meteo без API key. По умолчанию выставлен Гомель:
 `52.4345, 30.9754`.
@@ -68,8 +74,16 @@ POST /api/settings/weather
 POST /api/settings/finance
 POST /api/settings/news
 POST /api/printer/check
+POST /api/printer/fonts
+POST /api/receipt/preview
 POST /api/print/test
+POST /api/print/text
 POST /api/print/weather
+GET  /api/image-editor/state
+POST /api/image-editor/save
+GET  /api/image-editor/preview
+POST /api/image-editor/print
+DELETE /api/image-editor/image
 ```
 
 ## Локальные тесты
