@@ -119,7 +119,89 @@ Invoke-WebRequest http://localhost:8080/ -UseBasicParsing
 Start-Process http://localhost:8080/
 ```
 
-## 9. Настроить в UI
+## 9. Открыть доступ из локальной сети
+
+Этот шаг нужен, чтобы открыть интерфейс с Mac, телефона или другого устройства
+в той же локальной сети:
+
+```text
+http://<IP Windows-машины>:8080/
+```
+
+Сначала проверь, что Windows считает текущую сеть доверенной:
+
+```powershell
+Get-NetConnectionProfile
+```
+
+В колонке `NetworkCategory` должно быть `Private`. Если там `Public`, поменяй
+категорию для нужного интерфейса, например для Wi-Fi:
+
+```powershell
+Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
+```
+
+Если интерфейс называется иначе, возьми имя из колонки `InterfaceAlias` в
+выводе `Get-NetConnectionProfile`.
+
+Открой входящий TCP-порт `8080` в Windows Firewall только для приватной сети:
+
+```powershell
+if (-not (Get-NetFirewallRule -DisplayName "ATOL Go Server 8080 LAN" -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule `
+        -DisplayName "ATOL Go Server 8080 LAN" `
+        -Direction Inbound `
+        -Action Allow `
+        -Protocol TCP `
+        -LocalPort 8080 `
+        -Profile Private
+}
+```
+
+Узнай IPv4-адрес Windows-машины в локальной сети:
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+    $_.IPAddress -notlike "169.254.*" -and
+    $_.IPAddress -ne "127.0.0.1"
+} | Select-Object InterfaceAlias,IPAddress
+```
+
+С Mac или телефона, подключенного к той же Wi-Fi/LAN сети, открой:
+
+```text
+http://<IP Windows-машины>:8080/
+```
+
+Например:
+
+```text
+http://192.168.0.25:8080/
+```
+
+Чтобы адрес не менялся после перезагрузки, закрепи этот IP за Windows-машиной
+в настройках DHCP/роутера.
+
+Если `http://localhost:8080/` работает на Windows, но с Mac/телефона страница
+не открывается, проверь:
+
+- Windows и второе устройство подключены к одной сети;
+- `NetworkCategory` на Windows равен `Private`;
+- firewall-правило `ATOL Go Server 8080 LAN` создано;
+- в адресе указан IPv4 Windows-машины, а не IP кассы;
+- на роутере не включена изоляция Wi-Fi клиентов.
+
+Если проходишь Google-авторизацию не на Windows-машине, а с Mac или телефона,
+добавь в Google Cloud OAuth client redirect URI с LAN-адресом:
+
+```text
+http://<IP Windows-машины>:8080/oauth/google/callback
+```
+
+`http://localhost:8080/oauth/google/callback` продолжает работать только при
+авторизации прямо на Windows-машине.
+
+## 10. Настроить в UI
 
 В браузере:
 
@@ -131,7 +213,7 @@ Start-Process http://localhost:8080/
 6. Нажми `Показать превью`.
 7. Нажми большую кнопку `Напечатать чек`.
 
-## 10. Команды на каждый день
+## 11. Команды на каждый день
 
 Запустить:
 
@@ -165,7 +247,7 @@ docker compose logs -f --tail=80 atol-server
 
 Остановить просмотр логов: `Ctrl+C`.
 
-## 11. Если меняешь weather icons
+## 12. Если меняешь weather icons
 
 Готовые для кассы иконки лежат здесь:
 
@@ -189,7 +271,7 @@ docker compose build --no-cache atol-server
 docker compose up -d --force-recreate atol-server
 ```
 
-## 12. Частые проблемы
+## 13. Частые проблемы
 
 ### Порт 8080 занят
 
