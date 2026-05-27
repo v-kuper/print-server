@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,7 @@ type SelectiveGoogleProvider interface {
 type MotivationProvider interface {
 	Generate(context.Context, motivation.Settings) (motivation.Quote, error)
 	GenerateWeatherAdvice(context.Context, motivation.Settings, motivation.WeatherContext) (motivation.WeatherAdvice, error)
+	GenerateCalendarAdvice(context.Context, motivation.Settings, motivation.CalendarContext) (motivation.CalendarAdvice, error)
 	TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error)
 }
 
@@ -292,6 +294,11 @@ func (s *ReceiptService) BuildDailyReceiptWithWarnings(ctx context.Context) ([]r
 	if !content.ShowCalendar {
 		googleSummary.Events = nil
 	}
+	calendarSections := buildCalendarSections(googleSummary.Events, s.clock())
+	calendarAdvice, calendarAdviceWarning, err := s.resolveCalendarAdvice(ctx, content.ShowCalendar, calendarSections)
+	if err != nil {
+		return nil, nil, buildError(http.StatusInternalServerError, err)
+	}
 
 	var newsItems []news.Item
 	var newsTranslationWarning string
@@ -326,10 +333,11 @@ func (s *ReceiptService) BuildDailyReceiptWithWarnings(ctx context.Context) ([]r
 		USDBYNChartImage: usdBynChartImage,
 		BankRates:        bankRatesSummary,
 		MailMessages:     googleSummary.Mail,
-		CalendarEvents:   googleSummary.Events,
+		CalendarSections: calendarSections,
+		CalendarAdvice:   calendarAdvice,
 		NewsItems:        newsItems,
 	}, receiptStyle)
-	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, newsTranslationWarning)
+	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, newsTranslationWarning)
 	return lines, warnings, nil
 }
 
@@ -411,6 +419,184 @@ func (s *ReceiptService) resolveGoogleSummary(ctx context.Context, includeMail b
 		return googleintegration.Summary{}, "Google недоступен: " + err.Error()
 	}
 	return summary, ""
+}
+
+func (s *ReceiptService) resolveCalendarAdvice(ctx context.Context, includeCalendar bool, sections []receipt.CalendarSection) (*motivation.CalendarAdvice, string, error) {
+	if !includeCalendar || len(sections) == 0 || s.motivationProvider == nil {
+		return nil, "", nil
+	}
+	settings, err := s.store.LoadMotivation()
+	if err != nil {
+		return nil, "", err
+	}
+	advice, err := s.motivationProvider.GenerateCalendarAdvice(ctx, settings.Normalized(), calendarContextFromSections(s.clock(), sections))
+	if err != nil {
+		return nil, "AI-совет по календарю недоступен: " + err.Error(), nil
+	}
+	if strings.TrimSpace(advice.Text) == "" {
+		return nil, "", nil
+	}
+	return &advice, "", nil
+}
+
+func buildCalendarSections(events []googleintegration.CalendarEvent, now time.Time) []receipt.CalendarSection {
+	if len(events) == 0 {
+		return nil
+	}
+	location := minskLocation()
+	now = now.In(location)
+	today := dayStart(now, location)
+	tomorrow := today.AddDate(0, 0, 1)
+
+	if calendarTomorrowMode(now, today) {
+		return nonEmptyCalendarSections([]receipt.CalendarSection{
+			{
+				Title:  "Остаток сегодня",
+				Date:   today,
+				Events: calendarEventsForDay(events, today, now, true, true),
+			},
+			{
+				Title:  "Завтра",
+				Date:   tomorrow,
+				Events: calendarEventsForDay(events, tomorrow, now, false, false),
+			},
+		})
+	}
+
+	return nonEmptyCalendarSections([]receipt.CalendarSection{{
+		Title:  "Сегодня",
+		Date:   today,
+		Events: calendarEventsForDay(events, today, now, false, true),
+	}})
+}
+
+func nonEmptyCalendarSections(sections []receipt.CalendarSection) []receipt.CalendarSection {
+	result := make([]receipt.CalendarSection, 0, len(sections))
+	for _, section := range sections {
+		if len(section.Events) == 0 {
+			continue
+		}
+		result = append(result, section)
+	}
+	return result
+}
+
+func calendarEventsForDay(events []googleintegration.CalendarEvent, day time.Time, now time.Time, onlyRemaining bool, includeUnknownDay bool) []googleintegration.CalendarEvent {
+	result := make([]googleintegration.CalendarEvent, 0, len(events))
+	for _, event := range events {
+		if !calendarEventBelongsToDay(event, day, includeUnknownDay) {
+			continue
+		}
+		if onlyRemaining && !calendarEventRemaining(event, now) {
+			continue
+		}
+		result = append(result, event)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		left := calendarEventSortTime(result[i], day.Location())
+		right := calendarEventSortTime(result[j], day.Location())
+		if left.Equal(right) {
+			return result[i].Title < result[j].Title
+		}
+		return left.Before(right)
+	})
+	return result
+}
+
+func calendarEventBelongsToDay(event googleintegration.CalendarEvent, day time.Time, includeUnknownDay bool) bool {
+	if event.Start.IsZero() {
+		return includeUnknownDay
+	}
+	start := event.Start.In(day.Location())
+	end := calendarEventEnd(event, day.Location())
+	if end.IsZero() {
+		end = start
+	}
+	if !end.After(start) {
+		end = start.Add(time.Nanosecond)
+	}
+	return start.Before(day.AddDate(0, 0, 1)) && end.After(day)
+}
+
+func calendarEventRemaining(event googleintegration.CalendarEvent, now time.Time) bool {
+	if event.Start.IsZero() {
+		return true
+	}
+	end := calendarEventEnd(event, now.Location())
+	if end.IsZero() {
+		return !event.Start.In(now.Location()).Before(now)
+	}
+	return end.After(now)
+}
+
+func calendarEventSortTime(event googleintegration.CalendarEvent, location *time.Location) time.Time {
+	if event.Start.IsZero() {
+		return time.Time{}
+	}
+	return event.Start.In(location)
+}
+
+func calendarEventEnd(event googleintegration.CalendarEvent, location *time.Location) time.Time {
+	if !event.End.IsZero() {
+		return event.End.In(location)
+	}
+	if event.Start.IsZero() {
+		return time.Time{}
+	}
+	start := event.Start.In(location)
+	if event.AllDay {
+		return dayStart(start, location).AddDate(0, 0, 1)
+	}
+	return start
+}
+
+func calendarContextFromSections(now time.Time, sections []receipt.CalendarSection) motivation.CalendarContext {
+	context := motivation.CalendarContext{
+		GeneratedAt: now.In(minskLocation()),
+		Mode:        "morning",
+		Sections:    make([]motivation.CalendarSectionContext, 0, len(sections)),
+	}
+	for _, section := range sections {
+		if section.Title == "Остаток сегодня" || section.Title == "Завтра" {
+			context.Mode = "evening"
+		}
+		sectionContext := motivation.CalendarSectionContext{
+			Title:  section.Title,
+			Date:   section.Date,
+			Events: make([]motivation.CalendarEventContext, 0, len(section.Events)),
+		}
+		for _, event := range section.Events {
+			sectionContext.Events = append(sectionContext.Events, motivation.CalendarEventContext{
+				TimeLabel: event.TimeLabel,
+				Title:     event.Title,
+				Start:     event.Start,
+				End:       event.End,
+				AllDay:    event.AllDay,
+			})
+		}
+		context.Sections = append(context.Sections, sectionContext)
+	}
+	return context
+}
+
+func minskLocation() *time.Location {
+	location, err := time.LoadLocation(motivation.DefaultTimezone)
+	if err != nil {
+		return time.Local
+	}
+	return location
+}
+
+func dayStart(value time.Time, location *time.Location) time.Time {
+	if location == nil {
+		location = value.Location()
+	}
+	value = value.In(location)
+	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, location)
+}
+
+func calendarTomorrowMode(now time.Time, today time.Time) bool {
+	return !now.Before(today.Add(15 * time.Hour))
 }
 
 func (s *ReceiptService) resolveTonChartImage(ctx context.Context, price finance.TonPrice) (*receipt.Image, string) {

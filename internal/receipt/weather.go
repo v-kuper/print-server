@@ -55,7 +55,15 @@ type DailyReceiptData struct {
 	BankRates        *bankrates.Summary
 	MailMessages     []googleintegration.MailMessage
 	CalendarEvents   []googleintegration.CalendarEvent
+	CalendarSections []CalendarSection
+	CalendarAdvice   *motivation.CalendarAdvice
 	NewsItems        []news.Item
+}
+
+type CalendarSection struct {
+	Title  string
+	Date   time.Time
+	Events []googleintegration.CalendarEvent
 }
 
 func WeatherReceipt(snapshot weather.Snapshot) []Line {
@@ -177,10 +185,23 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 			}
 		}
 	}
-	if len(data.CalendarEvents) > 0 {
+	calendarSections := normalizedCalendarSections(data.CalendarSections, data.CalendarEvents)
+	if len(calendarSections) > 0 {
 		result = appendSectionHeader(result, "Календарь", normalStyle)
-		for _, event := range data.CalendarEvents {
-			result = append(result, calendarEventLines(event, normalStyle)...)
+		for sectionIndex, section := range calendarSections {
+			if strings.TrimSpace(section.Title) != "" {
+				if sectionIndex > 0 {
+					result = append(result, blankLine(normalStyle))
+				}
+				result = append(result, wrappedCenter(section.Title, normalStyle)...)
+			}
+			for _, event := range section.Events {
+				result = append(result, calendarEventLines(event, normalStyle)...)
+			}
+		}
+		if data.CalendarAdvice != nil && strings.TrimSpace(data.CalendarAdvice.Text) != "" {
+			result = append(result, blankLine(normalStyle))
+			result = append(result, wrappedCenter(data.CalendarAdvice.Text, normalStyle)...)
 		}
 	}
 	if len(data.NewsItems) > 0 {
@@ -203,6 +224,20 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 				result = append(result, blankLine(normalStyle))
 			}
 		}
+	}
+	return result
+}
+
+func normalizedCalendarSections(sections []CalendarSection, events []googleintegration.CalendarEvent) []CalendarSection {
+	result := make([]CalendarSection, 0, len(sections)+1)
+	for _, section := range sections {
+		if len(section.Events) == 0 {
+			continue
+		}
+		result = append(result, section)
+	}
+	if len(result) == 0 && len(events) > 0 {
+		result = append(result, CalendarSection{Events: events})
 	}
 	return result
 }

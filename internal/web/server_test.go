@@ -1539,9 +1539,10 @@ func (c *fakeGoogleClient) Disconnect() error {
 }
 
 type fakeMotivationProvider struct {
-	quote  motivation.Quote
-	advice motivation.WeatherAdvice
-	err    error
+	quote          motivation.Quote
+	advice         motivation.WeatherAdvice
+	calendarAdvice motivation.CalendarAdvice
+	err            error
 }
 
 func (p *fakeMotivationProvider) Generate(context.Context, motivation.Settings) (motivation.Quote, error) {
@@ -1550,6 +1551,10 @@ func (p *fakeMotivationProvider) Generate(context.Context, motivation.Settings) 
 
 func (p *fakeMotivationProvider) GenerateWeatherAdvice(context.Context, motivation.Settings, motivation.WeatherContext) (motivation.WeatherAdvice, error) {
 	return p.advice, p.err
+}
+
+func (p *fakeMotivationProvider) GenerateCalendarAdvice(context.Context, motivation.Settings, motivation.CalendarContext) (motivation.CalendarAdvice, error) {
+	return p.calendarAdvice, p.err
 }
 
 func (p *fakeMotivationProvider) TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error) {

@@ -17,6 +17,7 @@ const defaultOllamaTimeout = 45 * time.Second
 type Provider interface {
 	Generate(context.Context, Settings) (Quote, error)
 	GenerateWeatherAdvice(context.Context, Settings, WeatherContext) (WeatherAdvice, error)
+	GenerateCalendarAdvice(context.Context, Settings, CalendarContext) (CalendarAdvice, error)
 	TranslateNewsTitles(context.Context, Settings, []NewsTitle) ([]NewsTranslation, error)
 }
 
@@ -57,6 +58,13 @@ var weatherAdviceOptions = ollamaOptions{
 	RepeatLastN:   96,
 }
 
+var calendarAdviceOptions = ollamaOptions{
+	Temperature:   0.7,
+	TopP:          0.86,
+	RepeatPenalty: 1.08,
+	RepeatLastN:   96,
+}
+
 var newsTranslationOptions = ollamaOptions{
 	Temperature:   0.25,
 	TopP:          0.8,
@@ -85,6 +93,14 @@ func (p *OllamaProvider) GenerateWeatherAdvice(ctx context.Context, settings Set
 		return WeatherAdvice{}, err
 	}
 	return WeatherAdvice{Text: text}, nil
+}
+
+func (p *OllamaProvider) GenerateCalendarAdvice(ctx context.Context, settings Settings, calendar CalendarContext) (CalendarAdvice, error) {
+	text, err := p.generateWithPrompt(ctx, settings, calendarAdvicePrompt(calendar), calendarAdviceOptions)
+	if err != nil {
+		return CalendarAdvice{}, err
+	}
+	return CalendarAdvice{Text: text}, nil
 }
 
 func (p *OllamaProvider) TranslateNewsTitles(ctx context.Context, settings Settings, titles []NewsTitle) ([]NewsTranslation, error) {

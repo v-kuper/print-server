@@ -74,6 +74,9 @@ type MailMessage struct {
 type CalendarEvent struct {
 	TimeLabel string
 	Title     string
+	Start     time.Time
+	End       time.Time
+	AllDay    bool
 }
 
 type calendarListEntry struct {
@@ -389,8 +392,14 @@ func (c *Client) unreadMail(ctx context.Context, token Token) ([]MailMessage, er
 func (c *Client) todayEvents(ctx context.Context, token Token) ([]CalendarEvent, error) {
 	location := minskLocation()
 	now := c.now().In(location)
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	start := calendarDayStart(now, location)
 	end := start.AddDate(0, 0, 1)
+	maxEvents := defaultMaxEvents
+	afterSplit := isCalendarTomorrowMode(now, start)
+	if afterSplit {
+		end = start.AddDate(0, 0, 2)
+		maxEvents = defaultMaxEvents * 2
+	}
 
 	calendars, err := c.calendarList(ctx, token)
 	if err != nil {
@@ -405,11 +414,16 @@ func (c *Client) todayEvents(ctx context.Context, token Token) ([]CalendarEvent,
 		if !calendar.canReadEvents() {
 			continue
 		}
-		events, err := c.eventsForCalendar(ctx, token, calendar.ID, location, start, end)
+		events, err := c.eventsForCalendar(ctx, token, calendar.ID, location, start, end, maxEvents)
 		if err != nil {
 			return nil, err
 		}
-		allEvents = append(allEvents, events...)
+		for _, event := range events {
+			if afterSplit && !calendarEventVisibleAfterSplit(event.event, now, start) {
+				continue
+			}
+			allEvents = append(allEvents, event)
+		}
 	}
 
 	sort.SliceStable(allEvents, func(i, j int) bool {
@@ -418,8 +432,8 @@ func (c *Client) todayEvents(ctx context.Context, token Token) ([]CalendarEvent,
 		}
 		return allEvents[i].sortAt.Before(allEvents[j].sortAt)
 	})
-	if len(allEvents) > defaultMaxEvents {
-		allEvents = allEvents[:defaultMaxEvents]
+	if len(allEvents) > maxEvents {
+		allEvents = allEvents[:maxEvents]
 	}
 
 	events := make([]CalendarEvent, 0, len(allEvents))
@@ -444,14 +458,14 @@ func (c *Client) calendarList(ctx context.Context, token Token) ([]calendarListE
 	return payload.Items, nil
 }
 
-func (c *Client) eventsForCalendar(ctx context.Context, token Token, calendarID string, location *time.Location, start time.Time, end time.Time) ([]calendarEventResult, error) {
+func (c *Client) eventsForCalendar(ctx context.Context, token Token, calendarID string, location *time.Location, start time.Time, end time.Time, maxResults int) ([]calendarEventResult, error) {
 	baseURL := strings.TrimRight(c.config.CalendarBaseURL, "/")
 	values := url.Values{}
 	values.Set("timeMin", start.Format(time.RFC3339))
 	values.Set("timeMax", end.Format(time.RFC3339))
 	values.Set("singleEvents", "true")
 	values.Set("orderBy", "startTime")
-	values.Set("maxResults", fmt.Sprintf("%d", defaultMaxEvents))
+	values.Set("maxResults", fmt.Sprintf("%d", maxResults))
 
 	var payload struct {
 		Items []struct {
@@ -460,6 +474,10 @@ func (c *Client) eventsForCalendar(ctx context.Context, token Token, calendarID 
 				DateTime string `json:"dateTime"`
 				Date     string `json:"date"`
 			} `json:"start"`
+			End struct {
+				DateTime string `json:"dateTime"`
+				Date     string `json:"date"`
+			} `json:"end"`
 		} `json:"items"`
 	}
 	requestURL := baseURL + "/calendars/" + url.PathEscape(calendarID) + "/events?" + values.Encode()
@@ -473,26 +491,92 @@ func (c *Client) eventsForCalendar(ctx context.Context, token Token, calendarID 
 		if title == "" {
 			title = "Без названия"
 		}
-		timeLabel := "Весь день"
-		sortAt := start
-		if strings.TrimSpace(item.Start.DateTime) != "" {
-			startTime, err := time.Parse(time.RFC3339, item.Start.DateTime)
-			if err == nil {
-				sortAt = startTime.In(location)
-				timeLabel = sortAt.Format("15:04")
-			}
-		} else if strings.TrimSpace(item.Start.Date) != "" {
-			startDate, err := time.ParseInLocation("2006-01-02", item.Start.Date, location)
-			if err == nil {
-				sortAt = startDate
+		startAt, allDay, ok := parseCalendarEventBoundary(item.Start.DateTime, item.Start.Date, location)
+		if !ok {
+			startAt = start
+		}
+		endAt, _, endOK := parseCalendarEventBoundary(item.End.DateTime, item.End.Date, location)
+		if !endOK {
+			if allDay {
+				endAt = calendarDayStart(startAt, location).AddDate(0, 0, 1)
+			} else {
+				endAt = startAt
 			}
 		}
+		timeLabel := "Весь день"
+		if !allDay {
+			timeLabel = startAt.Format("15:04")
+		}
+		event := CalendarEvent{
+			TimeLabel: timeLabel,
+			Title:     title,
+			Start:     startAt,
+			End:       endAt,
+			AllDay:    allDay,
+		}
 		events = append(events, calendarEventResult{
-			event:  CalendarEvent{TimeLabel: timeLabel, Title: title},
-			sortAt: sortAt,
+			event:  event,
+			sortAt: startAt,
 		})
 	}
 	return events, nil
+}
+
+func calendarDayStart(value time.Time, location *time.Location) time.Time {
+	if location == nil {
+		location = value.Location()
+	}
+	value = value.In(location)
+	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, location)
+}
+
+func isCalendarTomorrowMode(now time.Time, todayStart time.Time) bool {
+	return !now.Before(todayStart.Add(15 * time.Hour))
+}
+
+func parseCalendarEventBoundary(dateTime string, date string, location *time.Location) (time.Time, bool, bool) {
+	if strings.TrimSpace(dateTime) != "" {
+		value, err := time.Parse(time.RFC3339, dateTime)
+		if err == nil {
+			return value.In(location), false, true
+		}
+	}
+	if strings.TrimSpace(date) != "" {
+		value, err := time.ParseInLocation("2006-01-02", date, location)
+		if err == nil {
+			return value, true, true
+		}
+	}
+	return time.Time{}, false, false
+}
+
+func calendarEventVisibleAfterSplit(event CalendarEvent, now time.Time, todayStart time.Time) bool {
+	if event.Start.IsZero() {
+		return true
+	}
+	eventStart := event.Start.In(todayStart.Location())
+	tomorrowStart := todayStart.AddDate(0, 0, 1)
+	if !eventStart.Before(tomorrowStart) {
+		return true
+	}
+	if eventEnd(event, todayStart.Location()).After(now) {
+		return true
+	}
+	return false
+}
+
+func eventEnd(event CalendarEvent, location *time.Location) time.Time {
+	if !event.End.IsZero() {
+		return event.End.In(location)
+	}
+	if event.Start.IsZero() {
+		return time.Time{}
+	}
+	start := event.Start.In(location)
+	if event.AllDay {
+		return calendarDayStart(start, location).AddDate(0, 0, 1)
+	}
+	return start
 }
 
 func (entry calendarListEntry) canReadEvents() bool {

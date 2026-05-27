@@ -248,6 +248,132 @@ func TestClientCurrentSelectedLoadsOnlyRequestedSections(t *testing.T) {
 	}
 }
 
+func TestClientLoadsTodayAndTomorrowEventsAfterCalendarSplitTime(t *testing.T) {
+	dir := t.TempDir()
+	var eventQueries []url.Values
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth := r.Header.Get("Authorization"); auth != "Bearer access-1" {
+			t.Fatalf("expected bearer token, got %q", auth)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/calendar/v3/users/me/calendarList":
+			_, _ = w.Write([]byte(`{"items":[{"id":"work@example.com","summary":"Work","selected":true,"accessRole":"reader"}]}`))
+		case "/calendar/v3/calendars/work@example.com/events":
+			eventQueries = append(eventQueries, r.URL.Query())
+			_, _ = w.Write([]byte(`{"items":[
+				{"summary":"Утренний созвон","start":{"dateTime":"2026-05-25T09:00:00+03:00"},"end":{"dateTime":"2026-05-25T09:30:00+03:00"}},
+				{"summary":"Текущая встреча","start":{"dateTime":"2026-05-25T14:30:00+03:00"},"end":{"dateTime":"2026-05-25T15:30:00+03:00"}},
+				{"summary":"День без встреч","start":{"date":"2026-05-25"},"end":{"date":"2026-05-26"}},
+				{"summary":"Завтрашний план","start":{"dateTime":"2026-05-26T10:00:00+03:00"},"end":{"dateTime":"2026-05-26T11:00:00+03:00"}}
+			]}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	credentialsPath := filepath.Join(dir, "credentials.json")
+	tokenPath := filepath.Join(dir, "token.json")
+	writeCredentials(t, credentialsPath, "https://accounts.example/auth", "https://accounts.example/token")
+	writeToken(t, tokenPath, Token{
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+		TokenType:    "Bearer",
+		Expiry:       time.Date(2026, 5, 25, 18, 0, 0, 0, time.UTC),
+	})
+	client := NewClient(Config{
+		CredentialsPath: credentialsPath,
+		TokenPath:       tokenPath,
+		CalendarBaseURL: apiServer.URL + "/calendar/v3",
+		Clock:           func() time.Time { return time.Date(2026, 5, 25, 15, 0, 0, 0, time.FixedZone("MSK", 3*60*60)) },
+	})
+
+	summary, err := client.CurrentSelected(context.Background(), false, true)
+	if err != nil {
+		t.Fatalf("load calendar summary: %v", err)
+	}
+	if len(eventQueries) != 1 {
+		t.Fatalf("expected one event query, got %d", len(eventQueries))
+	}
+	if got := eventQueries[0].Get("timeMin"); got != "2026-05-25T00:00:00+03:00" {
+		t.Fatalf("unexpected timeMin: %s", got)
+	}
+	if got := eventQueries[0].Get("timeMax"); got != "2026-05-27T00:00:00+03:00" {
+		t.Fatalf("unexpected timeMax: %s", got)
+	}
+	if got := eventQueries[0].Get("maxResults"); got != "20" {
+		t.Fatalf("unexpected maxResults for two-day calendar window: %s", got)
+	}
+	if len(summary.Events) != 3 ||
+		summary.Events[0].Title != "День без встреч" ||
+		summary.Events[0].TimeLabel != "Весь день" ||
+		!summary.Events[0].AllDay ||
+		summary.Events[1].Title != "Текущая встреча" ||
+		summary.Events[1].TimeLabel != "14:30" ||
+		summary.Events[2].Title != "Завтрашний план" ||
+		summary.Events[2].Start.Day() != 26 {
+		t.Fatalf("unexpected calendar events after split time: %#v", summary.Events)
+	}
+}
+
+func TestClientLoadsOnlyTodayBeforeCalendarSplitTime(t *testing.T) {
+	dir := t.TempDir()
+	var eventQuery url.Values
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth := r.Header.Get("Authorization"); auth != "Bearer access-1" {
+			t.Fatalf("expected bearer token, got %q", auth)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/calendar/v3/users/me/calendarList":
+			_, _ = w.Write([]byte(`{"items":[{"id":"work@example.com","summary":"Work","selected":true,"accessRole":"reader"}]}`))
+		case "/calendar/v3/calendars/work@example.com/events":
+			eventQuery = r.URL.Query()
+			_, _ = w.Write([]byte(`{"items":[
+				{"summary":"Утро","start":{"dateTime":"2026-05-25T09:00:00+03:00"},"end":{"dateTime":"2026-05-25T09:30:00+03:00"}},
+				{"summary":"Вечер","start":{"dateTime":"2026-05-25T18:00:00+03:00"},"end":{"dateTime":"2026-05-25T19:00:00+03:00"}}
+			]}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	credentialsPath := filepath.Join(dir, "credentials.json")
+	tokenPath := filepath.Join(dir, "token.json")
+	writeCredentials(t, credentialsPath, "https://accounts.example/auth", "https://accounts.example/token")
+	writeToken(t, tokenPath, Token{
+		AccessToken:  "access-1",
+		RefreshToken: "refresh-1",
+		TokenType:    "Bearer",
+		Expiry:       time.Date(2026, 5, 25, 18, 0, 0, 0, time.UTC),
+	})
+	client := NewClient(Config{
+		CredentialsPath: credentialsPath,
+		TokenPath:       tokenPath,
+		CalendarBaseURL: apiServer.URL + "/calendar/v3",
+		Clock:           func() time.Time { return time.Date(2026, 5, 25, 14, 59, 0, 0, time.FixedZone("MSK", 3*60*60)) },
+	})
+
+	summary, err := client.CurrentSelected(context.Background(), false, true)
+	if err != nil {
+		t.Fatalf("load calendar summary: %v", err)
+	}
+	if got := eventQuery.Get("timeMin"); got != "2026-05-25T00:00:00+03:00" {
+		t.Fatalf("unexpected timeMin: %s", got)
+	}
+	if got := eventQuery.Get("timeMax"); got != "2026-05-26T00:00:00+03:00" {
+		t.Fatalf("unexpected timeMax: %s", got)
+	}
+	if got := eventQuery.Get("maxResults"); got != "10" {
+		t.Fatalf("unexpected maxResults for one-day calendar window: %s", got)
+	}
+	if len(summary.Events) != 2 || summary.Events[0].Title != "Утро" || summary.Events[1].Title != "Вечер" {
+		t.Fatalf("expected all today events before split time, got %#v", summary.Events)
+	}
+}
+
 func writeCredentials(t *testing.T, path string, authURI string, tokenURI string) {
 	t.Helper()
 	data := map[string]any{

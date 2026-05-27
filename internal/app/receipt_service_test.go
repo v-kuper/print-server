@@ -680,6 +680,131 @@ func TestReceiptServiceDefaultContentOmitsMailAndKeepsCalendar(t *testing.T) {
 	}
 }
 
+func TestReceiptServiceBuildsEveningCalendarSectionsAndAdvice(t *testing.T) {
+	minsk := time.FixedZone("MSK", 3*60*60)
+	now := time.Date(2026, 5, 25, 15, 30, 0, 0, minsk)
+	store := &fakeStore{
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowUsdBynRate:      false,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        true,
+			ShowNews:            false,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: true},
+	}
+	motivationProvider := &fakeMotivationProvider{
+		calendarAdvice: motivation.CalendarAdvice{Text: "День плотный, держи паузы."},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		func() time.Time { return now },
+		WithGoogleProvider(&fakeGoogleProvider{summary: googleintegration.Summary{
+			Events: []googleintegration.CalendarEvent{
+				{
+					TimeLabel: "09:00",
+					Title:     "Прошедший созвон",
+					Start:     time.Date(2026, 5, 25, 9, 0, 0, 0, minsk),
+					End:       time.Date(2026, 5, 25, 10, 0, 0, 0, minsk),
+				},
+				{
+					TimeLabel: "16:00",
+					Title:     "Синк по релизу",
+					Start:     time.Date(2026, 5, 25, 16, 0, 0, 0, minsk),
+					End:       time.Date(2026, 5, 25, 17, 0, 0, 0, minsk),
+				},
+				{
+					TimeLabel: "10:00",
+					Title:     "Планирование",
+					Start:     time.Date(2026, 5, 26, 10, 0, 0, 0, minsk),
+					End:       time.Date(2026, 5, 26, 11, 0, 0, 0, minsk),
+				},
+			},
+		}}),
+		WithMotivationProvider(motivationProvider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if lineTextsContain(lines, "09:00      Прошедший созвон") {
+		t.Fatalf("expected elapsed today event to be omitted in evening mode, got %#v", lines)
+	}
+	for _, want := range []string{"Календарь", "Остаток сегодня", "16:00      Синк по релизу", "Завтра", "10:00      Планирование", "День плотный, держи паузы."} {
+		if !lineTextsContain(lines, want) {
+			t.Fatalf("expected %q in receipt lines, got %#v", want, lines)
+		}
+	}
+	if motivationProvider.calendarAdviceCalls != 1 {
+		t.Fatalf("expected one calendar advice call, got %d", motivationProvider.calendarAdviceCalls)
+	}
+	if len(motivationProvider.calendarContext.Sections) != 2 ||
+		motivationProvider.calendarContext.Sections[0].Title != "Остаток сегодня" ||
+		len(motivationProvider.calendarContext.Sections[0].Events) != 1 ||
+		motivationProvider.calendarContext.Sections[1].Title != "Завтра" ||
+		len(motivationProvider.calendarContext.Sections[1].Events) != 1 {
+		t.Fatalf("unexpected calendar advice context: %#v", motivationProvider.calendarContext)
+	}
+}
+
+func TestReceiptServiceCalendarAdviceFailureDoesNotBreakReceipt(t *testing.T) {
+	minsk := time.FixedZone("MSK", 3*60*60)
+	now := time.Date(2026, 5, 25, 9, 0, 0, 0, minsk)
+	store := &fakeStore{
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowUsdBynRate:      false,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        true,
+			ShowNews:            false,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: true},
+	}
+	motivationProvider := &fakeMotivationProvider{calendarAdviceErr: errors.New("llama offline")}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		func() time.Time { return now },
+		WithGoogleProvider(&fakeGoogleProvider{summary: googleintegration.Summary{
+			Events: []googleintegration.CalendarEvent{
+				{
+					TimeLabel: "11:00",
+					Title:     "Встреча",
+					Start:     time.Date(2026, 5, 25, 11, 0, 0, 0, minsk),
+					End:       time.Date(2026, 5, 25, 12, 0, 0, 0, minsk),
+				},
+			},
+		}}),
+		WithMotivationProvider(motivationProvider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if !lineTextsContain(lines, "Сегодня") || !lineTextsContain(lines, "11:00      Встреча") {
+		t.Fatalf("expected calendar to remain printable after advice failure, got %#v", lines)
+	}
+	if !containsWarning(warnings, "AI-совет по календарю недоступен") {
+		t.Fatalf("expected calendar advice warning, got %#v", warnings)
+	}
+}
+
 func TestReceiptServiceSkipsDisabledFinanceContent(t *testing.T) {
 	weatherCode := 0
 	tonProvider := &fakeTonProvider{price: finance.TonPrice{USD: 1.7435687405482407}}
@@ -740,8 +865,9 @@ func TestReceiptServiceSkipsDisabledFinanceContent(t *testing.T) {
 func TestReceiptServiceSkipsDisabledAIContent(t *testing.T) {
 	weatherCode := 0
 	motivationProvider := &fakeMotivationProvider{
-		quote:  motivation.Quote{Text: "Цитата не нужна."},
-		advice: motivation.WeatherAdvice{Text: "Совет не нужен."},
+		quote:          motivation.Quote{Text: "Цитата не нужна."},
+		advice:         motivation.WeatherAdvice{Text: "Совет не нужен."},
+		calendarAdvice: motivation.CalendarAdvice{Text: "Календарный совет не нужен."},
 	}
 	service := NewReceiptService(
 		&fakeStore{
@@ -778,10 +904,10 @@ func TestReceiptServiceSkipsDisabledAIContent(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings, got %#v", warnings)
 	}
-	if motivationProvider.quoteCalls != 0 || motivationProvider.adviceCalls != 0 {
+	if motivationProvider.quoteCalls != 0 || motivationProvider.adviceCalls != 0 || motivationProvider.calendarAdviceCalls != 0 {
 		t.Fatalf("expected disabled AI content to skip provider calls, provider=%#v", motivationProvider)
 	}
-	if lineTextsContain(lines, "Цитата не нужна.") || lineTextsContain(lines, "Совет не нужен.") {
+	if lineTextsContain(lines, "Цитата не нужна.") || lineTextsContain(lines, "Совет не нужен.") || lineTextsContain(lines, "Календарный совет не нужен.") {
 		t.Fatalf("expected disabled AI content to be omitted, got %#v", lines)
 	}
 }
@@ -1108,16 +1234,20 @@ func (p *fakeGoogleProvider) CurrentSelected(_ context.Context, includeMail bool
 }
 
 type fakeMotivationProvider struct {
-	quote            motivation.Quote
-	quotes           []motivation.Quote
-	advice           motivation.WeatherAdvice
-	translations     []motivation.NewsTranslation
-	err              error
-	translationErr   error
-	weatherContext   motivation.WeatherContext
-	translatedTitles []motivation.NewsTitle
-	quoteCalls       int
-	adviceCalls      int
+	quote               motivation.Quote
+	quotes              []motivation.Quote
+	advice              motivation.WeatherAdvice
+	calendarAdvice      motivation.CalendarAdvice
+	translations        []motivation.NewsTranslation
+	err                 error
+	calendarAdviceErr   error
+	translationErr      error
+	weatherContext      motivation.WeatherContext
+	calendarContext     motivation.CalendarContext
+	translatedTitles    []motivation.NewsTitle
+	quoteCalls          int
+	adviceCalls         int
+	calendarAdviceCalls int
 }
 
 func (p *fakeMotivationProvider) Generate(context.Context, motivation.Settings) (motivation.Quote, error) {
@@ -1134,6 +1264,15 @@ func (p *fakeMotivationProvider) GenerateWeatherAdvice(_ context.Context, _ moti
 	p.adviceCalls++
 	p.weatherContext = weatherContext
 	return p.advice, p.err
+}
+
+func (p *fakeMotivationProvider) GenerateCalendarAdvice(_ context.Context, _ motivation.Settings, calendarContext motivation.CalendarContext) (motivation.CalendarAdvice, error) {
+	p.calendarAdviceCalls++
+	p.calendarContext = calendarContext
+	if p.calendarAdviceErr != nil {
+		return motivation.CalendarAdvice{}, p.calendarAdviceErr
+	}
+	return p.calendarAdvice, p.err
 }
 
 func (p *fakeMotivationProvider) TranslateNewsTitles(_ context.Context, _ motivation.Settings, titles []motivation.NewsTitle) ([]motivation.NewsTranslation, error) {

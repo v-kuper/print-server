@@ -305,6 +305,48 @@ func TestDailyReceiptPrintsCalendarEventsInTimeAndTitleColumns(t *testing.T) {
 	}
 }
 
+func TestDailyReceiptPrintsCalendarSectionsAndAdvice(t *testing.T) {
+	weatherCode := 0
+	lines := DailyReceipt(DailyReceiptData{
+		Weather: weather.Snapshot{
+			ObservedAt:   time.Date(2026, 5, 24, 9, 15, 0, 0, time.UTC),
+			TemperatureC: 21.4,
+			WeatherCode:  &weatherCode,
+		},
+		CalendarSections: []CalendarSection{
+			{
+				Title: "Остаток сегодня",
+				Events: []googleintegration.CalendarEvent{
+					{TimeLabel: "16:00", Title: "Синк по релизу"},
+				},
+			},
+			{
+				Title: "Завтра",
+				Events: []googleintegration.CalendarEvent{
+					{TimeLabel: "10:00", Title: "Планирование"},
+				},
+			},
+		},
+		CalendarAdvice: &motivation.CalendarAdvice{Text: "Оставь воздух между встречами."},
+	})
+
+	got := texts(lines)
+	requireContains(t, got, "Календарь")
+	requireContains(t, got, "Остаток сегодня")
+	requireContains(t, got, "16:00      Синк по релизу")
+	requireContains(t, got, "Завтра")
+	requireContains(t, got, "10:00      Планирование")
+	requireContains(t, got, "Оставь воздух между встречами.")
+
+	calendarIndex := indexOfText(got, "Календарь")
+	todayIndex := indexOfText(got, "Остаток сегодня")
+	tomorrowIndex := indexOfText(got, "Завтра")
+	adviceIndex := indexOfText(got, "Оставь воздух между встречами.")
+	if !(calendarIndex < todayIndex && todayIndex < tomorrowIndex && tomorrowIndex < adviceIndex) {
+		t.Fatalf("expected calendar sections before advice, got %#v", got)
+	}
+}
+
 func TestDailyReceiptSeparatesMajorSectionsWithBlankLines(t *testing.T) {
 	weatherCode := 0
 	lines := DailyReceipt(DailyReceiptData{

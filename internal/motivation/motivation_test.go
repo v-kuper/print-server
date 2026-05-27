@@ -174,6 +174,69 @@ func TestOllamaProviderBuildsWeatherAdvicePrompt(t *testing.T) {
 	}
 }
 
+func TestOllamaProviderBuildsCalendarAdvicePrompt(t *testing.T) {
+	var requestPayload ollamaChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestPayload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"День плотный, держи паузы между встречами."}}`))
+	}))
+	defer server.Close()
+
+	provider := NewOllamaProvider(server.Client())
+	advice, err := provider.GenerateCalendarAdvice(context.Background(), Settings{
+		Enabled: true,
+		BaseURL: server.URL,
+		Model:   "gemma4:31b-cloud",
+	}, CalendarContext{
+		GeneratedAt: time.Date(2026, 5, 25, 15, 30, 0, 0, time.FixedZone("MSK", 3*60*60)),
+		Mode:        "evening",
+		Sections: []CalendarSectionContext{
+			{
+				Title: "Остаток сегодня",
+				Date:  time.Date(2026, 5, 25, 0, 0, 0, 0, time.FixedZone("MSK", 3*60*60)),
+				Events: []CalendarEventContext{
+					{TimeLabel: "16:00", Title: "Синк по релизу"},
+				},
+			},
+			{
+				Title: "Завтра",
+				Date:  time.Date(2026, 5, 26, 0, 0, 0, 0, time.FixedZone("MSK", 3*60*60)),
+				Events: []CalendarEventContext{
+					{TimeLabel: "10:00", Title: "Планирование"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate calendar advice: %v", err)
+	}
+
+	if advice.Text != "День плотный, держи паузы между встречами." {
+		t.Fatalf("expected sanitized calendar advice, got %q", advice.Text)
+	}
+	prompt := requestPayload.Messages[0].Content
+	for _, want := range []string{
+		"календарь",
+		"25.05.2026 15:30",
+		"Остаток сегодня",
+		"16:00",
+		"Синк по релизу",
+		"Завтра",
+		"Планирование",
+		"загруженности",
+		"Не выдумывай",
+		"1-2 короткие строки",
+		"без markdown",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected calendar prompt to contain %q, got %q", want, prompt)
+		}
+	}
+}
+
 func TestOllamaProviderTranslatesNewsTitles(t *testing.T) {
 	var requestPayload ollamaChatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -280,10 +343,11 @@ func TestResolveDailyQuoteStoresGeneratedQuoteAndRecordsFailures(t *testing.T) {
 }
 
 type fakeProvider struct {
-	quote  Quote
-	advice WeatherAdvice
-	err    error
-	calls  int
+	quote          Quote
+	advice         WeatherAdvice
+	calendarAdvice CalendarAdvice
+	err            error
+	calls          int
 }
 
 func (p *fakeProvider) Generate(context.Context, Settings) (Quote, error) {
@@ -294,6 +358,11 @@ func (p *fakeProvider) Generate(context.Context, Settings) (Quote, error) {
 func (p *fakeProvider) GenerateWeatherAdvice(context.Context, Settings, WeatherContext) (WeatherAdvice, error) {
 	p.calls++
 	return p.advice, p.err
+}
+
+func (p *fakeProvider) GenerateCalendarAdvice(context.Context, Settings, CalendarContext) (CalendarAdvice, error) {
+	p.calls++
+	return p.calendarAdvice, p.err
 }
 
 func (p *fakeProvider) TranslateNewsTitles(context.Context, Settings, []NewsTitle) ([]NewsTranslation, error) {
