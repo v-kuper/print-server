@@ -78,6 +78,35 @@ func (g *Gateway) PrintReceipt(ctx context.Context, config Config, lines []recei
 	return nil
 }
 
+func (g *Gateway) PrintPixelBuffer(ctx context.Context, config Config, buffer PixelBuffer) error {
+	buffer = buffer.Normalized()
+	if err := buffer.Validate(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	session, err := g.open(config)
+	if err != nil {
+		return err
+	}
+	defer session.close()
+
+	if err := session.printPixelBuffer(buffer); err != nil {
+		return err
+	}
+	for range receiptEndFeedLines {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := session.lineFeed(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (g *Gateway) FontMetrics(ctx context.Context, config Config) ([]FontMetric, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -189,6 +218,19 @@ func (s *fptrSession) printPicture(path string, line receipt.Line) error {
 	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_SCALE_PERCENT, float64(scalePercent))
 
 	return s.call("print picture", s.fptr.PrintPicture)
+}
+
+func (s *fptrSession) printPixelBuffer(buffer PixelBuffer) error {
+	if err := s.call("reset pixel buffer params", s.fptr.ResetParams); err != nil {
+		return err
+	}
+
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_PIXEL_BUFFER, buffer.Pixels)
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_WIDTH, buffer.Width)
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_ALIGNMENT, alignmentToFptr(buffer.Alignment))
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_SCALE_PERCENT, float64(buffer.ScalePercent))
+
+	return s.call("print pixel buffer", s.fptr.PrintPixelBuffer)
 }
 
 func (s *fptrSession) lineFeed() error {

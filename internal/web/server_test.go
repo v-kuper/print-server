@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,6 +127,14 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`id="weather-location-results"`,
 		`id="news-source-list"`,
 		`id="schedule-time-list"`,
+		`id="image-editor-file"`,
+		`id="image-editor-canvas-height"`,
+		`id="image-editor-result"`,
+		`data-action="new-image-editor-canvas"`,
+		`data-action="save-image-editor"`,
+		`data-action="print-image-editor"`,
+		`value="rectangle"`,
+		`value="ellipse"`,
 		`LIBFPTR_PARAM_FONT`,
 		`data-action="weather"`,
 	} {
@@ -171,6 +182,11 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`function applyBootstrap`,
 				`data-action="preview"`,
 				`data-action="google-disconnect"`,
+				`/api/image-editor/save`,
+				`/api/image-editor/print`,
+				`function applyImageEditorProcessing`,
+				`function createBlankImageEditorCanvas`,
+				`function applyImageEditorShape`,
 			},
 		},
 	} {
@@ -339,6 +355,233 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	for _, want := range []string{"1 минута", "5 минут", "30 минут", "1 час", "2 часа", "6 часов", "12 часов", "24 часа"} {
 		if !containsString(labels, want) {
 			t.Fatalf("expected schedule interval label %q in %#v", want, labels)
+		}
+	}
+}
+
+func TestImageEditorStateEndpointReturnsEmptyState(t *testing.T) {
+	server := NewServer(
+		&fakeStore{config: printer.DefaultConfig()},
+		&fakePrinter{},
+		fixedClock,
+		WithImageEditorPath(t.TempDir()),
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/image-editor/state", nil)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	var payload struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Available bool `json:"available"`
+			Width     int  `json:"width"`
+			Height    int  `json:"height"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.OK || payload.Data.Available || payload.Data.Width != 0 || payload.Data.Height != 0 {
+		t.Fatalf("expected empty image editor state, got %#v", payload)
+	}
+}
+
+func TestImageEditorSaveEndpointPersistsPixelBufferAndPreview(t *testing.T) {
+	imageEditorPath := t.TempDir()
+	server := NewServer(
+		&fakeStore{config: printer.DefaultConfig()},
+		&fakePrinter{},
+		fixedClock,
+		WithImageEditorPath(imageEditorPath),
+	)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/image-editor/save", bytes.NewReader(imageEditorSaveJSON(t, 384, 1, nil)))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	buffer, err := os.ReadFile(filepath.Join(imageEditorPath, "current.bin"))
+	if err != nil {
+		t.Fatalf("read saved pixel buffer: %v", err)
+	}
+	if len(buffer) != 384 || buffer[0] != 0 || buffer[1] != 255 {
+		t.Fatalf("expected persisted 384-byte 0/255 pixel buffer, got len=%d prefix=%#v", len(buffer), buffer[:min(len(buffer), 4)])
+	}
+	if _, err := os.Stat(filepath.Join(imageEditorPath, "current.json")); err != nil {
+		t.Fatalf("expected metadata to be saved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(imageEditorPath, "preview.png")); err != nil {
+		t.Fatalf("expected preview PNG to be saved: %v", err)
+	}
+
+	stateRequest := httptest.NewRequest(http.MethodGet, "/api/image-editor/state", nil)
+	stateResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(stateResponse, stateRequest)
+	if stateResponse.Code != http.StatusOK {
+		t.Fatalf("expected state 200, got %d: %s", stateResponse.Code, stateResponse.Body.String())
+	}
+	var statePayload struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Available  bool           `json:"available"`
+			Width      int            `json:"width"`
+			Height     int            `json:"height"`
+			PreviewURL string         `json:"previewUrl"`
+			Settings   map[string]any `json:"settings"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(stateResponse.Body).Decode(&statePayload); err != nil {
+		t.Fatalf("decode state response: %v", err)
+	}
+	if !statePayload.OK || !statePayload.Data.Available || statePayload.Data.Width != 384 || statePayload.Data.Height != 1 {
+		t.Fatalf("expected saved image editor state, got %#v", statePayload)
+	}
+	if statePayload.Data.PreviewURL != "/api/image-editor/preview" {
+		t.Fatalf("expected preview URL, got %q", statePayload.Data.PreviewURL)
+	}
+	if statePayload.Data.Settings["dither"] != true {
+		t.Fatalf("expected settings to round-trip, got %#v", statePayload.Data.Settings)
+	}
+
+	previewRequest := httptest.NewRequest(http.MethodGet, "/api/image-editor/preview", nil)
+	previewResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(previewResponse, previewRequest)
+	if previewResponse.Code != http.StatusOK {
+		t.Fatalf("expected preview 200, got %d: %s", previewResponse.Code, previewResponse.Body.String())
+	}
+	if got := previewResponse.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected preview to disable cache, got %q", got)
+	}
+	if got := previewResponse.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("expected PNG content type, got %q", got)
+	}
+}
+
+func TestImageEditorSaveEndpointRejectsInvalidPixelPayload(t *testing.T) {
+	tests := []struct {
+		name      string
+		width     int
+		height    int
+		mutate    func([]int) []int
+		wantError string
+	}{
+		{
+			name:      "wrong width",
+			width:     383,
+			height:    1,
+			wantError: "width must be 384",
+		},
+		{
+			name:   "wrong length",
+			width:  384,
+			height: 1,
+			mutate: func(pixels []int) []int {
+				return pixels[:len(pixels)-1]
+			},
+			wantError: "pixel buffer length",
+		},
+		{
+			name:   "invalid pixel value",
+			width:  384,
+			height: 1,
+			mutate: func(pixels []int) []int {
+				pixels[0] = 42
+				return pixels
+			},
+			wantError: "pixel value",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewServer(
+				&fakeStore{config: printer.DefaultConfig()},
+				&fakePrinter{},
+				fixedClock,
+				WithImageEditorPath(t.TempDir()),
+			)
+
+			body := imageEditorSaveJSON(t, tt.width, tt.height, tt.mutate)
+			request := httptest.NewRequest(http.MethodPost, "/api/image-editor/save", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+
+			server.Routes().ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", response.Code, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), tt.wantError) {
+				t.Fatalf("expected error containing %q, got %s", tt.wantError, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestImageEditorPrintEndpointPrintsSavedPixelBuffer(t *testing.T) {
+	imageEditorPath := t.TempDir()
+	store := &fakeStore{config: printer.Config{Host: "192.168.0.118", Port: 5555}}
+	gateway := &fakePrinter{}
+	server := NewServer(store, gateway, fixedClock, WithImageEditorPath(imageEditorPath))
+
+	saveRequest := httptest.NewRequest(http.MethodPost, "/api/image-editor/save", bytes.NewReader(imageEditorSaveJSON(t, 384, 1, nil)))
+	saveRequest.Header.Set("Content-Type", "application/json")
+	saveResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(saveResponse, saveRequest)
+	if saveResponse.Code != http.StatusOK {
+		t.Fatalf("expected save 200, got %d: %s", saveResponse.Code, saveResponse.Body.String())
+	}
+
+	printRequest := httptest.NewRequest(http.MethodPost, "/api/image-editor/print", nil)
+	printResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(printResponse, printRequest)
+
+	if printResponse.Code != http.StatusOK {
+		t.Fatalf("expected print 200, got %d: %s", printResponse.Code, printResponse.Body.String())
+	}
+	if gateway.printedPixelBufferConfig != store.config {
+		t.Fatalf("expected print config %#v, got %#v", store.config, gateway.printedPixelBufferConfig)
+	}
+	if gateway.printedPixelBuffer.Width != 384 || gateway.printedPixelBuffer.Height != 1 || len(gateway.printedPixelBuffer.Pixels) != 384 {
+		t.Fatalf("expected printed 384x1 pixel buffer, got %#v", gateway.printedPixelBuffer)
+	}
+	if gateway.printedPixelBuffer.Pixels[1] != 255 {
+		t.Fatalf("expected black pixel to round-trip, got %#v", gateway.printedPixelBuffer.Pixels[:4])
+	}
+}
+
+func TestImageEditorClearEndpointDeletesSavedState(t *testing.T) {
+	imageEditorPath := t.TempDir()
+	server := NewServer(&fakeStore{config: printer.DefaultConfig()}, &fakePrinter{}, fixedClock, WithImageEditorPath(imageEditorPath))
+
+	saveRequest := httptest.NewRequest(http.MethodPost, "/api/image-editor/save", bytes.NewReader(imageEditorSaveJSON(t, 384, 1, nil)))
+	saveRequest.Header.Set("Content-Type", "application/json")
+	saveResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(saveResponse, saveRequest)
+	if saveResponse.Code != http.StatusOK {
+		t.Fatalf("expected save 200, got %d: %s", saveResponse.Code, saveResponse.Body.String())
+	}
+
+	clearRequest := httptest.NewRequest(http.MethodDelete, "/api/image-editor/image", nil)
+	clearResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(clearResponse, clearRequest)
+
+	if clearResponse.Code != http.StatusOK {
+		t.Fatalf("expected clear 200, got %d: %s", clearResponse.Code, clearResponse.Body.String())
+	}
+	for _, name := range []string{"current.bin", "current.json", "preview.png"} {
+		if _, err := os.Stat(filepath.Join(imageEditorPath, name)); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, stat error: %v", name, err)
 		}
 	}
 }
@@ -1139,12 +1382,14 @@ func (s *fakeScheduler) Status() (schedulerruntime.Status, error) {
 }
 
 type fakePrinter struct {
-	checkMessage      string
-	checkedConfig     printer.Config
-	fontMetricsConfig printer.Config
-	fontMetrics       []printer.FontMetric
-	printedConfig     printer.Config
-	printedLines      []receipt.Line
+	checkMessage             string
+	checkedConfig            printer.Config
+	fontMetricsConfig        printer.Config
+	fontMetrics              []printer.FontMetric
+	printedConfig            printer.Config
+	printedLines             []receipt.Line
+	printedPixelBufferConfig printer.Config
+	printedPixelBuffer       printer.PixelBuffer
 }
 
 func (p *fakePrinter) CheckConnection(_ context.Context, config printer.Config) (string, error) {
@@ -1158,6 +1403,12 @@ func (p *fakePrinter) CheckConnection(_ context.Context, config printer.Config) 
 func (p *fakePrinter) PrintReceipt(_ context.Context, config printer.Config, lines []receipt.Line) error {
 	p.printedConfig = config
 	p.printedLines = append([]receipt.Line(nil), lines...)
+	return nil
+}
+
+func (p *fakePrinter) PrintPixelBuffer(_ context.Context, config printer.Config, buffer printer.PixelBuffer) error {
+	p.printedPixelBufferConfig = config
+	p.printedPixelBuffer = buffer.Clone()
 	return nil
 }
 
@@ -1313,3 +1564,33 @@ func scheduleSettingsEqual(left schedule.Settings, right schedule.Settings) bool
 	}
 	return true
 }
+
+func imageEditorSaveJSON(t *testing.T, width int, height int, mutate func([]int) []int) []byte {
+	t.Helper()
+	pixels := make([]int, width*height)
+	for index := range pixels {
+		if index%2 == 1 {
+			pixels[index] = 255
+		}
+	}
+	if mutate != nil {
+		pixels = mutate(pixels)
+	}
+	payload := map[string]any{
+		"width":      width,
+		"height":     height,
+		"pixels":     pixels,
+		"previewPng": tinyPNGDataURL,
+		"settings": map[string]any{
+			"threshold": 128,
+			"dither":    true,
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal image editor payload: %v", err)
+	}
+	return data
+}
+
+const tinyPNGDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lJypqAAAAABJRU5ErkJggg=="

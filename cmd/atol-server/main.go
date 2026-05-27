@@ -23,6 +23,7 @@ func main() {
 	settingsPath := env("SETTINGS_PATH", "/data/settings.json")
 	libraryPath := env("ATOL_LIBRARY_PATH", "/opt/atol/lib")
 	assetsPath := env("ASSETS_PATH", "/opt/atol-server/assets")
+	imageEditorPath := env("IMAGE_EDITOR_PATH", "/data/image-editor")
 
 	store := settings.NewStore(settingsPath)
 	gateway := printer.NewGateway(libraryPath, assetsPath)
@@ -44,6 +45,7 @@ func main() {
 		gateway,
 		time.Now,
 		web.WithAssetsPath(assetsPath),
+		web.WithImageEditorPath(imageEditorPath),
 		web.WithReceiptService(receiptService),
 		web.WithGoogleClient(googleClient),
 		web.WithScheduler(scheduler),
@@ -53,6 +55,7 @@ func main() {
 	log.Printf("settings path: %s", settingsPath)
 	log.Printf("ATOL library path: %s", libraryPath)
 	log.Printf("assets path: %s", assetsPath)
+	log.Printf("image editor path: %s", imageEditorPath)
 	googleStatus := googleClient.Status()
 	log.Printf("Google credentials path: %s", googleStatus.CredentialsPath)
 	log.Printf("Google token path: %s", googleStatus.TokenPath)

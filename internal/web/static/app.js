@@ -12,12 +12,25 @@ const weatherLatitudeInput = document.querySelector("#weather-latitude");
 const weatherLongitudeInput = document.querySelector("#weather-longitude");
 const weatherLocationResultsEl = document.querySelector("#weather-location-results");
 const weatherLocationHelpEl = document.querySelector("#weather-location-help");
+const imageEditorFileInput = document.querySelector("#image-editor-file");
+const imageEditorCanvasHeightInput = document.querySelector("#image-editor-canvas-height");
+const imageEditorSourceCanvas = document.querySelector("#image-editor-source");
+const imageEditorResultCanvas = document.querySelector("#image-editor-result");
+const imageEditorStatusEl = document.querySelector("#image-editor-status");
 let lastPreviewLines = [];
 let weatherSearchTimer = null;
 let financeDraft = {
   amountTon: document.querySelector("#ton-amount").value,
   investedUsd: document.querySelector("#ton-invested").value
 };
+const imageEditorWidth = 384;
+let imageEditorSourceImage = null;
+let imageEditorSourceObjectURL = "";
+let imageEditorPixels = null;
+let imageEditorPointerDown = false;
+let imageEditorShapeStart = null;
+let imageEditorShapeBasePixels = null;
+let imageEditorLastSavedState = null;
 const fallbackFontMetrics = [
   { font: 0, lineLength: 32, fontWidth: 12 },
   { font: 1, lineLength: 42, fontWidth: 9 },
@@ -790,6 +803,591 @@ async function stopSchedule() {
   }
 }
 
+function setImageEditorStatus(kind, message) {
+  if (!imageEditorStatusEl) {
+    return;
+  }
+  imageEditorStatusEl.className = "image-editor-status" + (kind ? " " + kind : "");
+  imageEditorStatusEl.textContent = message;
+}
+
+function imageEditorCanvasHeight() {
+  const value = Number.parseInt(imageEditorCanvasHeightInput && imageEditorCanvasHeightInput.value, 10);
+  if (!Number.isFinite(value)) {
+    return imageEditorResultCanvas.height || 160;
+  }
+  return Math.max(32, Math.min(2048, value));
+}
+
+function imageEditorSettings() {
+  return {
+    canvasHeight: imageEditorCanvasHeight(),
+    rotation: Number.parseInt(document.querySelector("#image-editor-rotation").value, 10) || 0,
+    brightness: Number.parseInt(document.querySelector("#image-editor-brightness").value, 10) || 0,
+    contrast: Number.parseInt(document.querySelector("#image-editor-contrast").value, 10) || 0,
+    threshold: Number.parseInt(document.querySelector("#image-editor-threshold").value, 10) || 128,
+    dither: document.querySelector("#image-editor-dither").checked,
+    invert: document.querySelector("#image-editor-invert").checked,
+    tool: document.querySelector("#image-editor-tool").value,
+    brush: Number.parseInt(document.querySelector("#image-editor-brush").value, 10) || 6
+  };
+}
+
+function applyImageEditorSettings(settings) {
+  if (!settings) {
+    return;
+  }
+  const setControlValue = (selector, value) => {
+    if (value !== undefined && value !== null) {
+      document.querySelector(selector).value = String(value);
+    }
+  };
+  setControlValue("#image-editor-rotation", settings.rotation);
+  setControlValue("#image-editor-canvas-height", settings.canvasHeight);
+  setControlValue("#image-editor-brightness", settings.brightness);
+  setControlValue("#image-editor-contrast", settings.contrast);
+  setControlValue("#image-editor-threshold", settings.threshold);
+  setControlValue("#image-editor-tool", settings.tool);
+  setControlValue("#image-editor-brush", settings.brush);
+  if (settings.dither !== undefined) {
+    document.querySelector("#image-editor-dither").checked = Boolean(settings.dither);
+  }
+  if (settings.invert !== undefined) {
+    document.querySelector("#image-editor-invert").checked = Boolean(settings.invert);
+  }
+}
+
+function resizeImageEditorCanvases(width, height) {
+  const safeHeight = Math.max(1, Math.min(2048, Math.round(height || 1)));
+  [imageEditorSourceCanvas, imageEditorResultCanvas].forEach(canvas => {
+    canvas.width = width;
+    canvas.height = safeHeight;
+    canvas.style.aspectRatio = width + " / " + safeHeight;
+  });
+  if (imageEditorCanvasHeightInput) {
+    imageEditorCanvasHeightInput.value = String(safeHeight);
+  }
+}
+
+function clearImageEditorCanvas(canvas) {
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function createBlankImageEditorCanvas(height, options = {}) {
+  const safeHeight = Math.max(32, Math.min(2048, Math.round(height || 160)));
+  revokeImageEditorObjectURL();
+  imageEditorSourceImage = null;
+  imageEditorShapeStart = null;
+  imageEditorShapeBasePixels = null;
+  imageEditorLastSavedState = null;
+  if (imageEditorFileInput) {
+    imageEditorFileInput.value = "";
+  }
+  resizeImageEditorCanvases(imageEditorWidth, safeHeight);
+  clearImageEditorCanvas(imageEditorSourceCanvas);
+  imageEditorPixels = new Uint8Array(imageEditorResultCanvas.width * imageEditorResultCanvas.height);
+  renderImageEditorResult();
+  if (options.status !== false) {
+    setImageEditorStatus("", "Пустой холст готов: " + imageEditorResultCanvas.width + "x" + imageEditorResultCanvas.height + " px.");
+  }
+}
+
+function resetImageEditorCanvases() {
+  createBlankImageEditorCanvas(imageEditorCanvasHeight(), { status: false });
+}
+
+function revokeImageEditorObjectURL() {
+  if (imageEditorSourceObjectURL) {
+    URL.revokeObjectURL(imageEditorSourceObjectURL);
+    imageEditorSourceObjectURL = "";
+  }
+}
+
+async function loadImageEditorState() {
+  const response = await fetch("/api/image-editor/state");
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.error || "Не удалось загрузить изображение.");
+  }
+  const state = payload.data || {};
+  imageEditorLastSavedState = state;
+  if (!state.available) {
+    resetImageEditorCanvases();
+    setImageEditorStatus("", "Пустой холст готов: можно рисовать без загрузки файла.");
+    return;
+  }
+  applyImageEditorSettings(state.settings || {});
+  await loadSavedImageEditorPreview(state);
+  setImageEditorStatus("ok", "Сохранено: " + state.width + "x" + state.height + " px.");
+}
+
+function loadImageElement(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Не удалось загрузить изображение."));
+    image.src = src;
+  });
+}
+
+async function loadSavedImageEditorPreview(state) {
+  const image = await loadImageElement((state.previewUrl || "/api/image-editor/preview") + "?v=" + Date.now());
+  imageEditorSourceImage = image;
+  resizeImageEditorCanvases(state.width || image.width || imageEditorWidth, state.height || image.height || 160);
+  const sourceContext = imageEditorSourceCanvas.getContext("2d");
+  sourceContext.fillStyle = "#fff";
+  sourceContext.fillRect(0, 0, imageEditorSourceCanvas.width, imageEditorSourceCanvas.height);
+  sourceContext.drawImage(image, 0, 0, imageEditorSourceCanvas.width, imageEditorSourceCanvas.height);
+  const resultContext = imageEditorResultCanvas.getContext("2d");
+  resultContext.fillStyle = "#fff";
+  resultContext.fillRect(0, 0, imageEditorResultCanvas.width, imageEditorResultCanvas.height);
+  resultContext.drawImage(image, 0, 0, imageEditorResultCanvas.width, imageEditorResultCanvas.height);
+  imageEditorPixels = pixelsFromResultCanvas();
+}
+
+async function loadImageEditorFile(file) {
+  if (!file) {
+    return;
+  }
+  revokeImageEditorObjectURL();
+  imageEditorSourceObjectURL = URL.createObjectURL(file);
+  imageEditorSourceImage = await loadImageElement(imageEditorSourceObjectURL);
+  imageEditorLastSavedState = null;
+  applyImageEditorProcessing();
+  setImageEditorStatus("", "Готово к сохранению: " + imageEditorResultCanvas.width + "x" + imageEditorResultCanvas.height + " px.");
+}
+
+function rotatedImageCanvas(image, rotation) {
+  const naturalWidth = image.naturalWidth || image.width;
+  const naturalHeight = image.naturalHeight || image.height;
+  const quarterTurn = rotation === 90 || rotation === 270;
+  const canvas = document.createElement("canvas");
+  canvas.width = quarterTurn ? naturalHeight : naturalWidth;
+  canvas.height = quarterTurn ? naturalWidth : naturalHeight;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.save();
+  switch (rotation) {
+    case 90:
+      context.translate(canvas.width, 0);
+      context.rotate(Math.PI / 2);
+      break;
+    case 180:
+      context.translate(canvas.width, canvas.height);
+      context.rotate(Math.PI);
+      break;
+    case 270:
+      context.translate(0, canvas.height);
+      context.rotate(-Math.PI / 2);
+      break;
+    default:
+      break;
+  }
+  context.drawImage(image, 0, 0);
+  context.restore();
+  return canvas;
+}
+
+function drawSourceImageToCanvas() {
+  if (!imageEditorSourceImage) {
+    return false;
+  }
+  const settings = imageEditorSettings();
+  const rotated = rotatedImageCanvas(imageEditorSourceImage, settings.rotation);
+  const targetHeight = Math.max(1, Math.min(2048, Math.round(rotated.height * imageEditorWidth / rotated.width)));
+  resizeImageEditorCanvases(imageEditorWidth, targetHeight);
+  const context = imageEditorSourceCanvas.getContext("2d");
+  context.imageSmoothingEnabled = true;
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, imageEditorSourceCanvas.width, imageEditorSourceCanvas.height);
+  context.drawImage(rotated, 0, 0, imageEditorSourceCanvas.width, imageEditorSourceCanvas.height);
+  return true;
+}
+
+function applyImageEditorProcessing() {
+  if (!drawSourceImageToCanvas()) {
+    return;
+  }
+  const settings = imageEditorSettings();
+  const sourceContext = imageEditorSourceCanvas.getContext("2d");
+  const imageData = sourceContext.getImageData(0, 0, imageEditorSourceCanvas.width, imageEditorSourceCanvas.height);
+  const grayscale = new Float32Array(imageEditorSourceCanvas.width * imageEditorSourceCanvas.height);
+  const contrastValue = settings.contrast * 2.55;
+  const contrastFactor = (259 * (contrastValue + 255)) / (255 * (259 - contrastValue));
+  for (let index = 0; index < grayscale.length; index++) {
+    const offset = index * 4;
+    const luminance = imageData.data[offset] * 0.299 + imageData.data[offset + 1] * 0.587 + imageData.data[offset + 2] * 0.114;
+    grayscale[index] = Math.max(0, Math.min(255, contrastFactor * (luminance - 128) + 128 + settings.brightness));
+  }
+
+  const pixels = new Uint8Array(grayscale.length);
+  if (settings.dither) {
+    const work = Float32Array.from(grayscale);
+    const width = imageEditorSourceCanvas.width;
+    const height = imageEditorSourceCanvas.height;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const index = y * width + x;
+        const black = work[index] < settings.threshold;
+        const quantizedLuminance = black ? 0 : 255;
+        const error = work[index] - quantizedLuminance;
+        pixels[index] = black ? 255 : 0;
+        if (x + 1 < width) work[index + 1] += error * 7 / 16;
+        if (y + 1 >= height) continue;
+        if (x > 0) work[index + width - 1] += error * 3 / 16;
+        work[index + width] += error * 5 / 16;
+        if (x + 1 < width) work[index + width + 1] += error / 16;
+      }
+    }
+  } else {
+    for (let index = 0; index < grayscale.length; index++) {
+      pixels[index] = grayscale[index] < settings.threshold ? 255 : 0;
+    }
+  }
+
+  if (settings.invert) {
+    for (let index = 0; index < pixels.length; index++) {
+      pixels[index] = pixels[index] ? 0 : 255;
+    }
+  }
+  imageEditorPixels = pixels;
+  renderImageEditorResult();
+}
+
+function renderImageEditorResult() {
+  if (!imageEditorPixels) {
+    clearImageEditorCanvas(imageEditorResultCanvas);
+    return;
+  }
+  const context = imageEditorResultCanvas.getContext("2d");
+  const imageData = context.createImageData(imageEditorResultCanvas.width, imageEditorResultCanvas.height);
+  for (let index = 0; index < imageEditorPixels.length; index++) {
+    const color = imageEditorPixels[index] ? 0 : 255;
+    const offset = index * 4;
+    imageData.data[offset] = color;
+    imageData.data[offset + 1] = color;
+    imageData.data[offset + 2] = color;
+    imageData.data[offset + 3] = 255;
+  }
+  context.putImageData(imageData, 0, 0);
+}
+
+function pixelsFromResultCanvas() {
+  const context = imageEditorResultCanvas.getContext("2d");
+  const imageData = context.getImageData(0, 0, imageEditorResultCanvas.width, imageEditorResultCanvas.height);
+  const pixels = new Uint8Array(imageEditorResultCanvas.width * imageEditorResultCanvas.height);
+  for (let index = 0; index < pixels.length; index++) {
+    const offset = index * 4;
+    const luminance = imageData.data[offset] * 0.299 + imageData.data[offset + 1] * 0.587 + imageData.data[offset + 2] * 0.114;
+    pixels[index] = luminance < 128 ? 255 : 0;
+  }
+  return pixels;
+}
+
+function imageEditorCanvasPoint(event) {
+  const rect = imageEditorResultCanvas.getBoundingClientRect();
+  return {
+    x: Math.floor((event.clientX - rect.left) * imageEditorResultCanvas.width / rect.width),
+    y: Math.floor((event.clientY - rect.top) * imageEditorResultCanvas.height / rect.height)
+  };
+}
+
+function ensureImageEditorPixelBuffer() {
+  const expectedLength = imageEditorResultCanvas.width * imageEditorResultCanvas.height;
+  if (!imageEditorPixels || imageEditorPixels.length !== expectedLength) {
+    imageEditorPixels = pixelsFromResultCanvas();
+  }
+}
+
+function imageEditorTool() {
+  return document.querySelector("#image-editor-tool").value;
+}
+
+function imageEditorDrawValue(tool) {
+  return tool === "eraser" ? 0 : 255;
+}
+
+function isImageEditorShapeTool(tool) {
+  return tool === "line" || tool === "rectangle" || tool === "filled-rectangle" || tool === "ellipse" || tool === "filled-ellipse";
+}
+
+function imageEditorBrushRadius() {
+  const size = Number.parseInt(document.querySelector("#image-editor-brush").value, 10) || 1;
+  return Math.max(0, Math.floor(size / 2));
+}
+
+function setImageEditorPixel(pixels, width, height, x, y, value) {
+  if (x < 0 || x >= width || y < 0 || y >= height) {
+    return;
+  }
+  pixels[y * width + x] = value;
+}
+
+function paintImageEditorDisk(pixels, width, height, centerX, centerY, radius, value) {
+  if (radius <= 0) {
+    setImageEditorPixel(pixels, width, height, centerX, centerY, value);
+    return;
+  }
+  for (let y = centerY - radius; y <= centerY + radius; y++) {
+    if (y < 0 || y >= height) continue;
+    for (let x = centerX - radius; x <= centerX + radius; x++) {
+      if (x < 0 || x >= width) continue;
+      const dx = x - centerX;
+      const dy = y - centerY;
+      if (dx * dx + dy * dy <= radius * radius) {
+        pixels[y * width + x] = value;
+      }
+    }
+  }
+}
+
+function drawImageEditorLine(pixels, width, height, from, to, radius, value) {
+  const steps = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y), 1);
+  for (let step = 0; step <= steps; step++) {
+    const progress = step / steps;
+    const x = Math.round(from.x + (to.x - from.x) * progress);
+    const y = Math.round(from.y + (to.y - from.y) * progress);
+    paintImageEditorDisk(pixels, width, height, x, y, radius, value);
+  }
+}
+
+function normalizedImageEditorRect(from, to) {
+  return {
+    left: Math.min(from.x, to.x),
+    top: Math.min(from.y, to.y),
+    right: Math.max(from.x, to.x),
+    bottom: Math.max(from.y, to.y)
+  };
+}
+
+function drawImageEditorRectangle(pixels, width, height, from, to, radius, value, filled) {
+  const rect = normalizedImageEditorRect(from, to);
+  if (filled) {
+    for (let y = rect.top; y <= rect.bottom; y++) {
+      for (let x = rect.left; x <= rect.right; x++) {
+        setImageEditorPixel(pixels, width, height, x, y, value);
+      }
+    }
+    return;
+  }
+  drawImageEditorLine(pixels, width, height, { x: rect.left, y: rect.top }, { x: rect.right, y: rect.top }, radius, value);
+  drawImageEditorLine(pixels, width, height, { x: rect.right, y: rect.top }, { x: rect.right, y: rect.bottom }, radius, value);
+  drawImageEditorLine(pixels, width, height, { x: rect.right, y: rect.bottom }, { x: rect.left, y: rect.bottom }, radius, value);
+  drawImageEditorLine(pixels, width, height, { x: rect.left, y: rect.bottom }, { x: rect.left, y: rect.top }, radius, value);
+}
+
+function drawImageEditorEllipse(pixels, width, height, from, to, radius, value, filled) {
+  const rect = normalizedImageEditorRect(from, to);
+  const centerX = (rect.left + rect.right) / 2;
+  const centerY = (rect.top + rect.bottom) / 2;
+  const radiusX = Math.max(1, (rect.right - rect.left) / 2);
+  const radiusY = Math.max(1, (rect.bottom - rect.top) / 2);
+  if (filled) {
+    for (let y = rect.top; y <= rect.bottom; y++) {
+      for (let x = rect.left; x <= rect.right; x++) {
+        const normalized = ((x - centerX) * (x - centerX)) / (radiusX * radiusX) + ((y - centerY) * (y - centerY)) / (radiusY * radiusY);
+        if (normalized <= 1) {
+          setImageEditorPixel(pixels, width, height, x, y, value);
+        }
+      }
+    }
+    return;
+  }
+  const steps = Math.max(24, Math.ceil(Math.PI * 2 * Math.max(radiusX, radiusY)));
+  for (let step = 0; step <= steps; step++) {
+    const angle = (Math.PI * 2 * step) / steps;
+    const x = Math.round(centerX + Math.cos(angle) * radiusX);
+    const y = Math.round(centerY + Math.sin(angle) * radiusY);
+    paintImageEditorDisk(pixels, width, height, x, y, radius, value);
+  }
+}
+
+function applyImageEditorShape(tool, from, to, targetPixels) {
+  const width = imageEditorResultCanvas.width;
+  const height = imageEditorResultCanvas.height;
+  const radius = imageEditorBrushRadius();
+  const value = imageEditorDrawValue(tool);
+  switch (tool) {
+    case "line":
+      drawImageEditorLine(targetPixels, width, height, from, to, radius, value);
+      break;
+    case "rectangle":
+      drawImageEditorRectangle(targetPixels, width, height, from, to, radius, value, false);
+      break;
+    case "filled-rectangle":
+      drawImageEditorRectangle(targetPixels, width, height, from, to, radius, value, true);
+      break;
+    case "ellipse":
+      drawImageEditorEllipse(targetPixels, width, height, from, to, radius, value, false);
+      break;
+    case "filled-ellipse":
+      drawImageEditorEllipse(targetPixels, width, height, from, to, radius, value, true);
+      break;
+    default:
+      drawImageEditorLine(targetPixels, width, height, from, to, radius, value);
+      break;
+  }
+}
+
+function applyImageEditorBrushAt(point) {
+  ensureImageEditorPixelBuffer();
+  const tool = imageEditorTool();
+  const value = imageEditorDrawValue(tool);
+  const radius = imageEditorBrushRadius();
+  const width = imageEditorResultCanvas.width;
+  const height = imageEditorResultCanvas.height;
+  paintImageEditorDisk(imageEditorPixels, width, height, point.x, point.y, radius, value);
+  renderImageEditorResult();
+  imageEditorLastSavedState = null;
+}
+
+function previewImageEditorShape(to) {
+  if (!imageEditorShapeStart || !imageEditorShapeBasePixels) {
+    return;
+  }
+  const tool = imageEditorTool();
+  imageEditorPixels = imageEditorShapeBasePixels.slice();
+  applyImageEditorShape(tool, imageEditorShapeStart, to, imageEditorPixels);
+  renderImageEditorResult();
+  imageEditorLastSavedState = null;
+}
+
+function beginImageEditorPointer(event) {
+  event.preventDefault();
+  ensureImageEditorPixelBuffer();
+  const point = imageEditorCanvasPoint(event);
+  const tool = imageEditorTool();
+  imageEditorPointerDown = true;
+  if (isImageEditorShapeTool(tool)) {
+    imageEditorShapeStart = point;
+    imageEditorShapeBasePixels = imageEditorPixels.slice();
+    previewImageEditorShape(point);
+    return;
+  }
+  imageEditorShapeStart = null;
+  imageEditorShapeBasePixels = null;
+  applyImageEditorBrushAt(point);
+}
+
+function moveImageEditorPointer(event) {
+  if (!imageEditorPointerDown) {
+    return;
+  }
+  event.preventDefault();
+  const point = imageEditorCanvasPoint(event);
+  if (imageEditorShapeStart) {
+    previewImageEditorShape(point);
+    return;
+  }
+  applyImageEditorBrushAt(point);
+}
+
+function endImageEditorPointer(event) {
+  if (!imageEditorPointerDown) {
+    return;
+  }
+  event.preventDefault();
+  const point = imageEditorCanvasPoint(event);
+  if (imageEditorShapeStart) {
+    previewImageEditorShape(point);
+    imageEditorShapeStart = null;
+    imageEditorShapeBasePixels = null;
+  }
+  imageEditorPointerDown = false;
+}
+
+async function saveImageEditorToServer() {
+  if (!imageEditorPixels || imageEditorPixels.length === 0) {
+    throw new Error("Сначала создай холст или загрузи изображение.");
+  }
+  const payload = {
+    width: imageEditorResultCanvas.width,
+    height: imageEditorResultCanvas.height,
+    pixels: Array.from(imageEditorPixels),
+    previewPng: imageEditorResultCanvas.toDataURL("image/png"),
+    settings: imageEditorSettings()
+  };
+  const response = await fetch("/api/image-editor/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || "Не удалось сохранить изображение.");
+  }
+  imageEditorLastSavedState = result.data || null;
+  return result;
+}
+
+async function saveImageEditor() {
+  setBusy(true);
+  setImageEditorStatus("", "Сохраняю изображение...");
+  try {
+    const result = await saveImageEditorToServer();
+    setImageEditorStatus("ok", result.message || "Изображение сохранено.");
+    setStatus("ok", result.message || "Изображение сохранено.");
+  } catch (error) {
+    setImageEditorStatus("error", error.message);
+    setStatus("error", error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function printImageEditor() {
+  setBusy(true);
+  setImageEditorStatus("", "Печатаю изображение...");
+  try {
+    if (imageEditorPixels && (!imageEditorLastSavedState || imageEditorLastSavedState.width !== imageEditorResultCanvas.width || imageEditorLastSavedState.height !== imageEditorResultCanvas.height)) {
+      await saveImageEditorToServer();
+    } else if (imageEditorPixels) {
+      await saveImageEditorToServer();
+    }
+    const response = await fetch("/api/image-editor/print", { method: "POST" });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "Не удалось напечатать изображение.");
+    }
+    setImageEditorStatus("ok", payload.message || "Изображение напечатано.");
+    setStatus("ok", payload.message || "Изображение напечатано.");
+  } catch (error) {
+    setImageEditorStatus("error", error.message);
+    setStatus("error", error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function clearImageEditor() {
+  setBusy(true);
+  setImageEditorStatus("", "Удаляю изображение...");
+  try {
+    const response = await fetch("/api/image-editor/image", { method: "DELETE" });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "Не удалось удалить изображение.");
+    }
+    revokeImageEditorObjectURL();
+    imageEditorSourceImage = null;
+    imageEditorLastSavedState = null;
+    if (imageEditorFileInput) {
+      imageEditorFileInput.value = "";
+    }
+    resetImageEditorCanvases();
+    setImageEditorStatus("", "Нет сохраненного изображения.");
+    setStatus("ok", payload.message || "Изображение удалено.");
+  } catch (error) {
+    setImageEditorStatus("error", error.message);
+    setStatus("error", error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
 function renderPreview(lines) {
   const paper = document.createElement("div");
   paper.className = "receipt-paper";
@@ -995,6 +1593,51 @@ function bindEventListeners() {
   document.querySelector('[data-action="weather"]').addEventListener("click", () => {
     runAction("/api/print/weather", "");
   });
+  imageEditorFileInput.addEventListener("change", event => {
+    loadImageEditorFile(event.target.files && event.target.files[0]).catch(error => {
+      setImageEditorStatus("error", error.message);
+      setStatus("error", error.message);
+    });
+  });
+  [
+    "#image-editor-rotation",
+    "#image-editor-brightness",
+    "#image-editor-contrast",
+    "#image-editor-threshold",
+    "#image-editor-dither",
+    "#image-editor-invert"
+  ].forEach(selector => {
+    document.querySelector(selector).addEventListener("input", applyImageEditorProcessing);
+    document.querySelector(selector).addEventListener("change", applyImageEditorProcessing);
+  });
+  imageEditorResultCanvas.addEventListener("pointerdown", event => {
+    imageEditorResultCanvas.setPointerCapture(event.pointerId);
+    beginImageEditorPointer(event);
+  });
+  imageEditorResultCanvas.addEventListener("pointermove", event => {
+    moveImageEditorPointer(event);
+  });
+  imageEditorResultCanvas.addEventListener("pointerup", event => {
+    endImageEditorPointer(event);
+    imageEditorResultCanvas.releasePointerCapture(event.pointerId);
+  });
+  imageEditorResultCanvas.addEventListener("pointercancel", () => {
+    imageEditorPointerDown = false;
+    imageEditorShapeStart = null;
+    imageEditorShapeBasePixels = null;
+  });
+  document.querySelector('[data-action="new-image-editor-canvas"]').addEventListener("click", () => {
+    createBlankImageEditorCanvas(imageEditorCanvasHeight());
+  });
+  document.querySelector('[data-action="save-image-editor"]').addEventListener("click", () => {
+    saveImageEditor();
+  });
+  document.querySelector('[data-action="print-image-editor"]').addEventListener("click", () => {
+    printImageEditor();
+  });
+  document.querySelector('[data-action="clear-image-editor"]').addEventListener("click", () => {
+    clearImageEditor();
+  });
   document.querySelector("#news-source-list").addEventListener("input", clearNewsCountValidation);
   document.querySelector("#news-source-list").addEventListener("change", clearNewsCountValidation);
   document.querySelector("#news-translate").addEventListener("input", clearNewsCountValidation);
@@ -1053,6 +1696,9 @@ async function initializeApp() {
   bindEventListeners();
   updateFontControls();
   updateScheduleMode();
+  loadImageEditorState().catch(error => {
+    setImageEditorStatus("error", error.message);
+  });
   loadSchedulerStatus();
   loadGoogleStatus().catch(error => {
     setGoogleStatus("error", error.message);

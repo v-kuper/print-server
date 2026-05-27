@@ -27,6 +27,7 @@ COPY assets/ /opt/atol-server/assets/
 ENV HTTP_ADDR=:8080
 ENV SETTINGS_PATH=/data/settings.json
 ENV ASSETS_PATH=/opt/atol-server/assets
+ENV IMAGE_EDITOR_PATH=/data/image-editor
 ENV GODEBUG=asyncpreemptoff=1
 
 EXPOSE 8080

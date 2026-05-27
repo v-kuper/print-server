@@ -21,6 +21,10 @@ func (g *Gateway) PrintReceipt(_ context.Context, _ Config, _ []receipt.Line) er
 	return unsupportedError()
 }
 
+func (g *Gateway) PrintPixelBuffer(_ context.Context, _ Config, _ PixelBuffer) error {
+	return unsupportedError()
+}
+
 func (g *Gateway) FontMetrics(_ context.Context, _ Config) ([]FontMetric, error) {
 	return nil, unsupportedError()
 }
