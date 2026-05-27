@@ -53,7 +53,15 @@ func (g *Gateway) PrintReceipt(ctx context.Context, config Config, lines []recei
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if line.ImageKey != "" || line.ImagePath != "" {
+		if len(line.ImagePixelBuffer) > 0 {
+			buffer := pixelBufferFromReceiptLine(line).Normalized()
+			if err := buffer.Validate(); err != nil {
+				return err
+			}
+			if err := session.printPixelBuffer(buffer); err != nil {
+				return err
+			}
+		} else if line.ImageKey != "" || line.ImagePath != "" {
 			imagePath, err := g.imagePath(line.ImageKey, line.ImagePath)
 			if err != nil {
 				return err
@@ -225,10 +233,11 @@ func (s *fptrSession) printPixelBuffer(buffer PixelBuffer) error {
 		return err
 	}
 
-	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_PIXEL_BUFFER, buffer.Pixels)
-	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_WIDTH, buffer.Width)
-	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_ALIGNMENT, alignmentToFptr(buffer.Alignment))
-	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_SCALE_PERCENT, float64(buffer.ScalePercent))
+	params := pixelBufferPrintParams(buffer)
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_PIXEL_BUFFER, params.pixels)
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_WIDTH, params.width)
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_ALIGNMENT, alignmentToFptr(params.alignment))
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_SCALE_PERCENT, params.scalePercent)
 
 	return s.call("print pixel buffer", s.fptr.PrintPixelBuffer)
 }

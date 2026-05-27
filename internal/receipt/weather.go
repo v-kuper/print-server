@@ -385,6 +385,7 @@ func imageLine(image Image, style lineStyle) Line {
 		ImageURL:          image.URL,
 		ImageWidth:        image.Width,
 		ImageHeight:       image.Height,
+		ImagePixelBuffer:  append([]byte(nil), image.PixelBuffer...),
 		ImageScalePercent: scalePercent,
 		Alignment:         AlignmentCenter,
 		Role:              style.Role,

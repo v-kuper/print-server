@@ -25,6 +25,7 @@ type Line struct {
 	ImageURL          string
 	ImageWidth        int
 	ImageHeight       int
+	ImagePixelBuffer  []byte `json:"-"`
 	ImageScalePercent int
 	Alignment         Alignment
 	Role              Role
@@ -39,6 +40,7 @@ type Image struct {
 	URL          string
 	Width        int
 	Height       int
+	PixelBuffer  []byte `json:"-"`
 	ScalePercent int
 }
 

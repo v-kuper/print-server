@@ -57,6 +57,42 @@ func TestRenderTonPriceChartWritesPrintablePNG(t *testing.T) {
 	}
 }
 
+func TestRenderTonPriceChartPixelBufferReturnsPrintableMonoBuffer(t *testing.T) {
+	chartData := finance.TonMarketChart{Points: []finance.TonPricePoint{
+		{Time: time.Unix(0, 0), USD: 1.74},
+		{Time: time.Unix(3600, 0), USD: 1.80},
+		{Time: time.Unix(7200, 0), USD: 1.72},
+		{Time: time.Unix(10800, 0), USD: 1.77},
+	}}
+
+	buffer, err := RenderTonPriceChartPixelBuffer(chartData, Options{Width: 384, Height: 96})
+	if err != nil {
+		t.Fatalf("render chart pixel buffer: %v", err)
+	}
+
+	if buffer.Width != 384 || buffer.Height != 96 {
+		t.Fatalf("expected 384x96 chart buffer, got %#v", buffer)
+	}
+	if len(buffer.Pixels) != 384*96 {
+		t.Fatalf("expected width*height pixels, got %d", len(buffer.Pixels))
+	}
+	blackPixels := 0
+	for index, value := range buffer.Pixels {
+		if value != 0 && value != 255 {
+			t.Fatalf("expected monochrome 0/255 pixel at %d, got %d", index, value)
+		}
+		if value == 255 {
+			blackPixels++
+		}
+	}
+	if blackPixels < 200 {
+		t.Fatalf("expected visible chart pixels, got %d black pixels", blackPixels)
+	}
+	if !hasPixelBufferVerticalTick(buffer, 8) || !hasPixelBufferVerticalTick(buffer, buffer.Width/2) || !hasPixelBufferVerticalTick(buffer, buffer.Width-9) {
+		t.Fatalf("expected visible timeline ticks")
+	}
+}
+
 func TestRenderFiatRateChartWritesPrintablePNG(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "usd-byn-7d.png")
 	chartData := finance.FiatMarketChart{
@@ -91,6 +127,16 @@ func TestRenderFiatRateChartWritesPrintablePNG(t *testing.T) {
 	if !hasVerticalTick(image, 8) || !hasVerticalTick(image, bounds.Dx()/2) || !hasVerticalTick(image, bounds.Dx()-9) {
 		t.Fatalf("expected visible vertical time ticks")
 	}
+}
+
+func hasPixelBufferVerticalTick(buffer MonoImage, x int) bool {
+	blackPixels := 0
+	for y := 0; y < buffer.Height; y++ {
+		if buffer.Pixels[y*buffer.Width+x] == 255 {
+			blackPixels++
+		}
+	}
+	return blackPixels >= 8
 }
 
 func isDark(value color.Color) bool {

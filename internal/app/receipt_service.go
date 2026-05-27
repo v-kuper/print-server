@@ -246,6 +246,7 @@ func (s *ReceiptService) BuildDailyReceiptWithWarnings(ctx context.Context) ([]r
 
 	var tonSummary *finance.TonPortfolioSummary
 	var tonChartImage *receipt.Image
+	var tonPriceWarning string
 	var tonChartWarning string
 	if content.ShowTonPortfolio {
 		portfolio, err := s.store.LoadFinance()
@@ -254,11 +255,12 @@ func (s *ReceiptService) BuildDailyReceiptWithWarnings(ctx context.Context) ([]r
 		}
 		tonPrice, err := s.tonPriceProvider.CurrentPrice(ctx)
 		if err != nil {
-			return nil, nil, buildError(http.StatusBadGateway, err)
+			tonPriceWarning = "TON недоступен: " + err.Error()
+		} else {
+			summary := portfolio.ValueAt(tonPrice)
+			tonSummary = &summary
+			tonChartImage, tonChartWarning = s.resolveTonChartImage(ctx, tonPrice)
 		}
-		summary := portfolio.ValueAt(tonPrice)
-		tonSummary = &summary
-		tonChartImage, tonChartWarning = s.resolveTonChartImage(ctx, tonPrice)
 	}
 
 	var usdBynRate *finance.FiatRate
@@ -327,7 +329,7 @@ func (s *ReceiptService) BuildDailyReceiptWithWarnings(ctx context.Context) ([]r
 		CalendarEvents:   googleSummary.Events,
 		NewsItems:        newsItems,
 	}, receiptStyle)
-	warnings := optionalWarnings(motivationWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, newsTranslationWarning)
+	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, newsTranslationWarning)
 	return lines, warnings, nil
 }
 
@@ -433,16 +435,20 @@ func (s *ReceiptService) resolveTonChartImage(ctx context.Context, price finance
 
 func (s *ReceiptService) renderTonChartImage(chartData finance.TonMarketChart) (*receipt.Image, error) {
 	path := filepath.Join(s.generatedAssetsPathOrDefault(), "generated", "ton-24h.png")
-	if err := chart.RenderTonPriceChart(path, chartData, chart.Options{Width: 384, Height: 96}); err != nil {
+	chartImage, err := chart.RenderTonPriceChartPixelBuffer(chartData, chart.Options{Width: 384, Height: 96})
+	if err != nil {
+		return nil, err
+	}
+	if err := chart.SaveMonoPNG(path, chartImage); err != nil {
 		return nil, err
 	}
 
 	return &receipt.Image{
-		Path:         path,
-		URL:          fmt.Sprintf("/assets/generated/ton-24h.png?v=%d", s.clock().UnixNano()),
-		Width:        384,
-		Height:       96,
-		ScalePercent: 100,
+		Path:        path,
+		URL:         fmt.Sprintf("/assets/generated/ton-24h.png?v=%d", s.clock().UnixNano()),
+		Width:       chartImage.Width,
+		Height:      chartImage.Height,
+		PixelBuffer: chartImage.Pixels,
 	}, nil
 }
 
@@ -474,16 +480,20 @@ func (s *ReceiptService) resolveUsdBynChartImage(ctx context.Context) (*receipt.
 	}
 
 	path := filepath.Join(s.generatedAssetsPathOrDefault(), "generated", "usd-byn-7d.png")
-	if err := chart.RenderFiatRateChart(path, chartData, chart.Options{Width: 384, Height: 96}); err != nil {
+	chartImage, err := chart.RenderFiatRateChartPixelBuffer(chartData, chart.Options{Width: 384, Height: 96})
+	if err != nil {
+		return nil, "график USD/BYN недоступен: " + err.Error()
+	}
+	if err := chart.SaveMonoPNG(path, chartImage); err != nil {
 		return nil, "график USD/BYN недоступен: " + err.Error()
 	}
 
 	return &receipt.Image{
-		Path:         path,
-		URL:          fmt.Sprintf("/assets/generated/usd-byn-7d.png?v=%d", s.clock().UnixNano()),
-		Width:        384,
-		Height:       96,
-		ScalePercent: 100,
+		Path:        path,
+		URL:         fmt.Sprintf("/assets/generated/usd-byn-7d.png?v=%d", s.clock().UnixNano()),
+		Width:       chartImage.Width,
+		Height:      chartImage.Height,
+		PixelBuffer: chartImage.Pixels,
 	}, ""
 }
 

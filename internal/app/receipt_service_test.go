@@ -112,6 +112,9 @@ func TestReceiptServiceAddsTonChartImageWhenMarketChartAvailable(t *testing.T) {
 			if !strings.HasPrefix(line.ImageURL, "/assets/generated/ton-24h.png?v=") {
 				t.Fatalf("unexpected chart image URL: %#v", line)
 			}
+			if len(line.ImagePixelBuffer) != 384*96 {
+				t.Fatalf("expected TON chart pixel buffer, got %#v", line)
+			}
 			return
 		}
 	}
@@ -156,11 +159,47 @@ func TestReceiptServiceContinuesWhenTonMarketChartFails(t *testing.T) {
 	if _, err := os.Stat(chartPath); err != nil {
 		t.Fatalf("expected fallback TON chart file: %v", err)
 	}
-	if !receiptLinesContainImage(lines, chartPath) {
+	if !receiptLinesContainPixelImage(lines, chartPath) {
 		t.Fatalf("expected fallback TON chart image line, got %#v", lines)
 	}
 	if !containsWarning(warnings, "график TON") {
 		t.Fatalf("expected chart warning, got %#v", warnings)
+	}
+}
+
+func TestReceiptServiceContinuesWhenTonPriceFails(t *testing.T) {
+	weatherCode := 0
+	service := NewReceiptService(
+		&fakeStore{
+			location:           weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
+			portfolio:          finance.DefaultTonPortfolio(),
+			motivationSettings: motivation.Settings{Configured: true, Enabled: false},
+		},
+		&fakePrinter{},
+		fixedClock,
+		WithWeatherProvider(&fakeWeatherProvider{snapshot: weather.Snapshot{
+			Timezone:     "Europe/Minsk",
+			ObservedAt:   fixedClock(),
+			TemperatureC: 22.2,
+			WeatherCode:  &weatherCode,
+		}}),
+		WithTonPriceProvider(&fakeTonProvider{err: errors.New("CoinGecko returned HTTP 429")}),
+		WithTonMarketChartProvider(&fakeTonMarketChartProvider{}),
+		WithFiatRateProvider(&fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}),
+		WithBankRatesProvider(&fakeBankRatesProvider{}),
+		WithNewsProvider(&fakeNewsProvider{}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build daily receipt must survive TON price failure: %v", err)
+	}
+	if lineTextsContain(lines, "TON") {
+		t.Fatalf("expected TON block to be skipped when price is unavailable, got %#v", lines)
+	}
+	if !containsWarning(warnings, "TON недоступен") {
+		t.Fatalf("expected TON warning, got %#v", warnings)
 	}
 }
 
@@ -211,6 +250,9 @@ func TestReceiptServiceAddsUsdBynChartImageWhenMarketChartAvailable(t *testing.T
 		if line.ImagePath == chartPath {
 			if !strings.HasPrefix(line.ImageURL, "/assets/generated/usd-byn-7d.png?v=") {
 				t.Fatalf("unexpected chart image URL: %#v", line)
+			}
+			if len(line.ImagePixelBuffer) != 384*96 {
+				t.Fatalf("expected USD/BYN chart pixel buffer, got %#v", line)
 			}
 			return
 		}
@@ -975,11 +1017,15 @@ func (p *fakeWeatherProvider) Current(context.Context, weather.Location) (weathe
 
 type fakeTonProvider struct {
 	price finance.TonPrice
+	err   error
 	calls int
 }
 
 func (p *fakeTonProvider) CurrentPrice(context.Context) (finance.TonPrice, error) {
 	p.calls++
+	if p.err != nil {
+		return finance.TonPrice{}, p.err
+	}
 	return p.price, nil
 }
 
@@ -1116,6 +1162,15 @@ func lineTextsContainSubstring(lines []receipt.Line, want string) bool {
 func receiptLinesContainImage(lines []receipt.Line, path string) bool {
 	for _, line := range lines {
 		if line.ImagePath == path {
+			return true
+		}
+	}
+	return false
+}
+
+func receiptLinesContainPixelImage(lines []receipt.Line, path string) bool {
+	for _, line := range lines {
+		if line.ImagePath == path && len(line.ImagePixelBuffer) == line.ImageWidth*line.ImageHeight {
 			return true
 		}
 	}

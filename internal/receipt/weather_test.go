@@ -101,10 +101,11 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 			ProfitLossUSD:   168.04,
 		},
 		TonChartImage: &Image{
-			Path:   "/tmp/ton-24h.png",
-			URL:    "/assets/generated/ton-24h.png",
-			Width:  384,
-			Height: 96,
+			Path:        "/tmp/ton-24h.png",
+			URL:         "/assets/generated/ton-24h.png",
+			Width:       384,
+			Height:      96,
+			PixelBuffer: testChartPixelBuffer(),
 		},
 		USDBYNRate: &finance.FiatRate{
 			BaseCode:  "USD",
@@ -113,10 +114,11 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 			Rate:      3.1234,
 		},
 		USDBYNChartImage: &Image{
-			Path:   "/tmp/usd-byn-7d.png",
-			URL:    "/assets/generated/usd-byn-7d.png",
-			Width:  384,
-			Height: 96,
+			Path:        "/tmp/usd-byn-7d.png",
+			URL:         "/assets/generated/usd-byn-7d.png",
+			Width:       384,
+			Height:      96,
+			PixelBuffer: testChartPixelBuffer(),
 		},
 		BankRates: &bankrates.Summary{
 			Source: "TheMoney.by",
@@ -171,10 +173,19 @@ func requireContainsImage(t *testing.T, lines []Line, path string, url string) {
 			if line.ImageWidth != 384 || line.ImageHeight != 96 {
 				t.Fatalf("expected chart image dimensions 384x96, got %#v", line)
 			}
+			if len(line.ImagePixelBuffer) != 384*96 || line.ImagePixelBuffer[0] != 255 {
+				t.Fatalf("expected chart image pixel buffer to be attached, got %#v", line)
+			}
 			return
 		}
 	}
 	t.Fatalf("expected image %q/%q in lines, got %#v", path, url, lines)
+}
+
+func testChartPixelBuffer() []byte {
+	pixels := make([]byte, 384*96)
+	pixels[0] = 255
+	return pixels
 }
 
 func TestDailyReceiptPrintsTranslatedNewsWithOriginalInSmallerFont(t *testing.T) {
