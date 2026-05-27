@@ -17,6 +17,7 @@ const imageEditorCanvasHeightInput = document.querySelector("#image-editor-canva
 const imageEditorSourceCanvas = document.querySelector("#image-editor-source");
 const imageEditorResultCanvas = document.querySelector("#image-editor-result");
 const imageEditorStatusEl = document.querySelector("#image-editor-status");
+const textPrintPreviewEl = document.querySelector("#text-print-preview");
 let lastPreviewLines = [];
 let weatherSearchTimer = null;
 let financeDraft = {
@@ -240,6 +241,8 @@ function applyBootstrap(data) {
   setChecked("#temperature-double-width", style.temperatureDoubleWidth);
   setChecked("#temperature-double-height", style.temperatureDoubleHeight);
   setValue("#normal-font", style.normalFont || 0);
+  setValue("#text-print-title-font", 0);
+  setValue("#text-print-body-font", 0);
 
   const news = data.news || {};
   setChecked("#news-translate", news.translateTitles);
@@ -251,6 +254,7 @@ function applyBootstrap(data) {
   renderScheduleTimes(schedule.times || []);
 
   renderGoogleStatus(data.googleStatus || {});
+  updateTextPrintPreview();
 }
 
 function setBusy(busy) {
@@ -580,6 +584,11 @@ async function saveNewsSettings() {
 function readFont(selector) {
   const value = Number.parseInt(document.querySelector(selector).value, 10);
   return Number.isFinite(value) ? value : 0;
+}
+
+function readAlignment(selector, fallback) {
+  const value = document.querySelector(selector).value;
+  return ["left", "center", "right"].includes(value) ? value : fallback;
 }
 
 function metricForFont(font) {
@@ -1390,9 +1399,16 @@ async function clearImageEditor() {
 }
 
 function renderPreview(lines) {
+  renderLinesPreview(previewEl, lines, "#normal-font");
+}
+
+function renderLinesPreview(target, lines, baseFontSelector) {
+  if (!target) {
+    return;
+  }
   const paper = document.createElement("div");
   paper.className = "receipt-paper";
-  const normalMetric = metricForFont(readFont("#normal-font"));
+  const normalMetric = metricForFont(readFont(baseFontSelector || "#normal-font"));
   paper.style.setProperty("--paper-chars", normalMetric.lineLength || 32);
   for (const line of lines) {
     const node = document.createElement("div");
@@ -1440,7 +1456,7 @@ function renderPreview(lines) {
     node.appendChild(text);
     paper.appendChild(node);
   }
-  previewEl.replaceChildren(paper);
+  target.replaceChildren(paper);
 }
 
 function withAssetVersion(url) {
@@ -1481,6 +1497,97 @@ function refreshPreviewStyle() {
     return;
   }
   renderPreview(styledPreviewLines(lastPreviewLines));
+}
+
+function textPrintPayload() {
+  return {
+    title: document.querySelector("#text-print-title").value,
+    body: document.querySelector("#text-print-body").value,
+    titleFont: readFont("#text-print-title-font"),
+    bodyFont: readFont("#text-print-body-font"),
+    titleAlignment: readAlignment("#text-print-title-alignment", "center"),
+    bodyAlignment: readAlignment("#text-print-body-alignment", "left")
+  };
+}
+
+function textPrintPreviewLines(payload = textPrintPayload()) {
+  const lines = [];
+  const title = payload.title.trim();
+  if (title) {
+    lines.push({
+      Text: title,
+      Alignment: payload.titleAlignment,
+      Role: "normal",
+      Font: payload.titleFont,
+      DoubleWidth: false,
+      DoubleHeight: false
+    });
+    lines.push({
+      Text: "",
+      Alignment: payload.bodyAlignment,
+      Role: "normal",
+      Font: payload.bodyFont,
+      DoubleWidth: false,
+      DoubleHeight: false
+    });
+  }
+  const body = payload.body.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (body.trim()) {
+    for (const text of body.split("\n")) {
+      lines.push({
+        Text: text,
+        Alignment: payload.bodyAlignment,
+        Role: "normal",
+        Font: payload.bodyFont,
+        DoubleWidth: false,
+        DoubleHeight: false
+      });
+    }
+  }
+  return lines;
+}
+
+function updateTextPrintPreview() {
+  renderLinesPreview(textPrintPreviewEl, textPrintPreviewLines(), "#text-print-body-font");
+}
+
+function clearTextPrint() {
+  setValue("#text-print-title", "");
+  setValue("#text-print-body", "");
+  setValue("#text-print-title-font", 0);
+  setValue("#text-print-body-font", 0);
+  setValue("#text-print-title-alignment", "center");
+  setValue("#text-print-body-alignment", "left");
+  updateTextPrintPreview();
+  setStatus("", "");
+}
+
+async function printText() {
+  const payload = textPrintPayload();
+  if (!payload.body.trim()) {
+    setStatus("error", "Введи текст для печати.");
+    return;
+  }
+  updateTextPrintPreview();
+  setBusy(true);
+  setStatus("", "Печатаю текст...");
+  try {
+    await saveSettings();
+    const response = await fetch("/api/print/text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || "Не удалось напечатать текст.");
+    }
+    setStatus("ok", result.message || "Текст напечатан.");
+  } catch (error) {
+    setStatus("error", error.message);
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function runAction(path, successPrefix) {
@@ -1537,6 +1644,7 @@ async function loadFontMetrics() {
     fontMetrics = new Map(payload.fonts.map(metric => [metric.font, metric]));
     updateFontControls();
     refreshPreviewStyle();
+    updateTextPrintPreview();
     setStatus("ok", payload.message || "Метрики шрифтов ККТ загружены.");
   } catch (error) {
     setStatus("error", error.message);
@@ -1597,6 +1705,23 @@ function bindEventListeners() {
   });
   document.querySelector('[data-action="weather"]').addEventListener("click", () => {
     runAction("/api/print/weather", "");
+  });
+  document.querySelector('[data-action="print-text"]').addEventListener("click", () => {
+    printText();
+  });
+  document.querySelector('[data-action="clear-text-print"]').addEventListener("click", () => {
+    clearTextPrint();
+  });
+  [
+    "#text-print-title",
+    "#text-print-body",
+    "#text-print-title-font",
+    "#text-print-body-font",
+    "#text-print-title-alignment",
+    "#text-print-body-alignment"
+  ].forEach(selector => {
+    document.querySelector(selector).addEventListener("input", updateTextPrintPreview);
+    document.querySelector(selector).addEventListener("change", updateTextPrintPreview);
   });
   imageEditorFileInput.addEventListener("change", event => {
     loadImageEditorFile(event.target.files && event.target.files[0]).catch(error => {
@@ -1700,6 +1825,7 @@ async function initializeApp() {
   applyBootstrap(bootstrap);
   bindEventListeners();
   updateFontControls();
+  updateTextPrintPreview();
   updateScheduleMode();
   loadImageEditorState().catch(error => {
     setImageEditorStatus("error", error.message);

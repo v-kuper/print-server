@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +135,13 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`data-action="new-image-editor-canvas"`,
 		`data-action="save-image-editor"`,
 		`data-action="print-image-editor"`,
+		`id="text-print-title"`,
+		`id="text-print-body"`,
+		`id="text-print-title-font"`,
+		`id="text-print-body-font"`,
+		`id="text-print-title-alignment"`,
+		`id="text-print-body-alignment"`,
+		`data-action="print-text"`,
 		`value="rectangle"`,
 		`value="ellipse"`,
 		`LIBFPTR_PARAM_FONT`,
@@ -184,6 +193,7 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`data-action="google-disconnect"`,
 				`/api/image-editor/save`,
 				`/api/image-editor/print`,
+				`/api/print/text`,
 				`function applyImageEditorProcessing`,
 				`function createBlankImageEditorCanvas`,
 				`function applyImageEditorShape`,
@@ -838,6 +848,91 @@ func TestPrintTestEndpointPrintsStableTestReceipt(t *testing.T) {
 	}
 }
 
+func TestPrintTextEndpointPrintsFormattedText(t *testing.T) {
+	store := &fakeStore{config: printer.Config{Host: "192.168.0.118", Port: 5555}}
+	gateway := &fakePrinter{}
+	server := NewServer(store, gateway, fixedClock)
+
+	body := bytes.NewBufferString(`{"title":"Заметка","body":"Первая строка\n\nВторая строка","titleFont":2,"bodyFont":1,"titleAlignment":"center","bodyAlignment":"left"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/print/text", body)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if gateway.printedConfig != store.config {
+		t.Fatalf("expected print config %#v, got %#v", store.config, gateway.printedConfig)
+	}
+	want := []receipt.Line{
+		{Text: "Заметка", Alignment: receipt.AlignmentCenter, Role: receipt.RoleNormal, Font: 2},
+		{Text: "", Alignment: receipt.AlignmentLeft, Role: receipt.RoleNormal, Font: 1},
+		{Text: "Первая строка", Alignment: receipt.AlignmentLeft, Role: receipt.RoleNormal, Font: 1},
+		{Text: "", Alignment: receipt.AlignmentLeft, Role: receipt.RoleNormal, Font: 1},
+		{Text: "Вторая строка", Alignment: receipt.AlignmentLeft, Role: receipt.RoleNormal, Font: 1},
+	}
+	if len(gateway.printedLines) != len(want) {
+		t.Fatalf("expected %d lines, got %#v", len(want), gateway.printedLines)
+	}
+	for index := range want {
+		if !reflect.DeepEqual(gateway.printedLines[index], want[index]) {
+			t.Fatalf("line %d: expected %#v, got %#v", index, want[index], gateway.printedLines[index])
+		}
+	}
+}
+
+func TestPrintTextEndpointRejectsInvalidRequests(t *testing.T) {
+	server := NewServer(&fakeStore{config: printer.DefaultConfig()}, &fakePrinter{}, fixedClock)
+
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "empty body",
+			body: `{"title":"Заметка","body":"   ","titleFont":0,"bodyFont":0,"titleAlignment":"center","bodyAlignment":"left"}`,
+		},
+		{
+			name: "bad alignment",
+			body: `{"title":"Заметка","body":"Текст","titleFont":0,"bodyFont":0,"titleAlignment":"middle","bodyAlignment":"left"}`,
+		},
+		{
+			name: "bad font",
+			body: `{"title":"Заметка","body":"Текст","titleFont":10,"bodyFont":0,"titleAlignment":"center","bodyAlignment":"left"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/print/text", bytes.NewBufferString(test.body))
+			response := httptest.NewRecorder()
+
+			server.Routes().ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestPrintTextEndpointReturnsBadGatewayWhenPrinterFails(t *testing.T) {
+	server := NewServer(
+		&fakeStore{config: printer.DefaultConfig()},
+		&fakePrinter{printErr: errors.New("printer offline")},
+		fixedClock,
+	)
+
+	body := bytes.NewBufferString(`{"title":"","body":"Текст","titleFont":0,"bodyFont":0,"titleAlignment":"center","bodyAlignment":"left"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/print/text", body)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestPrintWeatherEndpointLoadsWeatherAndPrintsReceipt(t *testing.T) {
 	weatherCode := 0
 	store := &fakeStore{
@@ -1411,6 +1506,7 @@ type fakePrinter struct {
 	checkedConfig            printer.Config
 	fontMetricsConfig        printer.Config
 	fontMetrics              []printer.FontMetric
+	printErr                 error
 	printedConfig            printer.Config
 	printedLines             []receipt.Line
 	printedPixelBufferConfig printer.Config
@@ -1428,6 +1524,9 @@ func (p *fakePrinter) CheckConnection(_ context.Context, config printer.Config) 
 func (p *fakePrinter) PrintReceipt(_ context.Context, config printer.Config, lines []receipt.Line) error {
 	p.printedConfig = config
 	p.printedLines = append([]receipt.Line(nil), lines...)
+	if p.printErr != nil {
+		return p.printErr
+	}
 	return nil
 }
 

@@ -224,6 +224,51 @@
             <div id="news-source-list" class="news-source-list"></div>
           </section>
 
+          <section class="section text-print-section">
+            <div class="section-header">
+              <h2>Текст на чек</h2>
+              <div class="section-actions">
+                <button type="button" class="secondary" data-action="print-text">Напечатать текст</button>
+                <button type="button" class="secondary" data-action="clear-text-print">Очистить</button>
+              </div>
+            </div>
+            <div class="section-grid">
+              <label class="wide">
+                Заголовок
+                <input id="text-print-title" type="text" placeholder="Заметка">
+              </label>
+              <label>
+                Шрифт заголовка
+                <select id="text-print-title-font" data-font-select></select>
+              </label>
+              <label>
+                Выравнивание заголовка
+                <select id="text-print-title-alignment">
+                  <option value="left">Слева</option>
+                  <option value="center" selected>По центру</option>
+                  <option value="right">Справа</option>
+                </select>
+              </label>
+              <label class="wide">
+                Текст
+                <textarea id="text-print-body" rows="5" placeholder="Текст заметки"></textarea>
+              </label>
+              <label>
+                Шрифт текста
+                <select id="text-print-body-font" data-font-select></select>
+              </label>
+              <label>
+                Выравнивание текста
+                <select id="text-print-body-alignment">
+                  <option value="left" selected>Слева</option>
+                  <option value="center">По центру</option>
+                  <option value="right">Справа</option>
+                </select>
+              </label>
+            </div>
+            <div id="text-print-preview" class="receipt-preview text-print-preview"></div>
+          </section>
+
           <section class="section image-editor-section">
             <div class="section-header">
               <h2>Изображение на чек</h2>

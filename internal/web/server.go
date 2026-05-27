@@ -127,6 +127,7 @@ type Server struct {
 const defaultAssetsPath = "/opt/atol-server/assets"
 const defaultImageEditorPath = "/data/image-editor"
 const maxImageEditorHeight = 2048
+const maxTextPrintFont = 9
 
 type statusResponse struct {
 	OK      bool            `json:"ok"`
@@ -192,6 +193,15 @@ type imageEditorSaveRequest struct {
 	Pixels     []int          `json:"pixels"`
 	Settings   map[string]any `json:"settings"`
 	PreviewPNG string         `json:"previewPng"`
+}
+
+type textPrintRequest struct {
+	Title          string `json:"title"`
+	Body           string `json:"body"`
+	TitleFont      int    `json:"titleFont"`
+	BodyFont       int    `json:"bodyFont"`
+	TitleAlignment string `json:"titleAlignment"`
+	BodyAlignment  string `json:"bodyAlignment"`
 }
 
 func WithWeatherProvider(provider WeatherProvider) ServerOption {
@@ -325,6 +335,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/printer/fonts", s.handlePrinterFonts)
 	mux.HandleFunc("POST /api/receipt/preview", s.handleReceiptPreview)
 	mux.HandleFunc("POST /api/print/test", s.handlePrintTest)
+	mux.HandleFunc("POST /api/print/text", s.handlePrintText)
 	mux.HandleFunc("POST /api/print/weather", s.handlePrintWeather)
 	mux.HandleFunc("GET /api/image-editor/state", s.handleImageEditorState)
 	mux.HandleFunc("POST /api/image-editor/save", s.handleImageEditorSave)
@@ -955,6 +966,47 @@ func (s *Server) handlePrintTest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handlePrintText(w http.ResponseWriter, r *http.Request) {
+	var request textPrintRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, statusResponse{
+			OK:    false,
+			Error: "invalid JSON: " + err.Error(),
+		})
+		return
+	}
+	lines, err := textPrintLines(request)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, statusResponse{
+			OK:    false,
+			Error: err.Error(),
+		})
+		return
+	}
+
+	config, err := s.store.LoadPrinter()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, statusResponse{
+			OK:    false,
+			Error: err.Error(),
+		})
+		return
+	}
+
+	if err := s.printer.PrintReceipt(r.Context(), config, lines); err != nil {
+		writeJSON(w, http.StatusBadGateway, statusResponse{
+			OK:    false,
+			Error: err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, statusResponse{
+		OK:      true,
+		Message: "Текст напечатан.",
+	})
+}
+
 func (s *Server) handleReceiptPreview(w http.ResponseWriter, r *http.Request) {
 	var lines []receipt.Line
 	var warnings []string
@@ -1216,6 +1268,81 @@ func decodePreviewPNGField(value string) ([]byte, error) {
 		return nil, fmt.Errorf("previewPng must be base64 PNG: %w", err)
 	}
 	return data, nil
+}
+
+func textPrintLines(request textPrintRequest) ([]receipt.Line, error) {
+	if strings.TrimSpace(request.Body) == "" {
+		return nil, fmt.Errorf("body is required")
+	}
+	titleFont, err := validatedTextPrintFont(request.TitleFont, "titleFont")
+	if err != nil {
+		return nil, err
+	}
+	bodyFont, err := validatedTextPrintFont(request.BodyFont, "bodyFont")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(request.TitleAlignment) == "" {
+		request.TitleAlignment = string(receipt.AlignmentCenter)
+	}
+	if strings.TrimSpace(request.BodyAlignment) == "" {
+		request.BodyAlignment = string(receipt.AlignmentLeft)
+	}
+	titleAlignment, err := validatedTextPrintAlignment(request.TitleAlignment, "titleAlignment")
+	if err != nil {
+		return nil, err
+	}
+	bodyAlignment, err := validatedTextPrintAlignment(request.BodyAlignment, "bodyAlignment")
+	if err != nil {
+		return nil, err
+	}
+
+	body := strings.ReplaceAll(request.Body, "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\r", "\n")
+	lines := make([]receipt.Line, 0, strings.Count(body, "\n")+3)
+	if title := strings.TrimSpace(request.Title); title != "" {
+		lines = append(lines, receipt.Line{
+			Text:      title,
+			Alignment: titleAlignment,
+			Role:      receipt.RoleNormal,
+			Font:      titleFont,
+		})
+		lines = append(lines, receipt.Line{
+			Text:      "",
+			Alignment: bodyAlignment,
+			Role:      receipt.RoleNormal,
+			Font:      bodyFont,
+		})
+	}
+	for _, text := range strings.Split(body, "\n") {
+		lines = append(lines, receipt.Line{
+			Text:      text,
+			Alignment: bodyAlignment,
+			Role:      receipt.RoleNormal,
+			Font:      bodyFont,
+		})
+	}
+	return lines, nil
+}
+
+func validatedTextPrintFont(font int, field string) (int, error) {
+	if font < 0 || font > maxTextPrintFont {
+		return 0, fmt.Errorf("%s must be between 0 and %d", field, maxTextPrintFont)
+	}
+	return font, nil
+}
+
+func validatedTextPrintAlignment(value string, field string) (receipt.Alignment, error) {
+	switch receipt.Alignment(strings.TrimSpace(value)) {
+	case receipt.AlignmentLeft:
+		return receipt.AlignmentLeft, nil
+	case receipt.AlignmentCenter, "":
+		return receipt.AlignmentCenter, nil
+	case receipt.AlignmentRight:
+		return receipt.AlignmentRight, nil
+	default:
+		return "", fmt.Errorf("%s must be left, center, or right", field)
+	}
 }
 
 func statusForBuildError(err error) int {
