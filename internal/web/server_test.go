@@ -97,27 +97,7 @@ func TestPrinterFontsEndpointReturnsAtolFontMetrics(t *testing.T) {
 	}
 }
 
-func TestIndexPageExplainsAtolFontControls(t *testing.T) {
-	store := &fakeStore{config: printer.DefaultConfig()}
-	server := NewServer(store, &fakePrinter{}, fixedClock)
-
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-
-	server.Routes().ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	for _, want := range []string{"LIBFPTR_PARAM_FONT", "Двойная ширина", "Двойная высота", "Загрузить шрифты ККТ"} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Fatalf("expected index page to contain %q", want)
-		}
-	}
-}
-
-func TestIndexPageDisablesBrowserCache(t *testing.T) {
+func TestIndexPageServesStaticClientShell(t *testing.T) {
 	store := &fakeStore{config: printer.DefaultConfig()}
 	server := NewServer(store, &fakePrinter{}, fixedClock)
 
@@ -132,200 +112,143 @@ func TestIndexPageDisablesBrowserCache(t *testing.T) {
 	if got := response.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("expected index page to disable browser cache, got %q", got)
 	}
+	if got := response.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("expected HTML content type, got %q", got)
+	}
+	body := response.Body.String()
+	for _, want := range []string{
+		`<link rel="stylesheet" href="/static/app.css">`,
+		`<script src="/static/app.js" defer></script>`,
+		`id="settings-form"`,
+		`data-section="printer"`,
+		`id="weather-location-results"`,
+		`id="news-source-list"`,
+		`id="schedule-time-list"`,
+		`LIBFPTR_PARAM_FONT`,
+		`data-action="weather"`,
+	} {
+		if !bytes.Contains([]byte(body), []byte(want)) {
+			t.Fatalf("expected static client shell to contain %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`{{`,
+		`value="192.168.0.118"`,
+		`id="content-calendar" type="checkbox" checked`,
+	} {
+		if bytes.Contains([]byte(body), []byte(unwanted)) {
+			t.Fatalf("expected static client shell not to contain template data %q", unwanted)
+		}
+	}
 }
 
-func TestIndexPageContainsSchedulerControls(t *testing.T) {
+func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
+	server := NewServer(&fakeStore{config: printer.DefaultConfig()}, &fakePrinter{}, fixedClock)
+
+	for _, asset := range []struct {
+		path        string
+		contentType string
+		contains    []string
+	}{
+		{
+			path:        "/static/app.css",
+			contentType: "text/css; charset=utf-8",
+			contains: []string{
+				`.layout { grid-template-columns: minmax(0, 1fr); }`,
+				`.section-grid { grid-template-columns: minmax(0, 1fr); }`,
+				`.weather-search-row { grid-template-columns: minmax(0, 1fr); }`,
+				`[hidden]`,
+				`display: none !important`,
+				`overflow-wrap: anywhere`,
+				`.primary-print {`,
+			},
+		},
+		{
+			path:        "/static/app.js",
+			contentType: "text/javascript; charset=utf-8",
+			contains: []string{
+				`fetch("/api/bootstrap")`,
+				`function applyBootstrap`,
+				`data-action="preview"`,
+				`data-action="google-disconnect"`,
+			},
+		},
+	} {
+		request := httptest.NewRequest(http.MethodGet, asset.path, nil)
+		response := httptest.NewRecorder()
+
+		server.Routes().ServeHTTP(response, request)
+
+		if response.Code != http.StatusOK {
+			t.Fatalf("expected %s to return 200, got %d: %s", asset.path, response.Code, response.Body.String())
+		}
+		if got := response.Header().Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("expected %s to disable browser cache, got %q", asset.path, got)
+		}
+		if got := response.Header().Get("Content-Type"); got != asset.contentType {
+			t.Fatalf("expected %s content type %q, got %q", asset.path, asset.contentType, got)
+		}
+		body := response.Body.String()
+		for _, want := range asset.contains {
+			if !bytes.Contains([]byte(body), []byte(want)) {
+				t.Fatalf("expected %s to contain %q", asset.path, want)
+			}
+		}
+	}
+}
+
+func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
+	translateTitles := false
 	store := &fakeStore{
-		config: printer.DefaultConfig(),
+		config:   printer.Config{Host: "192.168.0.118", Port: 5555},
+		location: weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
+		portfolio: finance.TonPortfolio{
+			AmountTon:   10.5,
+			InvestedUSD: 20.25,
+		},
+		motivationSettings: motivation.Settings{
+			Configured:  true,
+			Enabled:     true,
+			BaseURL:     "http://localhost:11434",
+			Model:       "gemma4:31b-cloud",
+			CachedQuote: "Последняя цитата",
+		},
+		newsSettings: news.Settings{
+			TranslateTitles: &translateTitles,
+			Sources: []news.SourceSettings{
+				{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 3},
+			},
+		},
+		receiptStyle: receipt.StyleSettings{
+			Configured:              true,
+			NormalFont:              1,
+			CalendarFont:            2,
+			TemperatureFont:         3,
+			CalendarDoubleWidth:     true,
+			CalendarDoubleHeight:    false,
+			TemperatureDoubleWidth:  false,
+			TemperatureDoubleHeight: true,
+		},
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         true,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: true,
+			ShowTonPortfolio:    false,
+			ShowUsdBynRate:      true,
+			ShowBankRates:       false,
+			ShowMail:            true,
+			ShowCalendar:        true,
+			ShowNews:            true,
+		},
 		scheduleSettings: schedule.Settings{
 			Enabled:         true,
 			Mode:            schedule.ModeDailyTimes,
-			IntervalMinutes: 15,
+			IntervalMinutes: 30,
 			Times:           []string{"07:00", "09:00"},
 			Timezone:        schedule.DefaultTimezone,
 		},
 	}
-	server := NewServer(store, &fakePrinter{}, fixedClock)
-
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-
-	server.Routes().ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	for _, want := range []string{"schedule-interval", "schedule-time-list", "Сохранить расписание", "Остановить расписание"} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Fatalf("expected index page to contain %q", want)
-		}
-	}
-	if bytes.Contains([]byte(body), []byte("Фоновая печать")) {
-		t.Fatal("schedule page must not expose confusing background print checkbox")
-	}
-}
-
-func TestIndexPageDoesNotLetGridStylesOverrideHiddenPanels(t *testing.T) {
-	store := &fakeStore{config: printer.DefaultConfig()}
-	server := NewServer(store, &fakePrinter{}, fixedClock)
-
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-
-	server.Routes().ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	hiddenRuleIndex := bytes.Index([]byte(body), []byte(`[hidden]`))
-	if hiddenRuleIndex < 0 {
-		t.Fatal("expected explicit hidden rule so section-grid display does not keep inactive schedule panels visible")
-	}
-	hiddenRuleEnd := hiddenRuleIndex + bytes.Index([]byte(body[hiddenRuleIndex:]), []byte(`}`))
-	if hiddenRuleEnd < hiddenRuleIndex || !bytes.Contains([]byte(body[hiddenRuleIndex:hiddenRuleEnd]), []byte(`display: none !important`)) {
-		t.Fatal("expected explicit hidden rule so section-grid display does not keep inactive schedule panels visible")
-	}
-}
-
-func TestIndexPageKeepsMobileGridTracksShrinkable(t *testing.T) {
-	store := &fakeStore{config: printer.DefaultConfig()}
-	server := NewServer(store, &fakePrinter{}, fixedClock)
-
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-
-	server.Routes().ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	for _, want := range []string{
-		`.layout { grid-template-columns: minmax(0, 1fr); }`,
-		`.section-grid { grid-template-columns: minmax(0, 1fr); }`,
-		`.weather-search-row { grid-template-columns: minmax(0, 1fr); }`,
-		`overflow-wrap: anywhere`,
-	} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Fatalf("expected mobile layout CSS to contain %q", want)
-		}
-	}
-}
-
-func TestIndexPageUsesHumanScheduleIntervalLabels(t *testing.T) {
-	store := &fakeStore{config: printer.DefaultConfig()}
-	server := NewServer(store, &fakePrinter{}, fixedClock)
-
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-
-	server.Routes().ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	for _, want := range []string{"1 минута", "5 минут", "30 минут", "1 час", "2 часа", "6 часов", "12 часов", "24 часа"} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Fatalf("expected interval label %q", want)
-		}
-	}
-	if bytes.Contains([]byte(body), []byte(">360 мин<")) || bytes.Contains([]byte(body), []byte(">1440 мин<")) {
-		t.Fatal("expected long intervals to use hour labels")
-	}
-}
-
-func TestIndexPageProtectsTonInputsBehindExplicitEditMode(t *testing.T) {
-	store := &fakeStore{config: printer.DefaultConfig()}
-	server := NewServer(store, &fakePrinter{}, fixedClock)
-
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-
-	server.Routes().ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	for _, want := range []string{
-		`data-finance-input readonly`,
-		`data-action="edit-finance"`,
-		`data-action="save-finance"`,
-		`data-action="cancel-finance"`,
-	} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Fatalf("expected TON edit UI to contain %q", want)
-		}
-	}
-}
-
-func TestIndexPageOffersWeatherLocationAutocomplete(t *testing.T) {
-	store := &fakeStore{config: printer.DefaultConfig()}
-	server := NewServer(store, &fakePrinter{}, fixedClock)
-
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-
-	server.Routes().ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	for _, want := range []string{
-		`data-action="search-weather-location"`,
-		`id="weather-location-results"`,
-		`data-weather-location-selected="true"`,
-		`id="weather-latitude" name="weather-latitude" autocomplete="off" inputmode="decimal" value="52.4345" readonly`,
-		`id="weather-longitude" name="weather-longitude" autocomplete="off" inputmode="decimal" value="30.9754" readonly`,
-	} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Fatalf("expected weather autocomplete UI to contain %q", want)
-		}
-	}
-}
-
-func TestIndexPageContainsMotivationControls(t *testing.T) {
-	store := &fakeStore{config: printer.DefaultConfig(), motivationSettings: motivation.DefaultSettings()}
-	server := NewServer(store, &fakePrinter{}, fixedClock)
-
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-
-	server.Routes().ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	for _, want := range []string{
-		`AI-модель`,
-		`id="motivation-base-url"`,
-		`id="motivation-model"`,
-		`data-action="test-motivation"`,
-		`Проверить AI`,
-		`gemma4:31b-cloud`,
-	} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Fatalf("expected motivation UI to contain %q", want)
-		}
-	}
-	for _, unwanted := range []string{
-		`id="motivation-enabled"`,
-		`Печатать цитату дня`,
-		`Проверить цитату`,
-	} {
-		if bytes.Contains([]byte(body), []byte(unwanted)) {
-			t.Fatalf("expected motivation UI not to contain %q", unwanted)
-		}
-	}
-}
-
-func TestIndexPageContainsGoogleControls(t *testing.T) {
-	store := &fakeStore{config: printer.DefaultConfig()}
 	googleClient := &fakeGoogleClient{status: googleintegration.Status{
 		CredentialsAvailable: true,
 		TokenAvailable:       false,
@@ -335,7 +258,7 @@ func TestIndexPageContainsGoogleControls(t *testing.T) {
 	}}
 	server := NewServer(store, &fakePrinter{}, fixedClock, WithGoogleClient(googleClient))
 
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
 	response := httptest.NewRecorder()
 
 	server.Routes().ServeHTTP(response, request)
@@ -343,51 +266,80 @@ func TestIndexPageContainsGoogleControls(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
 	}
-	body := response.Body.String()
-	for _, want := range []string{
-		`Google`,
-		`/api/google/auth/start`,
-		`data-action="google-disconnect"`,
-		`/data/google/credentials.json`,
-		`/data/google/token.json`,
-	} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Fatalf("expected Google UI to contain %q", want)
+	if got := response.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
+		t.Fatalf("expected JSON content type, got %q", got)
+	}
+
+	var payload struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Printer      printer.Config           `json:"printer"`
+			Weather      weather.Location         `json:"weather"`
+			Finance      finance.TonPortfolio     `json:"finance"`
+			Motivation   motivation.Settings      `json:"motivation"`
+			GoogleStatus googleintegration.Status `json:"googleStatus"`
+			News         struct {
+				TranslateTitles bool                  `json:"translateTitles"`
+				Sources         []news.SourceSettings `json:"sources"`
+			} `json:"news"`
+			ReceiptStyle      receipt.StyleSettings    `json:"receiptStyle"`
+			ReceiptContent    receipt.ContentSettings  `json:"receiptContent"`
+			Schedule          schedule.Settings        `json:"schedule"`
+			NewsPresets       []news.PresetInfo        `json:"newsPresets"`
+			FontOptions       []int                    `json:"fontOptions"`
+			ScheduleIntervals []scheduleIntervalOption `json:"scheduleIntervals"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.OK {
+		t.Fatalf("expected ok bootstrap response, got %#v", payload)
+	}
+	if payload.Data.Printer != store.config {
+		t.Fatalf("expected printer config %#v, got %#v", store.config, payload.Data.Printer)
+	}
+	if payload.Data.Weather != store.location {
+		t.Fatalf("expected weather location %#v, got %#v", store.location, payload.Data.Weather)
+	}
+	if payload.Data.Finance != store.portfolio {
+		t.Fatalf("expected finance settings %#v, got %#v", store.portfolio, payload.Data.Finance)
+	}
+	if payload.Data.Motivation.BaseURL != "http://localhost:11434" || payload.Data.Motivation.Model != "gemma4:31b-cloud" {
+		t.Fatalf("expected motivation settings in bootstrap, got %#v", payload.Data.Motivation)
+	}
+	if payload.Data.GoogleStatus.CredentialsPath != "/data/google/credentials.json" || payload.Data.GoogleStatus.Authorized {
+		t.Fatalf("expected Google status in bootstrap, got %#v", payload.Data.GoogleStatus)
+	}
+	if payload.Data.News.TranslateTitles {
+		t.Fatalf("expected disabled news translation in bootstrap")
+	}
+	if len(payload.Data.News.Sources) != len(news.Presets()) || payload.Data.News.Sources[0].MaxItems != 3 {
+		t.Fatalf("expected normalized news sources in bootstrap, got %#v", payload.Data.News.Sources)
+	}
+	if len(payload.Data.NewsPresets) != len(news.Presets()) || payload.Data.NewsPresets[0].DisplayName == "" {
+		t.Fatalf("expected news presets in bootstrap, got %#v", payload.Data.NewsPresets)
+	}
+	if payload.Data.ReceiptStyle.CalendarFont != 2 || !payload.Data.ReceiptStyle.CalendarDoubleWidth {
+		t.Fatalf("expected receipt style in bootstrap, got %#v", payload.Data.ReceiptStyle)
+	}
+	if !payload.Data.ReceiptContent.ShowMail || payload.Data.ReceiptContent.ShowBankRates {
+		t.Fatalf("expected receipt content in bootstrap, got %#v", payload.Data.ReceiptContent)
+	}
+	if payload.Data.Schedule.Mode != schedule.ModeDailyTimes || len(payload.Data.Schedule.Times) != 2 {
+		t.Fatalf("expected schedule in bootstrap, got %#v", payload.Data.Schedule)
+	}
+	if len(payload.Data.FontOptions) != 10 || payload.Data.FontOptions[9] != 9 {
+		t.Fatalf("expected font options 0..9, got %#v", payload.Data.FontOptions)
+	}
+	labels := make([]string, 0, len(payload.Data.ScheduleIntervals))
+	for _, option := range payload.Data.ScheduleIntervals {
+		labels = append(labels, option.Label)
+	}
+	for _, want := range []string{"1 минута", "5 минут", "30 минут", "1 час", "2 часа", "6 часов", "12 часов", "24 часа"} {
+		if !containsString(labels, want) {
+			t.Fatalf("expected schedule interval label %q in %#v", want, labels)
 		}
-	}
-}
-
-func TestIndexPageContainsReceiptContentControls(t *testing.T) {
-	store := &fakeStore{config: printer.DefaultConfig()}
-	server := NewServer(store, &fakePrinter{}, fixedClock)
-
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-
-	server.Routes().ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	for _, want := range []string{
-		`Состав чека`,
-		`id="content-weather"`,
-		`id="content-usd-byn-rate"`,
-		`id="content-bank-rates"`,
-		`id="content-mail"`,
-		`id="content-calendar"`,
-		`id="content-news"`,
-	} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Fatalf("expected receipt content UI to contain %q", want)
-		}
-	}
-	if !bytes.Contains([]byte(body), []byte(`id="content-calendar" type="checkbox" checked`)) {
-		t.Fatalf("expected calendar to be enabled by default")
-	}
-	if bytes.Contains([]byte(body), []byte(`id="content-mail" type="checkbox" checked`)) {
-		t.Fatalf("expected mail to be disabled by default")
 	}
 }
 
@@ -516,14 +468,8 @@ func TestIndexPageMakesDailyPrintThePrimaryBottomAction(t *testing.T) {
 		t.Fatal("expected daily print button to live inside bottom action row")
 	}
 	mainActions := body[mainActionsIndex:mainActionsEnd]
-	for _, want := range []string{
-		`class="primary-print" data-action="weather"`,
-		`.main-actions {`,
-		`.primary-print {`,
-	} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Fatalf("expected index page to contain %q", want)
-		}
+	if !bytes.Contains([]byte(body), []byte(`class="primary-print" data-action="weather"`)) {
+		t.Fatalf("expected index page to contain primary daily print button")
 	}
 	if bytes.Count([]byte(mainActions), []byte(`<button`)) != 1 {
 		t.Fatalf("expected bottom action row to contain only daily print button, got %q", mainActions)
@@ -1337,6 +1283,15 @@ func (p *fakeMotivationProvider) TranslateNewsTitles(context.Context, motivation
 func lineTextsContain(lines []receipt.Line, want string) bool {
 	for _, line := range lines {
 		if line.Text == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
 			return true
 		}
 	}
