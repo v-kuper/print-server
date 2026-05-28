@@ -22,6 +22,7 @@ import (
 	"atol-server/internal/news"
 	"atol-server/internal/printer"
 	"atol-server/internal/receipt"
+	"atol-server/internal/receiptsnapshot"
 	"atol-server/internal/schedule"
 	schedulerruntime "atol-server/internal/scheduler"
 	"atol-server/internal/weather"
@@ -42,6 +43,8 @@ type SettingsStore interface {
 	SaveReceiptStyle(receipt.StyleSettings) error
 	LoadReceiptContent() (receipt.ContentSettings, error)
 	SaveReceiptContent(receipt.ContentSettings) error
+	LoadReceiptSnapshotSettings() (receiptsnapshot.Settings, error)
+	SaveReceiptSnapshotSettings(receiptsnapshot.Settings) error
 	LoadSchedule() (schedule.Settings, error)
 	SaveSchedule(schedule.Settings) error
 	LoadScheduleState() (schedule.State, error)
@@ -97,8 +100,19 @@ type DailyReceiptService interface {
 	PrintDailyReceipt(context.Context) error
 }
 
+type ReceiptSnapshotStore interface {
+	Create(context.Context, []receiptsnapshot.NewsItem) (receiptsnapshot.Snapshot, error)
+	Publish(context.Context, string) error
+	Fail(context.Context, string, error) error
+	Load(context.Context, string) (receiptsnapshot.Snapshot, error)
+}
+
 type DailyReceiptWarningService interface {
 	BuildDailyReceiptWithWarnings(context.Context) ([]receipt.Line, []string, error)
+}
+
+type DailyReceiptPrintWarningService interface {
+	PrintDailyReceiptWithWarnings(context.Context) ([]string, error)
 }
 
 type ImageEditorStore interface {
@@ -132,6 +146,7 @@ type Server struct {
 	googleClient           GoogleClient
 	motivationProvider     MotivationProvider
 	receiptService         DailyReceiptService
+	snapshotStore          ReceiptSnapshotStore
 	scheduler              Scheduler
 	imageStore             ImageEditorStore
 	clock                  func() time.Time
@@ -145,10 +160,11 @@ const maxImageEditorHeight = 2048
 const maxTextPrintFont = 9
 
 type statusResponse struct {
-	OK      bool            `json:"ok"`
-	Message string          `json:"message,omitempty"`
-	Error   string          `json:"error,omitempty"`
-	Config  *printer.Config `json:"config,omitempty"`
+	OK       bool            `json:"ok"`
+	Message  string          `json:"message,omitempty"`
+	Error    string          `json:"error,omitempty"`
+	Config   *printer.Config `json:"config,omitempty"`
+	Warnings []string        `json:"warnings,omitempty"`
 }
 
 type receiptPreviewResponse struct {
@@ -288,6 +304,12 @@ func WithReceiptService(service DailyReceiptService) ServerOption {
 	}
 }
 
+func WithReceiptSnapshotStore(store ReceiptSnapshotStore) ServerOption {
+	return func(s *Server) {
+		s.snapshotStore = store
+	}
+}
+
 func WithScheduler(scheduler Scheduler) ServerOption {
 	return func(s *Server) {
 		s.scheduler = scheduler
@@ -326,6 +348,7 @@ func NewServer(store SettingsStore, gateway PrinterGateway, clock func() time.Ti
 			app.WithNewsProvider(server.newsProvider),
 			app.WithGoogleProvider(server.googleClient),
 			app.WithMotivationProvider(server.motivationProvider),
+			app.WithReceiptSnapshotStore(server.snapshotStore),
 		)
 	}
 	return server
@@ -334,6 +357,7 @@ func NewServer(store SettingsStore, gateway PrinterGateway, clock func() time.Ti
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleIndex)
+	mux.HandleFunc("GET /snapshots/{id}", s.handleReceiptSnapshot)
 	mux.HandleFunc("GET /static/app.css", handleAppCSS)
 	mux.HandleFunc("GET /static/app.js", handleAppJS)
 	mux.Handle("GET /assets/", noStore(http.StripPrefix("/assets/", http.FileServer(http.Dir(s.assetsPathOrDefault())))))
@@ -346,6 +370,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/settings/motivation", s.handleSaveMotivation)
 	mux.HandleFunc("POST /api/motivation/test", s.handleMotivationTest)
 	mux.HandleFunc("POST /api/settings/news", s.handleSaveNews)
+	mux.HandleFunc("POST /api/settings/receipt-snapshot", s.handleSaveReceiptSnapshot)
 	mux.HandleFunc("GET /api/google/status", s.handleGoogleStatus)
 	mux.HandleFunc("GET /api/google/auth/start", s.handleGoogleAuthStart)
 	mux.HandleFunc("GET /oauth/google/callback", s.handleGoogleCallback)
@@ -394,6 +419,35 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	writeStaticClientFile(w, "text/html; charset=utf-8", indexHTML)
 }
 
+func (s *Server) handleReceiptSnapshot(w http.ResponseWriter, r *http.Request) {
+	if s.snapshotStore == nil {
+		http.NotFound(w, r)
+		return
+	}
+	snapshot, err := s.snapshotStore.Load(r.Context(), r.PathValue("id"))
+	if errors.Is(err, receiptsnapshot.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if snapshot.Status == receiptsnapshot.StatusFailed {
+		http.Error(w, "receipt snapshot is unavailable: "+snapshot.Error, http.StatusGone)
+		return
+	}
+	html, err := receiptsnapshot.RenderSnapshotHTML(snapshot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(html)
+}
+
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	data, err := s.bootstrapData()
 	if err != nil {
@@ -439,6 +493,10 @@ func (s *Server) bootstrapData() (bootstrapData, error) {
 	if err != nil {
 		return bootstrapData{}, err
 	}
+	receiptSnapshot, err := s.store.LoadReceiptSnapshotSettings()
+	if err != nil {
+		return bootstrapData{}, err
+	}
 	scheduleSettings, err := s.store.LoadSchedule()
 	if err != nil {
 		return bootstrapData{}, err
@@ -457,6 +515,7 @@ func (s *Server) bootstrapData() (bootstrapData, error) {
 		News:              bootstrapNewsSettings{TranslateTitles: normalizedNews.TranslateTitlesEnabled(), Sources: normalizedNews.Sources},
 		ReceiptStyle:      receiptStyle,
 		ReceiptContent:    receiptContent,
+		ReceiptSnapshot:   receiptSnapshot,
 		Schedule:          scheduleSettings,
 		NewsPresets:       news.Presets(),
 		FontOptions:       []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
@@ -761,6 +820,30 @@ func (s *Server) handleSaveNews(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, statusResponse{
 		OK:      true,
 		Message: "Настройки новостей сохранены.",
+	})
+}
+
+func (s *Server) handleSaveReceiptSnapshot(w http.ResponseWriter, r *http.Request) {
+	var settings receiptsnapshot.Settings
+	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+		writeJSON(w, http.StatusBadRequest, statusResponse{
+			OK:    false,
+			Error: "invalid JSON: " + err.Error(),
+		})
+		return
+	}
+
+	if err := s.store.SaveReceiptSnapshotSettings(settings); err != nil {
+		writeJSON(w, http.StatusBadRequest, statusResponse{
+			OK:    false,
+			Error: err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, statusResponse{
+		OK:      true,
+		Message: "Настройки онлайн-слепка сохранены.",
 	})
 }
 
@@ -1106,7 +1189,13 @@ func (s *Server) handlePrintWeather(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	printErr := s.receiptService.PrintDailyReceipt(r.Context())
+	var warnings []string
+	var printErr error
+	if service, ok := s.receiptService.(DailyReceiptPrintWarningService); ok {
+		warnings, printErr = service.PrintDailyReceiptWithWarnings(r.Context())
+	} else {
+		printErr = s.receiptService.PrintDailyReceipt(r.Context())
+	}
 	finishErr := s.finishPrintJob(jobID, printErr)
 	if printErr != nil {
 		writeJSON(w, statusForBuildError(printErr), statusResponse{
@@ -1123,9 +1212,14 @@ func (s *Server) handlePrintWeather(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	message := "Чек напечатан."
+	if len(warnings) > 0 {
+		message += "\n" + strings.Join(warnings, "\n")
+	}
 	writeJSON(w, http.StatusOK, statusResponse{
-		OK:      true,
-		Message: "Чек напечатан.",
+		OK:       true,
+		Message:  message,
+		Warnings: warnings,
 	})
 }
 
@@ -1476,6 +1570,7 @@ type bootstrapData struct {
 	News              bootstrapNewsSettings    `json:"news"`
 	ReceiptStyle      receipt.StyleSettings    `json:"receiptStyle"`
 	ReceiptContent    receipt.ContentSettings  `json:"receiptContent"`
+	ReceiptSnapshot   receiptsnapshot.Settings `json:"receiptSnapshot"`
 	Schedule          schedule.Settings        `json:"schedule"`
 	NewsPresets       []news.PresetInfo        `json:"newsPresets"`
 	FontOptions       []int                    `json:"fontOptions"`

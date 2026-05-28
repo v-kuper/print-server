@@ -14,6 +14,7 @@ import (
 	"atol-server/internal/news"
 	"atol-server/internal/printer"
 	"atol-server/internal/receipt"
+	"atol-server/internal/receiptsnapshot"
 	"atol-server/internal/schedule"
 	"atol-server/internal/storage"
 	"atol-server/internal/weather"
@@ -118,6 +119,14 @@ func TestPostgresStoreSavesLoadsSettingsAndRecordsAudit(t *testing.T) {
 		t.Fatalf("expected schedule state %#v, got %#v, err=%v", state, got, err)
 	}
 
+	snapshotSettings := receiptsnapshot.Settings{BaseURL: "http://192.168.0.25:8080/"}
+	if err := store.SaveReceiptSnapshotSettings(snapshotSettings); err != nil {
+		t.Fatalf("save receipt snapshot settings: %v", err)
+	}
+	if got, err := store.LoadReceiptSnapshotSettings(); err != nil || got.BaseURL != "http://192.168.0.25:8080" {
+		t.Fatalf("expected normalized receipt snapshot settings, got %#v, err=%v", got, err)
+	}
+
 	jobID, err := store.StartPrintJob("text", map[string]any{"blocks": 1})
 	if err != nil {
 		t.Fatalf("start print job: %v", err)
@@ -196,6 +205,7 @@ func openPostgresStoreTestPool(t *testing.T, ctx context.Context) storage.Pool {
 func resetPostgresStoreTestDatabase(t *testing.T, ctx context.Context, pool storage.Pool) {
 	t.Helper()
 	_, err := pool.Exec(ctx, `TRUNCATE
+		receipt_snapshots,
 		legacy_imports,
 		audit_events,
 		print_jobs,

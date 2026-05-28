@@ -14,6 +14,7 @@ import (
 	"atol-server/internal/googleintegration"
 	"atol-server/internal/imageeditor"
 	"atol-server/internal/printer"
+	"atol-server/internal/receiptsnapshot"
 	schedulerruntime "atol-server/internal/scheduler"
 	"atol-server/internal/settings"
 	"atol-server/internal/storage"
@@ -54,6 +55,7 @@ func main() {
 		log.Fatalf("legacy image editor import failed: %v", err)
 	}
 	googleTokenStore := googleintegration.NewPostgresTokenStore(pool, store.WorkspaceID())
+	receiptSnapshotStore := receiptsnapshot.NewPostgresStore(pool, store.WorkspaceID())
 	googleConfig := googleintegration.DefaultConfig(filepath.Dir(settingsPath))
 	if err := googleTokenStore.ImportLegacyToken(ctx, googleConfig.TokenPath); err != nil {
 		log.Fatalf("legacy Google token import failed: %v", err)
@@ -67,6 +69,7 @@ func main() {
 		time.Now,
 		app.WithGeneratedAssetsPath(assetsPath),
 		app.WithGoogleProvider(googleClient),
+		app.WithReceiptSnapshotStore(receiptSnapshotStore),
 	)
 	scheduler := schedulerruntime.NewService(store, receiptService, time.Now)
 	go scheduler.Start(ctx)
@@ -79,6 +82,7 @@ func main() {
 		web.WithImageEditorPath(imageEditorPath),
 		web.WithImageEditorStore(imageStore),
 		web.WithReceiptService(receiptService),
+		web.WithReceiptSnapshotStore(receiptSnapshotStore),
 		web.WithGoogleClient(googleClient),
 		web.WithScheduler(scheduler),
 	)

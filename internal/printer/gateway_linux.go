@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	fptr10 "atol-server/internal/fptr10"
 	"atol-server/internal/receipt"
@@ -53,7 +54,11 @@ func (g *Gateway) PrintReceipt(ctx context.Context, config Config, lines []recei
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if len(line.ImagePixelBuffer) > 0 {
+		if strings.TrimSpace(line.QRCode) != "" {
+			if err := session.printQRCode(line); err != nil {
+				return err
+			}
+		} else if len(line.ImagePixelBuffer) > 0 {
 			buffer := pixelBufferFromReceiptLine(line).Normalized()
 			if err := buffer.Validate(); err != nil {
 				return err
@@ -226,6 +231,22 @@ func (s *fptrSession) printPicture(path string, line receipt.Line) error {
 	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_SCALE_PERCENT, float64(scalePercent))
 
 	return s.call("print picture", s.fptr.PrintPicture)
+}
+
+func (s *fptrSession) printQRCode(line receipt.Line) error {
+	if err := s.call("reset QR params", s.fptr.ResetParams); err != nil {
+		return err
+	}
+
+	params := qrCodePrintParams(line)
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_BARCODE, params.value)
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_BARCODE_TYPE, fptr10.LIBFPTR_BT_QR)
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_BARCODE_PRINT_TEXT, false)
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_BARCODE_CORRECTION, fptr10.LIBFPTR_BC_DEFAULT)
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_ALIGNMENT, alignmentToFptr(params.alignment))
+	s.fptr.SetParam(fptr10.LIBFPTR_PARAM_SCALE_PERCENT, float64(params.scalePercent))
+
+	return s.call("print QR code", s.fptr.PrintBarcode)
 }
 
 func (s *fptrSession) printPixelBuffer(buffer PixelBuffer) error {

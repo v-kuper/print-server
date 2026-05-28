@@ -13,6 +13,7 @@ import (
 	"atol-server/internal/news"
 	"atol-server/internal/printer"
 	"atol-server/internal/receipt"
+	"atol-server/internal/receiptsnapshot"
 	"atol-server/internal/schedule"
 	"atol-server/internal/storage"
 	"atol-server/internal/weather"
@@ -26,13 +27,14 @@ const (
 	defaultAdminEmail    = "admin@local.atol"
 	defaultAdminName     = "Local Admin"
 
-	settingWeather        = "weather"
-	settingFinance        = "finance"
-	settingNews           = "news"
-	settingMotivation     = "motivation"
-	settingReceiptStyle   = "receipt_style"
-	settingReceiptContent = "receipt_content"
-	settingSchedule       = "schedule"
+	settingWeather         = "weather"
+	settingFinance         = "finance"
+	settingNews            = "news"
+	settingMotivation      = "motivation"
+	settingReceiptStyle    = "receipt_style"
+	settingReceiptContent  = "receipt_content"
+	settingReceiptSnapshot = "receipt_snapshot"
+	settingSchedule        = "schedule"
 )
 
 type PostgresStore struct {
@@ -188,6 +190,22 @@ func (s *PostgresStore) LoadReceiptContent() (receipt.ContentSettings, error) {
 
 func (s *PostgresStore) SaveReceiptContent(content receipt.ContentSettings) error {
 	return s.saveSetting(settingReceiptContent, content.Normalized())
+}
+
+func (s *PostgresStore) LoadReceiptSnapshotSettings() (receiptsnapshot.Settings, error) {
+	value, err := loadSetting(s, settingReceiptSnapshot, receiptsnapshot.DefaultSettings())
+	if err != nil {
+		return receiptsnapshot.Settings{}, err
+	}
+	return value.Normalized(), nil
+}
+
+func (s *PostgresStore) SaveReceiptSnapshotSettings(settings receiptsnapshot.Settings) error {
+	normalized := settings.Normalized()
+	if err := normalized.Validate(); err != nil {
+		return err
+	}
+	return s.saveSetting(settingReceiptSnapshot, normalized)
 }
 
 func (s *PostgresStore) LoadSchedule() (schedule.Settings, error) {

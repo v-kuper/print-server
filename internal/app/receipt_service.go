@@ -20,6 +20,7 @@ import (
 	"atol-server/internal/news"
 	"atol-server/internal/printer"
 	"atol-server/internal/receipt"
+	"atol-server/internal/receiptsnapshot"
 	"atol-server/internal/weather"
 )
 
@@ -32,10 +33,17 @@ type SettingsStore interface {
 	SaveMotivation(motivation.Settings) error
 	LoadReceiptStyle() (receipt.StyleSettings, error)
 	LoadReceiptContent() (receipt.ContentSettings, error)
+	LoadReceiptSnapshotSettings() (receiptsnapshot.Settings, error)
 }
 
 type Printer interface {
 	PrintReceipt(context.Context, printer.Config, []receipt.Line) error
+}
+
+type ReceiptSnapshotStore interface {
+	Create(context.Context, []receiptsnapshot.NewsItem) (receiptsnapshot.Snapshot, error)
+	Publish(context.Context, string) error
+	Fail(context.Context, string, error) error
 }
 
 type WeatherProvider interface {
@@ -101,9 +109,16 @@ type ReceiptService struct {
 	historyProvider     HistoryProvider
 	googleProvider      GoogleProvider
 	motivationProvider  MotivationProvider
+	snapshotStore       ReceiptSnapshotStore
 	generatedAssetsPath string
 	clock               func() time.Time
 	printMu             sync.Mutex
+}
+
+type dailyReceiptBuild struct {
+	Lines     []receipt.Line
+	Warnings  []string
+	NewsItems []news.Item
 }
 
 const defaultGeneratedAssetsPath = "/opt/atol-server/assets"
@@ -195,6 +210,12 @@ func WithMotivationProvider(provider MotivationProvider) ReceiptServiceOption {
 	}
 }
 
+func WithReceiptSnapshotStore(store ReceiptSnapshotStore) ReceiptServiceOption {
+	return func(s *ReceiptService) {
+		s.snapshotStore = store
+	}
+}
+
 func NewReceiptService(store SettingsStore, printerGateway Printer, clock func() time.Time, options ...ReceiptServiceOption) *ReceiptService {
 	if clock == nil {
 		clock = time.Now
@@ -241,6 +262,14 @@ func (s *ReceiptService) BuildDailyReceiptWithContent(ctx context.Context, conte
 }
 
 func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Context, content receipt.ContentSettings) ([]receipt.Line, []string, error) {
+	result, err := s.buildDailyReceipt(ctx, content)
+	if err != nil {
+		return nil, nil, err
+	}
+	return result.Lines, result.Warnings, nil
+}
+
+func (s *ReceiptService) buildDailyReceipt(ctx context.Context, content receipt.ContentSettings) (dailyReceiptBuild, error) {
 	content = content.Normalized()
 
 	snapshot := weather.Snapshot{
@@ -250,12 +279,12 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 	if content.ShowWeather || content.ShowWeatherAdvice {
 		location, err := s.store.LoadWeather()
 		if err != nil {
-			return nil, nil, buildError(http.StatusInternalServerError, err)
+			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 		}
 
 		snapshot, err = s.weatherProvider.Current(ctx, location)
 		if err != nil {
-			return nil, nil, buildError(http.StatusBadGateway, err)
+			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
 		}
 	}
 
@@ -266,7 +295,7 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 		content.ShowMotivationQuote,
 	)
 	if err != nil {
-		return nil, nil, buildError(http.StatusInternalServerError, err)
+		return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 	}
 
 	var tonSummary *finance.TonPortfolioSummary
@@ -276,7 +305,7 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 	if content.ShowTonPortfolio {
 		portfolio, err := s.store.LoadFinance()
 		if err != nil {
-			return nil, nil, buildError(http.StatusInternalServerError, err)
+			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 		}
 		tonPrice, err := s.tonPriceProvider.CurrentPrice(ctx)
 		if err != nil {
@@ -294,7 +323,7 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 	if content.ShowUsdBynRate {
 		rate, err := s.fiatRateProvider.CurrentRate(ctx)
 		if err != nil {
-			return nil, nil, buildError(http.StatusBadGateway, err)
+			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
 		}
 		usdBynRate = &rate
 		usdBynChartImage, usdBynChartWarning = s.resolveUsdBynChartImage(ctx)
@@ -320,12 +349,12 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 	calendarSections := buildCalendarSections(googleSummary.Events, s.clock())
 	calendarAdvice, calendarAdviceWarning, err := s.resolveCalendarAdvice(ctx, content.ShowCalendar, calendarSections)
 	if err != nil {
-		return nil, nil, buildError(http.StatusInternalServerError, err)
+		return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 	}
 
 	historyFacts, historyWarning, err := s.resolveHistoryFacts(ctx, content.ShowHistory)
 	if err != nil {
-		return nil, nil, buildError(http.StatusInternalServerError, err)
+		return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 	}
 
 	var newsItems []news.Item
@@ -333,21 +362,21 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 	if content.ShowNews {
 		newsSettings, err := s.store.LoadNews()
 		if err != nil {
-			return nil, nil, buildError(http.StatusInternalServerError, err)
+			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 		}
 		newsItems, err = s.newsProvider.Current(ctx, newsSettings)
 		if err != nil {
-			return nil, nil, buildError(http.StatusBadGateway, err)
+			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
 		}
 		newsItems, newsTranslationWarning, err = s.translateNewsItems(ctx, newsSettings, newsItems)
 		if err != nil {
-			return nil, nil, buildError(http.StatusInternalServerError, err)
+			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 		}
 	}
 
 	receiptStyle, err := s.store.LoadReceiptStyle()
 	if err != nil {
-		return nil, nil, buildError(http.StatusInternalServerError, err)
+		return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 	}
 
 	lines := receipt.DailyReceiptWithStyle(receipt.DailyReceiptData{
@@ -367,35 +396,103 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 		NewsItems:        newsItems,
 	}, receiptStyle)
 	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning)
-	return lines, warnings, nil
+	return dailyReceiptBuild{Lines: lines, Warnings: warnings, NewsItems: newsItems}, nil
 }
 
 func (s *ReceiptService) PrintDailyReceipt(ctx context.Context) error {
+	_, err := s.PrintDailyReceiptWithWarnings(ctx)
+	return err
+}
+
+func (s *ReceiptService) PrintDailyReceiptWithWarnings(ctx context.Context) ([]string, error) {
 	content, err := s.store.LoadReceiptContent()
 	if err != nil {
-		return buildError(http.StatusInternalServerError, err)
+		return nil, buildError(http.StatusInternalServerError, err)
 	}
-	return s.PrintDailyReceiptWithContent(ctx, content)
+	return s.PrintDailyReceiptWithContentAndWarnings(ctx, content)
 }
 
 func (s *ReceiptService) PrintDailyReceiptWithContent(ctx context.Context, content receipt.ContentSettings) error {
+	_, err := s.PrintDailyReceiptWithContentAndWarnings(ctx, content)
+	return err
+}
+
+func (s *ReceiptService) PrintDailyReceiptWithContentAndWarnings(ctx context.Context, content receipt.ContentSettings) ([]string, error) {
 	config, err := s.store.LoadPrinter()
 	if err != nil {
-		return buildError(http.StatusInternalServerError, err)
+		return nil, buildError(http.StatusInternalServerError, err)
 	}
 
-	lines, err := s.BuildDailyReceiptWithContent(ctx, content)
+	build, err := s.buildDailyReceipt(ctx, content)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	lines, snapshotID, snapshotWarnings := s.appendNewsSnapshotQRCode(ctx, build.Lines, build.NewsItems)
+	warnings := append([]string(nil), build.Warnings...)
+	warnings = append(warnings, snapshotWarnings...)
 
 	s.printMu.Lock()
 	defer s.printMu.Unlock()
 
 	if err := s.printer.PrintReceipt(ctx, config, lines); err != nil {
-		return buildError(http.StatusBadGateway, err)
+		if snapshotID != "" && s.snapshotStore != nil {
+			_ = s.snapshotStore.Fail(ctx, snapshotID, err)
+		}
+		return warnings, buildError(http.StatusBadGateway, err)
 	}
-	return nil
+	if snapshotID != "" && s.snapshotStore != nil {
+		if err := s.snapshotStore.Publish(ctx, snapshotID); err != nil {
+			warnings = append(warnings, "Слепок создан, но печать не удалось подтвердить в БД: "+err.Error())
+		}
+	}
+	return warnings, nil
+}
+
+func (s *ReceiptService) appendNewsSnapshotQRCode(ctx context.Context, lines []receipt.Line, items []news.Item) ([]receipt.Line, string, []string) {
+	if len(items) == 0 || s.snapshotStore == nil {
+		return lines, "", nil
+	}
+	settings, err := s.store.LoadReceiptSnapshotSettings()
+	if err != nil {
+		return lines, "", []string{"QR-ссылка на онлайн-слепок недоступна: " + err.Error()}
+	}
+	settings = settings.Normalized()
+	if settings.BaseURL == "" {
+		return lines, "", []string{"QR-ссылка на онлайн-слепок не настроена."}
+	}
+	if err := settings.Validate(); err != nil {
+		return lines, "", []string{"QR-ссылка на онлайн-слепок некорректна: " + err.Error()}
+	}
+	snapshot, err := s.snapshotStore.Create(ctx, newsSnapshotItems(items))
+	if err != nil {
+		return lines, "", []string{"Онлайн-слепок новостей не создан: " + err.Error()}
+	}
+	snapshotURL, ok := settings.SnapshotURL(snapshot.ID)
+	if !ok {
+		return lines, "", []string{"QR-ссылка на онлайн-слепок не настроена."}
+	}
+	lines = append(lines, receipt.Line{
+		QRCode:            snapshotURL,
+		Alignment:         receipt.AlignmentCenter,
+		ImageScalePercent: 100,
+	})
+	return lines, snapshot.ID, nil
+}
+
+func newsSnapshotItems(items []news.Item) []receiptsnapshot.NewsItem {
+	result := make([]receiptsnapshot.NewsItem, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.Title) == "" {
+			continue
+		}
+		result = append(result, receiptsnapshot.NewsItem{
+			Title:         strings.TrimSpace(item.Title),
+			OriginalTitle: strings.TrimSpace(item.OriginalTitle),
+			SourceName:    strings.TrimSpace(item.SourceName),
+			Link:          strings.TrimSpace(item.Link),
+		})
+	}
+	return result
 }
 
 func (s *ReceiptService) resolveMotivationContent(ctx context.Context, snapshot weather.Snapshot, includeAdvice bool, includeQuote bool) (*motivation.WeatherAdvice, *motivation.Quote, string, error) {

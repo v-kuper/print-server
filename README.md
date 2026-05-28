@@ -76,12 +76,14 @@ POST /api/settings/printer
 POST /api/settings/weather
 POST /api/settings/finance
 POST /api/settings/news
+POST /api/settings/receipt-snapshot
 POST /api/printer/check
 POST /api/printer/fonts
 POST /api/receipt/preview
 POST /api/print/test
 POST /api/print/text
 POST /api/print/weather
+GET  /snapshots/{id}
 GET  /api/image-editor/state
 POST /api/image-editor/save
 GET  /api/image-editor/preview

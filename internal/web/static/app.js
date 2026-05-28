@@ -316,6 +316,9 @@ function applyBootstrap(data) {
   setChecked("#news-translate", news.translateTitles);
   renderNewsSources(news, data.newsPresets || []);
 
+  const receiptSnapshot = data.receiptSnapshot || {};
+  setValue("#receipt-snapshot-base-url", receiptSnapshot.baseUrl);
+
   const schedule = data.schedule || {};
   setScheduleMode(schedule.mode);
   renderScheduleIntervals(data.scheduleIntervals || [], schedule.intervalMinutes);
@@ -719,6 +722,21 @@ async function saveNewsSettings() {
   return payload;
 }
 
+async function saveReceiptSnapshotSettings() {
+  const response = await fetch("/api/settings/receipt-snapshot", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      baseUrl: document.querySelector("#receipt-snapshot-base-url").value
+    })
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.error || "Не удалось сохранить настройки онлайн-слепка.");
+  }
+  return payload;
+}
+
 function readFont(selector) {
   const value = Number.parseInt(document.querySelector(selector).value, 10);
   return Number.isFinite(value) ? value : 0;
@@ -879,6 +897,7 @@ async function saveAllSettings() {
   }
   await saveMotivationSettings();
   await saveNewsSettings();
+  await saveReceiptSnapshotSettings();
   await saveReceiptStyle();
 }
 

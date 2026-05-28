@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"atol-server/internal/news"
 	"atol-server/internal/printer"
 	"atol-server/internal/receipt"
+	"atol-server/internal/receiptsnapshot"
 	"atol-server/internal/weather"
 )
 
@@ -66,6 +68,139 @@ func TestReceiptServicePrintsDailyReceiptWithSavedPrinterConfig(t *testing.T) {
 	}
 	if !lineTextsContain(gateway.printedLines, "Возьми зонт.") {
 		t.Fatalf("expected weather advice in daily receipt, got %#v", gateway.printedLines)
+	}
+}
+
+func TestReceiptServiceCreatesNewsSnapshotAndPrintsQRCode(t *testing.T) {
+	translateTitles := false
+	store := &fakeStore{
+		config: printer.Config{Host: "192.168.0.118", Port: 5555},
+		newsSettings: news.Settings{
+			TranslateTitles: &translateTitles,
+			Sources: []news.SourceSettings{
+				{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+			},
+		},
+		snapshotSettings: receiptsnapshot.Settings{BaseURL: "http://192.168.0.25:8080"},
+	}
+	gateway := &fakePrinter{}
+	snapshotStore := &fakeReceiptSnapshotStore{id: "snapshot-1"}
+	service := NewReceiptService(
+		store,
+		gateway,
+		fixedClock,
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{
+			Title:         "Переведенный заголовок",
+			OriginalTitle: "Original title",
+			SourceName:    "BBC Russian",
+			Link:          "https://example.com/news",
+		}}}),
+		WithReceiptSnapshotStore(snapshotStore),
+	)
+
+	warnings, err := service.PrintDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured: true,
+		ShowNews:   true,
+	})
+	if err != nil {
+		t.Fatalf("print receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if !receiptLinesContainQRCode(gateway.printedLines, "http://192.168.0.25:8080/snapshots/snapshot-1") {
+		t.Fatalf("expected printed QR line, got %#v", gateway.printedLines)
+	}
+	wantItems := []receiptsnapshot.NewsItem{{
+		Title:         "Переведенный заголовок",
+		OriginalTitle: "Original title",
+		SourceName:    "BBC Russian",
+		Link:          "https://example.com/news",
+	}}
+	if !reflect.DeepEqual(snapshotStore.createdItems, wantItems) {
+		t.Fatalf("expected snapshot items %#v, got %#v", wantItems, snapshotStore.createdItems)
+	}
+	if snapshotStore.publishedID != "snapshot-1" {
+		t.Fatalf("expected snapshot to be published, got %q", snapshotStore.publishedID)
+	}
+}
+
+func TestReceiptServicePrintsNewsWithoutQRCodeWhenSnapshotBaseURLIsEmpty(t *testing.T) {
+	translateTitles := false
+	store := &fakeStore{
+		config: printer.Config{Host: "192.168.0.118", Port: 5555},
+		newsSettings: news.Settings{
+			TranslateTitles: &translateTitles,
+			Sources: []news.SourceSettings{
+				{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+			},
+		},
+	}
+	gateway := &fakePrinter{}
+	snapshotStore := &fakeReceiptSnapshotStore{id: "snapshot-1"}
+	service := NewReceiptService(
+		store,
+		gateway,
+		fixedClock,
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "BBC Russian"}}}),
+		WithReceiptSnapshotStore(snapshotStore),
+	)
+
+	warnings, err := service.PrintDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured: true,
+		ShowNews:   true,
+	})
+	if err != nil {
+		t.Fatalf("print receipt: %v", err)
+	}
+	if receiptLinesContainQRCode(gateway.printedLines, "") {
+		t.Fatalf("expected receipt without QR, got %#v", gateway.printedLines)
+	}
+	if len(snapshotStore.createdItems) != 0 {
+		t.Fatalf("snapshot must not be created without base URL, got %#v", snapshotStore.createdItems)
+	}
+	if !containsWarning(warnings, "QR-ссылка") {
+		t.Fatalf("expected QR warning, got %#v", warnings)
+	}
+}
+
+func TestReceiptServiceMarksNewsSnapshotFailedWhenPrinterFails(t *testing.T) {
+	translateTitles := false
+	store := &fakeStore{
+		config: printer.Config{Host: "192.168.0.118", Port: 5555},
+		newsSettings: news.Settings{
+			TranslateTitles: &translateTitles,
+			Sources: []news.SourceSettings{
+				{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+			},
+		},
+		snapshotSettings: receiptsnapshot.Settings{BaseURL: "http://192.168.0.25:8080"},
+	}
+	snapshotStore := &fakeReceiptSnapshotStore{id: "snapshot-1"}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{printErr: errors.New("paper empty")},
+		fixedClock,
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "BBC Russian"}}}),
+		WithReceiptSnapshotStore(snapshotStore),
+	)
+
+	warnings, err := service.PrintDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured: true,
+		ShowNews:   true,
+	})
+
+	if err == nil {
+		t.Fatal("expected printer error")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings on printer error, got %#v", warnings)
+	}
+	if snapshotStore.failedID != "snapshot-1" || snapshotStore.failedErr == nil || snapshotStore.failedErr.Error() != "paper empty" {
+		t.Fatalf("expected failed snapshot, got id=%q err=%v", snapshotStore.failedID, snapshotStore.failedErr)
+	}
+	if snapshotStore.publishedID != "" {
+		t.Fatalf("failed snapshot must not be published, got %q", snapshotStore.publishedID)
 	}
 }
 
@@ -1285,6 +1420,7 @@ type fakeStore struct {
 	receiptStyle            receipt.StyleSettings
 	receiptContent          receipt.ContentSettings
 	receiptContentLoadCalls int
+	snapshotSettings        receiptsnapshot.Settings
 	motivationSettings      motivation.Settings
 }
 
@@ -1316,6 +1452,10 @@ func (s *fakeStore) LoadReceiptContent() (receipt.ContentSettings, error) {
 	return s.receiptContent.Normalized(), nil
 }
 
+func (s *fakeStore) LoadReceiptSnapshotSettings() (receiptsnapshot.Settings, error) {
+	return s.snapshotSettings.Normalized(), nil
+}
+
 func (s *fakeStore) LoadMotivation() (motivation.Settings, error) {
 	if s.motivationSettings == (motivation.Settings{}) {
 		return motivation.DefaultSettings(), nil
@@ -1335,11 +1475,47 @@ func (s *fakeStore) SaveMotivation(settings motivation.Settings) error {
 type fakePrinter struct {
 	printedConfig printer.Config
 	printedLines  []receipt.Line
+	printErr      error
 }
 
 func (p *fakePrinter) PrintReceipt(_ context.Context, config printer.Config, lines []receipt.Line) error {
 	p.printedConfig = config
 	p.printedLines = append([]receipt.Line(nil), lines...)
+	if p.printErr != nil {
+		return p.printErr
+	}
+	return nil
+}
+
+type fakeReceiptSnapshotStore struct {
+	id           string
+	err          error
+	createdItems []receiptsnapshot.NewsItem
+	publishedID  string
+	failedID     string
+	failedErr    error
+}
+
+func (s *fakeReceiptSnapshotStore) Create(_ context.Context, items []receiptsnapshot.NewsItem) (receiptsnapshot.Snapshot, error) {
+	if s.err != nil {
+		return receiptsnapshot.Snapshot{}, s.err
+	}
+	s.createdItems = append([]receiptsnapshot.NewsItem(nil), items...)
+	id := s.id
+	if id == "" {
+		id = "snapshot-1"
+	}
+	return receiptsnapshot.Snapshot{ID: id, Status: receiptsnapshot.StatusPending, NewsItems: items}, nil
+}
+
+func (s *fakeReceiptSnapshotStore) Publish(_ context.Context, id string) error {
+	s.publishedID = id
+	return nil
+}
+
+func (s *fakeReceiptSnapshotStore) Fail(_ context.Context, id string, err error) error {
+	s.failedID = id
+	s.failedErr = err
 	return nil
 }
 
@@ -1558,6 +1734,21 @@ func receiptLinesContainImage(lines []receipt.Line, path string) bool {
 func receiptLinesContainPixelImage(lines []receipt.Line, path string) bool {
 	for _, line := range lines {
 		if line.ImagePath == path && len(line.ImagePixelBuffer) == line.ImageWidth*line.ImageHeight {
+			return true
+		}
+	}
+	return false
+}
+
+func receiptLinesContainQRCode(lines []receipt.Line, value string) bool {
+	for _, line := range lines {
+		if value == "" {
+			if line.QRCode != "" {
+				return true
+			}
+			continue
+		}
+		if line.QRCode == value {
 			return true
 		}
 	}

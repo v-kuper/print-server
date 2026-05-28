@@ -21,6 +21,7 @@ func TestEmbeddedMigrationDefinesPersistenceTables(t *testing.T) {
 		"image_editor_state",
 		"google_tokens",
 		"print_jobs",
+		"receipt_snapshots",
 		"audit_events",
 		"legacy_imports",
 	} {

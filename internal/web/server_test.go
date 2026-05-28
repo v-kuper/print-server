@@ -21,6 +21,7 @@ import (
 	"atol-server/internal/news"
 	"atol-server/internal/printer"
 	"atol-server/internal/receipt"
+	"atol-server/internal/receiptsnapshot"
 	"atol-server/internal/schedule"
 	schedulerruntime "atol-server/internal/scheduler"
 	"atol-server/internal/weather"
@@ -153,6 +154,7 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`data-section="printer"`,
 		`id="weather-location-results"`,
 		`id="news-source-list"`,
+		`id="receipt-snapshot-base-url"`,
 		`id="schedule-time-list"`,
 		`id="schedule-interval-content"`,
 		`id="schedule-run-header"`,
@@ -370,6 +372,7 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 			ShowHistory:         true,
 			ShowNews:            true,
 		},
+		snapshotSettings: receiptsnapshot.Settings{BaseURL: "http://192.168.0.25:8080"},
 		scheduleSettings: schedule.Settings{
 			Enabled:         true,
 			Mode:            schedule.ModeDailyTimes,
@@ -414,6 +417,7 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 			} `json:"news"`
 			ReceiptStyle      receipt.StyleSettings    `json:"receiptStyle"`
 			ReceiptContent    receipt.ContentSettings  `json:"receiptContent"`
+			ReceiptSnapshot   receiptsnapshot.Settings `json:"receiptSnapshot"`
 			Schedule          schedule.Settings        `json:"schedule"`
 			NewsPresets       []news.PresetInfo        `json:"newsPresets"`
 			FontOptions       []int                    `json:"fontOptions"`
@@ -455,6 +459,9 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	}
 	if !payload.Data.ReceiptContent.ShowMail || !payload.Data.ReceiptContent.ShowHistory || payload.Data.ReceiptContent.ShowBankRates {
 		t.Fatalf("expected receipt content in bootstrap, got %#v", payload.Data.ReceiptContent)
+	}
+	if payload.Data.ReceiptSnapshot.BaseURL != "http://192.168.0.25:8080" {
+		t.Fatalf("expected receipt snapshot settings in bootstrap, got %#v", payload.Data.ReceiptSnapshot)
 	}
 	if payload.Data.Schedule.Mode != schedule.ModeDailyTimes || len(payload.Data.Schedule.Times) != 2 {
 		t.Fatalf("expected schedule in bootstrap, got %#v", payload.Data.Schedule)
@@ -1078,6 +1085,28 @@ func TestPrintWeatherEndpointLoadsWeatherAndPrintsReceipt(t *testing.T) {
 	}
 }
 
+func TestPrintWeatherEndpointReturnsPrintWarnings(t *testing.T) {
+	store := &fakeStore{config: printer.Config{Host: "192.168.0.118", Port: 5555}}
+	service := &fakeDailyReceiptService{warnings: []string{"QR-ссылка на онлайн-слепок не настроена."}}
+	server := NewServer(store, &fakePrinter{}, fixedClock, WithReceiptService(service))
+
+	request := httptest.NewRequest(http.MethodPost, "/api/print/weather", nil)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var payload statusResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Warnings) != 1 || !strings.Contains(payload.Message, "QR-ссылка") {
+		t.Fatalf("expected print warnings in response, got %#v", payload)
+	}
+}
+
 func TestReceiptPreviewEndpointReturnsStyledLinesWithoutPrinting(t *testing.T) {
 	weatherCode := 0
 	store := &fakeStore{
@@ -1242,6 +1271,88 @@ func TestSaveNewsEndpointPersistsTranslateTitlesToggle(t *testing.T) {
 	}
 	if store.newsSettings.TranslateTitles == nil || *store.newsSettings.TranslateTitles {
 		t.Fatalf("expected disabled news translation setting to be saved, got %#v", store.newsSettings)
+	}
+}
+
+func TestSaveReceiptSnapshotEndpointPersistsBaseURL(t *testing.T) {
+	store := &fakeStore{}
+	server := NewServer(store, &fakePrinter{}, fixedClock)
+
+	body := bytes.NewBufferString(`{"baseUrl":" http://192.168.0.25:8080/ "}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/settings/receipt-snapshot", body)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if store.snapshotSettings.BaseURL != "http://192.168.0.25:8080" {
+		t.Fatalf("expected normalized snapshot base URL, got %#v", store.snapshotSettings)
+	}
+}
+
+func TestSnapshotPageRendersPublishedSnapshot(t *testing.T) {
+	snapshotStore := &fakeReceiptSnapshotStore{snapshots: map[string]receiptsnapshot.Snapshot{
+		"snapshot-1": {
+			ID:     "snapshot-1",
+			Status: receiptsnapshot.StatusPublished,
+			NewsItems: []receiptsnapshot.NewsItem{{
+				SourceName:    "BBC Russian",
+				Title:         "Переведенный заголовок",
+				OriginalTitle: "Original title",
+				Link:          "https://example.com/news",
+			}},
+			CreatedAt: fixedClock(),
+		},
+	}}
+	server := NewServer(&fakeStore{}, &fakePrinter{}, fixedClock, WithReceiptSnapshotStore(snapshotStore))
+
+	request := httptest.NewRequest(http.MethodGet, "/snapshots/snapshot-1", nil)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	body := response.Body.String()
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, body)
+	}
+	if got := response.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
+		t.Fatalf("expected HTML content type, got %q", got)
+	}
+	for _, want := range []string{"Коротко о мире", "BBC Russian", "Переведенный заголовок", `href="https://example.com/news"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected snapshot page to contain %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestSnapshotPageReturnsGoneForFailedSnapshot(t *testing.T) {
+	snapshotStore := &fakeReceiptSnapshotStore{snapshots: map[string]receiptsnapshot.Snapshot{
+		"snapshot-1": {ID: "snapshot-1", Status: receiptsnapshot.StatusFailed, Error: "paper empty"},
+	}}
+	server := NewServer(&fakeStore{}, &fakePrinter{}, fixedClock, WithReceiptSnapshotStore(snapshotStore))
+
+	request := httptest.NewRequest(http.MethodGet, "/snapshots/snapshot-1", nil)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestSnapshotPageReturnsNotFound(t *testing.T) {
+	server := NewServer(&fakeStore{}, &fakePrinter{}, fixedClock, WithReceiptSnapshotStore(&fakeReceiptSnapshotStore{}))
+
+	request := httptest.NewRequest(http.MethodGet, "/snapshots/missing", nil)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", response.Code, response.Body.String())
 	}
 }
 
@@ -1536,6 +1647,7 @@ type fakeStore struct {
 	newsSettings       news.Settings
 	receiptStyle       receipt.StyleSettings
 	receiptContent     receipt.ContentSettings
+	snapshotSettings   receiptsnapshot.Settings
 	scheduleSettings   schedule.Settings
 	scheduleState      schedule.State
 	motivationSettings motivation.Settings
@@ -1639,6 +1751,19 @@ func (s *fakeStore) SaveReceiptContent(content receipt.ContentSettings) error {
 	return nil
 }
 
+func (s *fakeStore) LoadReceiptSnapshotSettings() (receiptsnapshot.Settings, error) {
+	return s.snapshotSettings.Normalized(), nil
+}
+
+func (s *fakeStore) SaveReceiptSnapshotSettings(settings receiptsnapshot.Settings) error {
+	normalized := settings.Normalized()
+	if err := normalized.Validate(); err != nil {
+		return err
+	}
+	s.snapshotSettings = normalized
+	return nil
+}
+
 func (s *fakeStore) LoadSchedule() (schedule.Settings, error) {
 	if scheduleSettingsEqual(s.scheduleSettings, schedule.Settings{}) {
 		return schedule.DefaultSettings(), nil
@@ -1691,6 +1816,55 @@ type fakePrintJob struct {
 	request any
 	status  string
 	err     string
+}
+
+type fakeReceiptSnapshotStore struct {
+	snapshots map[string]receiptsnapshot.Snapshot
+}
+
+func (s *fakeReceiptSnapshotStore) Create(_ context.Context, items []receiptsnapshot.NewsItem) (receiptsnapshot.Snapshot, error) {
+	return receiptsnapshot.Snapshot{ID: "snapshot-1", Status: receiptsnapshot.StatusPending, NewsItems: items}, nil
+}
+
+func (s *fakeReceiptSnapshotStore) Publish(_ context.Context, _ string) error {
+	return nil
+}
+
+func (s *fakeReceiptSnapshotStore) Fail(_ context.Context, _ string, _ error) error {
+	return nil
+}
+
+func (s *fakeReceiptSnapshotStore) Load(_ context.Context, id string) (receiptsnapshot.Snapshot, error) {
+	if s.snapshots == nil {
+		return receiptsnapshot.Snapshot{}, receiptsnapshot.ErrNotFound
+	}
+	snapshot, ok := s.snapshots[id]
+	if !ok {
+		return receiptsnapshot.Snapshot{}, receiptsnapshot.ErrNotFound
+	}
+	return snapshot, nil
+}
+
+type fakeDailyReceiptService struct {
+	lines    []receipt.Line
+	warnings []string
+	err      error
+}
+
+func (s *fakeDailyReceiptService) BuildDailyReceipt(context.Context) ([]receipt.Line, error) {
+	return append([]receipt.Line(nil), s.lines...), s.err
+}
+
+func (s *fakeDailyReceiptService) BuildDailyReceiptWithWarnings(context.Context) ([]receipt.Line, []string, error) {
+	return append([]receipt.Line(nil), s.lines...), append([]string(nil), s.warnings...), s.err
+}
+
+func (s *fakeDailyReceiptService) PrintDailyReceipt(context.Context) error {
+	return s.err
+}
+
+func (s *fakeDailyReceiptService) PrintDailyReceiptWithWarnings(context.Context) ([]string, error) {
+	return append([]string(nil), s.warnings...), s.err
 }
 
 type fakeScheduler struct {
