@@ -223,7 +223,13 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 		for sourceIndex, group := range grouped {
 			result = append(result, wrappedAligned(group.SourceName, normalStyle)...)
 			for itemIndex, item := range group.Items {
-				result = append(result, wrappedAligned("- "+item.Title, normalStyle)...)
+				titleLines := wrappedAligned("- "+item.Title, normalStyle)
+				if link := strings.TrimSpace(item.Link); link != "" {
+					for lineIndex := range titleLines {
+						titleLines[lineIndex].Link = link
+					}
+				}
+				result = append(result, titleLines...)
 				if strings.TrimSpace(item.OriginalTitle) != "" {
 					result = append(result, wrappedAligned(item.OriginalTitle, originalStyle)...)
 				}

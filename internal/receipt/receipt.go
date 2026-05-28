@@ -20,6 +20,7 @@ const (
 
 type Line struct {
 	Text              string
+	Link              string
 	QRCode            string
 	ImageKey          string
 	ImagePath         string

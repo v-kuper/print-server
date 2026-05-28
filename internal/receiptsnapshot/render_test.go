@@ -8,32 +8,18 @@ import (
 
 func TestRenderSnapshotHTMLGroupsNewsAndEscapesContent(t *testing.T) {
 	snapshot := Snapshot{
-		ID:        "snapshot-1",
-		Status:    StatusPublished,
-		CreatedAt: time.Date(2026, 5, 28, 9, 10, 0, 0, time.UTC),
+		ID:         "snapshot-1",
+		Status:     StatusPublished,
+		CreatedAt:  time.Date(2026, 5, 28, 9, 10, 0, 0, time.UTC),
+		PaperChars: 42,
 		ReceiptLines: []ReceiptLine{
-			{Text: "25 Мая", Alignment: "center", Role: "calendar"},
-			{Text: "Погода", Alignment: "center"},
-			{Text: "Коротко о мире:", Alignment: "center"},
-			{Text: "- Первый <script>alert(\"x\")</script>", Alignment: "center"},
-		},
-		NewsItems: []NewsItem{
-			{
-				SourceName:    "BBC <Russian>",
-				Title:         `Первый <script>alert("x")</script>`,
-				OriginalTitle: "First <World>",
-				Link:          "https://example.com/first",
-			},
-			{
-				SourceName: "BBC <Russian>",
-				Title:      "Второй",
-				Link:       "javascript:alert(1)",
-			},
-			{
-				SourceName: "Reuters",
-				Title:      "Third",
-				Link:       "https://example.com/third",
-			},
+			{Text: "25 Мая", Alignment: "center", Role: "calendar", Font: 2, DoubleHeight: true, LineSize: 13.33},
+			{ImageKey: "clear", ImageWidth: 96, ImageHeight: 96, ImageScalePercent: 100, Alignment: "center"},
+			{Text: "Коротко о мире:", Alignment: "center", LineSize: 15},
+			{Text: "- Первый <script>alert(\"x\")</script>", Link: "https://example.com/first", Alignment: "center", LineSize: 15},
+			{Text: "First <World>", Alignment: "left", Role: "original", LineSize: 12},
+			{Text: "- Unsafe", Link: "javascript:alert(1)", Alignment: "center", LineSize: 15},
+			{QRCode: "http://192.168.0.25:8080/snapshots/snapshot-1", Alignment: "center"},
 		},
 	}
 
@@ -46,23 +32,26 @@ func TestRenderSnapshotHTMLGroupsNewsAndEscapesContent(t *testing.T) {
 	for _, want := range []string{
 		`class="receipt-preview"`,
 		`class="receipt-paper"`,
+		`--paper-chars: 42;`,
 		`class="receipt-line align-center role-calendar"`,
+		`--line-size: 13.33px`,
 		`class="receipt-line-text"`,
+		`class="receipt-line receipt-image-line align-center role-normal"`,
+		`class="receipt-image"`,
+		`src="/assets/weather-icons/print/clear.png"`,
+		`class="receipt-line receipt-qr-line align-center role-normal"`,
+		`class="receipt-qr"`,
 		"25 Мая",
-		"Погода",
 		"Коротко о мире",
-		"BBC &lt;Russian&gt;",
 		"Первый &lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;",
 		"First &lt;World&gt;",
 		`href="https://example.com/first"`,
-		"Reuters",
-		`href="https://example.com/third"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected rendered HTML to contain %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, `class="receipt"`) || strings.Contains(body, `class="line `) {
+	if strings.Contains(body, `class="receipt"`) || strings.Contains(body, `class="line `) || strings.Contains(body, "snapshot-news-line") {
 		t.Fatalf("snapshot must use receipt preview structure:\n%s", body)
 	}
 	if strings.Contains(body, "javascript:alert") {

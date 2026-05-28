@@ -123,6 +123,15 @@ func TestReceiptServiceCreatesNewsSnapshotAndPrintsQRCode(t *testing.T) {
 	if !snapshotReceiptLinesContain(snapshotStore.createdLines, "Коротко о мире:") {
 		t.Fatalf("expected snapshot receipt lines to include printed receipt, got %#v", snapshotStore.createdLines)
 	}
+	if !snapshotReceiptLinesContain(snapshotStore.finalizedLines, "Коротко о мире:") {
+		t.Fatalf("expected finalized snapshot receipt lines to include printed receipt, got %#v", snapshotStore.finalizedLines)
+	}
+	if !snapshotReceiptLinesContainQRCode(snapshotStore.finalizedLines, "http://192.168.0.25:8080/snapshots/snapshot-1") {
+		t.Fatalf("expected finalized snapshot receipt lines to include QR, got %#v", snapshotStore.finalizedLines)
+	}
+	if !snapshotReceiptLinesContainLinkedText(snapshotStore.finalizedLines, "Переведенный заголовок", "https://example.com/news") {
+		t.Fatalf("expected finalized snapshot receipt lines to include linked news title, got %#v", snapshotStore.finalizedLines)
+	}
 	if snapshotStore.publishedID != "snapshot-1" {
 		t.Fatalf("expected snapshot to be published, got %q", snapshotStore.publishedID)
 	}
@@ -164,6 +173,46 @@ func TestReceiptServicePrintsNewsWithDefaultQRCodeWhenSnapshotBaseURLIsEmpty(t *
 	}
 	if len(snapshotStore.createdItems) == 0 {
 		t.Fatalf("expected snapshot items to be created")
+	}
+}
+
+func TestReceiptServiceSkipsQRCodeWhenSnapshotFinalizationFails(t *testing.T) {
+	translateTitles := false
+	store := &fakeStore{
+		config: printer.Config{Host: "192.168.0.118", Port: 5555},
+		newsSettings: news.Settings{
+			TranslateTitles: &translateTitles,
+			Sources: []news.SourceSettings{
+				{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+			},
+		},
+		snapshotSettings: receiptsnapshot.Settings{BaseURL: "http://192.168.0.25:8080"},
+	}
+	gateway := &fakePrinter{}
+	snapshotStore := &fakeReceiptSnapshotStore{id: "snapshot-1", finalizeErr: errors.New("database timeout")}
+	service := NewReceiptService(
+		store,
+		gateway,
+		fixedClock,
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "BBC Russian"}}}),
+		WithReceiptSnapshotStore(snapshotStore),
+	)
+
+	warnings, err := service.PrintDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured: true,
+		ShowNews:   true,
+	})
+	if err != nil {
+		t.Fatalf("print receipt: %v", err)
+	}
+	if len(warnings) == 0 || !strings.Contains(warnings[0], "не сохранен") {
+		t.Fatalf("expected snapshot finalization warning, got %#v", warnings)
+	}
+	if receiptLinesContainAnyQRCode(gateway.printedLines) {
+		t.Fatalf("QR must not be printed when finalized snapshot lines are not saved, got %#v", gateway.printedLines)
+	}
+	if snapshotStore.publishedID != "" {
+		t.Fatalf("snapshot without final lines must not be published, got %q", snapshotStore.publishedID)
 	}
 }
 
@@ -1491,13 +1540,17 @@ func (p *fakePrinter) PrintReceipt(_ context.Context, config printer.Config, lin
 }
 
 type fakeReceiptSnapshotStore struct {
-	id           string
-	err          error
-	createdItems []receiptsnapshot.NewsItem
-	createdLines []receiptsnapshot.ReceiptLine
-	publishedID  string
-	failedID     string
-	failedErr    error
+	id                  string
+	err                 error
+	finalizeErr         error
+	createdItems        []receiptsnapshot.NewsItem
+	createdLines        []receiptsnapshot.ReceiptLine
+	finalizedID         string
+	finalizedLines      []receiptsnapshot.ReceiptLine
+	finalizedPaperChars int
+	publishedID         string
+	failedID            string
+	failedErr           error
 }
 
 func (s *fakeReceiptSnapshotStore) Create(_ context.Context, input receiptsnapshot.CreateInput) (receiptsnapshot.Snapshot, error) {
@@ -1511,6 +1564,16 @@ func (s *fakeReceiptSnapshotStore) Create(_ context.Context, input receiptsnapsh
 		id = "snapshot-1"
 	}
 	return receiptsnapshot.Snapshot{ID: id, Status: receiptsnapshot.StatusPending, NewsItems: input.NewsItems, ReceiptLines: input.ReceiptLines}, nil
+}
+
+func (s *fakeReceiptSnapshotStore) FinalizeReceiptLines(_ context.Context, id string, lines []receiptsnapshot.ReceiptLine, paperChars int) error {
+	if s.finalizeErr != nil {
+		return s.finalizeErr
+	}
+	s.finalizedID = id
+	s.finalizedLines = append([]receiptsnapshot.ReceiptLine(nil), lines...)
+	s.finalizedPaperChars = paperChars
+	return nil
 }
 
 func (s *fakeReceiptSnapshotStore) Publish(_ context.Context, id string) error {
@@ -1760,9 +1823,36 @@ func receiptLinesContainQRCode(lines []receipt.Line, value string) bool {
 	return false
 }
 
+func receiptLinesContainAnyQRCode(lines []receipt.Line) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line.QRCode) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func snapshotReceiptLinesContain(lines []receiptsnapshot.ReceiptLine, want string) bool {
 	for _, line := range lines {
 		if line.Text == want {
+			return true
+		}
+	}
+	return false
+}
+
+func snapshotReceiptLinesContainQRCode(lines []receiptsnapshot.ReceiptLine, value string) bool {
+	for _, line := range lines {
+		if line.QRCode == value {
+			return true
+		}
+	}
+	return false
+}
+
+func snapshotReceiptLinesContainLinkedText(lines []receiptsnapshot.ReceiptLine, textPart string, link string) bool {
+	for _, line := range lines {
+		if strings.Contains(line.Text, textPart) && line.Link == link {
 			return true
 		}
 	}

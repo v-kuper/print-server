@@ -2,9 +2,13 @@ package receiptsnapshot
 
 import (
 	"bytes"
+	"encoding/base64"
+	"fmt"
 	"html/template"
 	"net/url"
 	"strings"
+
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 type NewsGroup struct {
@@ -15,16 +19,32 @@ type NewsGroup struct {
 type snapshotPageData struct {
 	ID            string
 	PendingNotice bool
-	ReceiptLines  []ReceiptLine
-	Groups        []NewsGroup
+	PaperChars    int
+	Lines         []snapshotReceiptLine
+}
+
+type snapshotReceiptLine struct {
+	Text               string
+	Link               string
+	QRCode             string
+	QRDataURL          template.URL
+	ImageSrc           string
+	ImagePreviewWidth  int
+	ImagePreviewHeight int
+	ImageLineHeight    int
+	Alignment          string
+	Role               string
+	LineSize           string
+	ScaleX             int
+	ScaleY             int
 }
 
 func RenderSnapshotHTML(snapshot Snapshot) ([]byte, error) {
 	data := snapshotPageData{
 		ID:            snapshot.ID,
 		PendingNotice: snapshot.Status == StatusPending,
-		ReceiptLines:  receiptLinesBeforeNews(snapshot.ReceiptLines),
-		Groups:        GroupNews(snapshot.NewsItems),
+		PaperChars:    normalizePaperChars(snapshot.PaperChars),
+		Lines:         prepareReceiptLines(snapshot),
 	}
 	var buffer bytes.Buffer
 	if err := snapshotTemplate.Execute(&buffer, data); err != nil {
@@ -33,19 +53,88 @@ func RenderSnapshotHTML(snapshot Snapshot) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func receiptLinesBeforeNews(lines []ReceiptLine) []ReceiptLine {
+func prepareReceiptLines(snapshot Snapshot) []snapshotReceiptLine {
+	lines := snapshot.ReceiptLines
 	if len(lines) == 0 {
-		return nil
+		lines = fallbackNewsReceiptLines(snapshot.NewsItems)
 	}
-	result := make([]ReceiptLine, 0, len(lines))
+	result := make([]snapshotReceiptLine, 0, len(lines))
 	for _, line := range lines {
-		line.Text = strings.TrimRight(line.Text, "\r\n")
-		if strings.TrimSpace(line.Text) == "Коротко о мире:" {
-			break
-		}
-		result = append(result, normalizeReceiptLine(line))
+		result = append(result, prepareReceiptLine(line))
 	}
 	return result
+}
+
+func prepareReceiptLine(line ReceiptLine) snapshotReceiptLine {
+	line.Text = strings.TrimRight(line.Text, "\r\n")
+	line = normalizeReceiptLine(line)
+	result := snapshotReceiptLine{
+		Text:      line.Text,
+		Link:      safeHTTPURL(line.Link),
+		QRCode:    strings.TrimSpace(line.QRCode),
+		ImageSrc:  snapshotImageSrc(line),
+		Alignment: line.Alignment,
+		Role:      line.Role,
+		LineSize:  fmt.Sprintf("%.2f", normalizeLineSize(line.LineSize)),
+		ScaleX:    1,
+		ScaleY:    1,
+	}
+	if line.DoubleWidth {
+		result.ScaleX = 2
+	}
+	if line.DoubleHeight {
+		result.ScaleY = 2
+	}
+	if result.QRCode != "" {
+		result.QRDataURL = qrCodeDataURL(result.QRCode)
+	}
+	if result.ImageSrc != "" {
+		width := line.ImageWidth
+		if width <= 0 {
+			width = 96
+		}
+		height := line.ImageHeight
+		if height <= 0 {
+			height = width
+		}
+		previewWidth := clampInt(int(float64(width)*0.8), 48, 320)
+		previewHeight := int(float64(previewWidth) * float64(height) / float64(width))
+		if previewHeight < 32 {
+			previewHeight = 32
+		}
+		result.ImagePreviewWidth = previewWidth
+		result.ImagePreviewHeight = previewHeight
+		result.ImageLineHeight = previewHeight + 8
+	}
+	return result
+}
+
+func fallbackNewsReceiptLines(items []NewsItem) []ReceiptLine {
+	groups := GroupNews(items)
+	if len(groups) == 0 {
+		return nil
+	}
+	var lines []ReceiptLine
+	lines = append(lines,
+		ReceiptLine{Text: "Коротко о мире:", Alignment: "center", Role: "normal", LineSize: 15},
+		ReceiptLine{Text: " ", Alignment: "center", Role: "normal", LineSize: 15},
+	)
+	for sourceIndex, group := range groups {
+		lines = append(lines, ReceiptLine{Text: group.SourceName, Alignment: "center", Role: "normal", LineSize: 15})
+		for itemIndex, item := range group.Items {
+			lines = append(lines, ReceiptLine{Text: "- " + item.Title, Link: item.Link, Alignment: "center", Role: "normal", LineSize: 15})
+			if strings.TrimSpace(item.OriginalTitle) != "" {
+				lines = append(lines, ReceiptLine{Text: item.OriginalTitle, Alignment: "left", Role: "original", LineSize: 13})
+			}
+			if itemIndex < len(group.Items)-1 {
+				lines = append(lines, ReceiptLine{Text: " ", Alignment: "center", Role: "normal", LineSize: 15})
+			}
+		}
+		if sourceIndex < len(groups)-1 {
+			lines = append(lines, ReceiptLine{Text: " ", Alignment: "center", Role: "normal", LineSize: 15})
+		}
+	}
+	return lines
 }
 
 func normalizeReceiptLine(line ReceiptLine) ReceiptLine {
@@ -60,6 +149,59 @@ func normalizeReceiptLine(line ReceiptLine) ReceiptLine {
 		line.Role = "normal"
 	}
 	return line
+}
+
+func normalizeLineSize(value float64) float64 {
+	if value <= 0 {
+		return 15
+	}
+	if value < 10 {
+		return 10
+	}
+	if value > 32 {
+		return 32
+	}
+	return value
+}
+
+func snapshotImageSrc(line ReceiptLine) string {
+	if value := safeImageURL(line.ImageURL); value != "" {
+		return value
+	}
+	key := strings.TrimSpace(line.ImageKey)
+	if key == "" {
+		return ""
+	}
+	return "/assets/weather-icons/print/" + url.PathEscape(key) + ".png"
+}
+
+func safeImageURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//") {
+		return value
+	}
+	return safeHTTPURL(value)
+}
+
+func qrCodeDataURL(value string) template.URL {
+	png, err := qrcode.Encode(value, qrcode.Medium, 156)
+	if err != nil {
+		return ""
+	}
+	return template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png))
+}
+
+func clampInt(value int, min int, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 func GroupNews(items []NewsItem) []NewsGroup {
@@ -164,20 +306,43 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       transform: scale(var(--line-scale-x), var(--line-scale-y));
       transform-origin: center center;
     }
+    a.receipt-line-text {
+      color: inherit;
+      text-decoration: none;
+    }
+    a.receipt-line-text:hover,
+    a.receipt-line-text:focus {
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
     .align-left   { text-align: left;   justify-content: flex-start; }
     .align-center { text-align: center; justify-content: center;     }
     .align-right  { text-align: right;  justify-content: flex-end;   }
     .align-left  .receipt-line-text { transform-origin: left center;  }
     .align-right .receipt-line-text { transform-origin: right center; }
-    .double-width { --line-scale-x: 2; }
-    .double-height { --line-scale-y: 2; }
-    .role-calendar .receipt-line-text,
-    .role-temperature .receipt-line-text {
-      font-weight: 700;
+    .receipt-image-line {
+      width: 100%;
+      min-height: var(--image-line-height, 84px);
+      padding: 4px 0;
     }
-    .role-original .receipt-line-text {
-      color: #6f6658;
-      font-size: 13px;
+    .receipt-image {
+      display: block;
+      width: 76px;
+      height: 76px;
+      object-fit: contain;
+      image-rendering: auto;
+    }
+    .receipt-qr-line {
+      width: 100%;
+      min-height: 168px;
+      padding: 8px 0 10px;
+    }
+    .receipt-qr {
+      display: block;
+      width: 156px;
+      height: 156px;
+      background: #fff;
+      image-rendering: pixelated;
     }
     .notice {
       margin: 12px 0;
@@ -188,62 +353,27 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 14px;
     }
-    a {
-      color: #0b5cad;
-      text-decoration: underline;
-      text-underline-offset: 2px;
-    }
-    .snapshot-news-line {
-      width: 100%;
-      min-height: auto;
-      padding: 1px 0;
-    }
-    .snapshot-news-line .receipt-line-text {
-      max-width: 100%;
-      white-space: normal;
-      overflow: visible;
-      overflow-wrap: anywhere;
-      transform: none;
-    }
-    .snapshot-source-line {
-      margin-top: 6px;
-      font-weight: 700;
-    }
-    .snapshot-source-line:first-of-type {
-      margin-top: 0;
-    }
-    .snapshot-news-title-line {
-      margin-top: 8px;
-      padding-top: 8px;
-      border-top: 1px dashed #d5cec0;
-    }
   </style>
 </head>
 <body>
   <main>
     <section class="receipt-preview">
-      <article class="receipt-paper" style="--paper-chars: 32;">
-        {{if .ReceiptLines}}
-        {{range .ReceiptLines}}
-          <div class="receipt-line align-{{.Alignment}} role-{{.Role}}{{if .DoubleWidth}} double-width{{end}}{{if .DoubleHeight}} double-height{{end}}">
-            <span class="receipt-line-text">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</span>
-          </div>
-        {{end}}
-        {{end}}
+      <article class="receipt-paper" style="--paper-chars: {{.PaperChars}};">
         {{if .PendingNotice}}<p class="notice">Этот слепок создан, но печать еще не подтверждена.</p>{{end}}
-        <div class="receipt-line align-center role-normal snapshot-news-title-line"><span class="receipt-line-text">Коротко о мире:</span></div>
-        <div class="receipt-line align-center role-normal"><span class="receipt-line-text">&nbsp;</span></div>
-        {{range .Groups}}
-          <div class="receipt-line align-center role-normal snapshot-news-line snapshot-source-line"><span class="receipt-line-text">{{.SourceName}}</span></div>
-          {{range .Items}}
-          <div class="receipt-line align-center role-normal snapshot-news-line">
-            {{if .Link}}<a class="receipt-line-text" href="{{.Link}}" rel="noopener noreferrer">- {{.Title}}</a>{{else}}<span class="receipt-line-text">- {{.Title}}</span>{{end}}
+        {{range .Lines}}
+          {{if .QRCode}}
+          <div class="receipt-line receipt-qr-line align-{{.Alignment}} role-{{.Role}}">
+            {{if .QRDataURL}}<img class="receipt-qr" src="{{.QRDataURL}}" alt="{{.QRCode}}">{{else}}<span class="receipt-line-text">{{.QRCode}}</span>{{end}}
           </div>
-          {{if .OriginalTitle}}
-          <div class="receipt-line align-left role-original snapshot-news-line"><span class="receipt-line-text">{{.OriginalTitle}}</span></div>
+          {{else if .ImageSrc}}
+          <div class="receipt-line receipt-image-line align-{{.Alignment}} role-{{.Role}}" style="--image-line-height: {{.ImageLineHeight}}px;">
+            <img class="receipt-image" src="{{.ImageSrc}}" alt="" style="width: {{.ImagePreviewWidth}}px; height: {{.ImagePreviewHeight}}px;">
+          </div>
+          {{else}}
+          <div class="receipt-line align-{{.Alignment}} role-{{.Role}}" style="--line-size: {{.LineSize}}px; --line-scale-x: {{.ScaleX}}; --line-scale-y: {{.ScaleY}};">
+            {{if .Link}}<a class="receipt-line-text" href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</a>{{else}}<span class="receipt-line-text">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</span>{{end}}
+          </div>
           {{end}}
-          {{end}}
-          <div class="receipt-line align-center role-normal"><span class="receipt-line-text">&nbsp;</span></div>
         {{end}}
       </article>
     </section>

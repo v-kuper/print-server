@@ -1125,8 +1125,10 @@ func TestReceiptPreviewEndpointReturnsStyledLinesWithoutPrinting(t *testing.T) {
 			TemperatureDoubleWidth:  true,
 			TemperatureDoubleHeight: false,
 		},
+		snapshotSettings: receiptsnapshot.Settings{BaseURL: "http://192.168.0.25:8080"},
 	}
 	gateway := &fakePrinter{}
+	snapshotStore := &fakeReceiptSnapshotStore{}
 	server := NewServer(
 		store,
 		gateway,
@@ -1146,6 +1148,7 @@ func TestReceiptPreviewEndpointReturnsStyledLinesWithoutPrinting(t *testing.T) {
 			quote:  motivation.Quote{Text: "Делай важное спокойно."},
 			advice: motivation.WeatherAdvice{Text: "Возьми зонт."},
 		}),
+		WithReceiptSnapshotStore(snapshotStore),
 	)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/receipt/preview", nil)
@@ -1170,8 +1173,17 @@ func TestReceiptPreviewEndpointReturnsStyledLinesWithoutPrinting(t *testing.T) {
 	if len(payload.Lines) == 0 {
 		t.Fatal("expected preview lines")
 	}
-	if payload.Lines[len(payload.Lines)-1].QRCode != previewTestQRCode {
-		t.Fatalf("expected preview test QR code line, got %#v", payload.Lines[len(payload.Lines)-1])
+	if payload.Lines[len(payload.Lines)-1].QRCode != "http://192.168.0.25:8080/snapshots/snapshot-1" {
+		t.Fatalf("expected real snapshot QR code line, got %#v", payload.Lines[len(payload.Lines)-1])
+	}
+	if len(snapshotStore.createdInput.NewsItems) == 0 || len(snapshotStore.finalizedLines) == 0 {
+		t.Fatalf("expected preview to create real snapshot, got %#v", snapshotStore.createdInput)
+	}
+	if snapshotStore.finalizedLines[len(snapshotStore.finalizedLines)-1].QRCode != "http://192.168.0.25:8080/snapshots/snapshot-1" {
+		t.Fatalf("expected finalized preview snapshot to store QR, got %#v", snapshotStore.finalizedLines)
+	}
+	if snapshotStore.publishedID != "snapshot-1" {
+		t.Fatalf("expected preview snapshot to be published, got %q", snapshotStore.publishedID)
 	}
 	if payload.Lines[1].Text != "25 Мая" || payload.Lines[1].Role != receipt.RoleCalendar {
 		t.Fatalf("expected styled calendar line, got %#v", payload.Lines[1])
@@ -1822,14 +1834,28 @@ type fakePrintJob struct {
 }
 
 type fakeReceiptSnapshotStore struct {
-	snapshots map[string]receiptsnapshot.Snapshot
+	snapshots           map[string]receiptsnapshot.Snapshot
+	createdInput        receiptsnapshot.CreateInput
+	finalizedID         string
+	finalizedLines      []receiptsnapshot.ReceiptLine
+	finalizedPaperChars int
+	publishedID         string
 }
 
 func (s *fakeReceiptSnapshotStore) Create(_ context.Context, input receiptsnapshot.CreateInput) (receiptsnapshot.Snapshot, error) {
+	s.createdInput = input
 	return receiptsnapshot.Snapshot{ID: "snapshot-1", Status: receiptsnapshot.StatusPending, NewsItems: input.NewsItems, ReceiptLines: input.ReceiptLines}, nil
 }
 
-func (s *fakeReceiptSnapshotStore) Publish(_ context.Context, _ string) error {
+func (s *fakeReceiptSnapshotStore) FinalizeReceiptLines(_ context.Context, id string, lines []receiptsnapshot.ReceiptLine, paperChars int) error {
+	s.finalizedID = id
+	s.finalizedLines = append([]receiptsnapshot.ReceiptLine(nil), lines...)
+	s.finalizedPaperChars = paperChars
+	return nil
+}
+
+func (s *fakeReceiptSnapshotStore) Publish(_ context.Context, id string) error {
+	s.publishedID = id
 	return nil
 }
 

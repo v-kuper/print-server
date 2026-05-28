@@ -302,6 +302,52 @@ func TestDailyReceiptPrintsTranslatedNewsWithOriginalInSmallerFont(t *testing.T)
 	}
 }
 
+func TestDailyReceiptSetsLinkOnEveryWrappedNewsTitleLineOnly(t *testing.T) {
+	lines := DailyReceiptWithStyle(DailyReceiptData{
+		Weather: weather.Snapshot{
+			ObservedAt:   time.Date(2026, 5, 24, 9, 15, 0, 0, time.UTC),
+			TemperatureC: 21.4,
+		},
+		NewsItems: []news.Item{{
+			Title:         "Очень длинный заголовок новости который точно переносится на несколько строк",
+			OriginalTitle: "Very long original title that stays plain",
+			SourceName:    "Reuters",
+			Link:          "https://example.com/news",
+		}},
+	}, StyleSettings{
+		Configured: true,
+		NormalFont: 0,
+	})
+
+	var linkedTitleLines []Line
+	for _, line := range lines {
+		switch {
+		case line.Text == "Reuters":
+			if line.Link != "" {
+				t.Fatalf("source line must not be linked: %#v", line)
+			}
+		case strings.Contains(line.Text, "Very long original"):
+			if line.Link != "" {
+				t.Fatalf("original title line must not be linked: %#v", line)
+			}
+		case line.Link != "":
+			linkedTitleLines = append(linkedTitleLines, line)
+		}
+	}
+
+	if len(linkedTitleLines) < 2 {
+		t.Fatalf("expected wrapped title to produce multiple linked lines, got %#v", linkedTitleLines)
+	}
+	for _, line := range linkedTitleLines {
+		if line.Link != "https://example.com/news" {
+			t.Fatalf("expected news link on wrapped title line, got %#v", line)
+		}
+		if strings.Contains(line.Text, "Very long original") || line.Text == "Reuters" {
+			t.Fatalf("only translated title lines should be linked, got %#v", line)
+		}
+	}
+}
+
 func TestDailyReceiptPrintsHistoryBeforeNews(t *testing.T) {
 	weatherCode := 0
 	lines := DailyReceipt(DailyReceiptData{

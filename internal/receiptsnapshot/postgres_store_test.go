@@ -24,7 +24,7 @@ func TestPostgresStoreCreatesPublishesFailsAndLoadsSnapshot(t *testing.T) {
 		{Text: "25 Мая", Alignment: "center", Role: "calendar"},
 		{Text: "Коротко о мире:", Alignment: "center"},
 	}
-	created, err := store.Create(ctx, CreateInput{NewsItems: items, ReceiptLines: lines})
+	created, err := store.Create(ctx, CreateInput{NewsItems: items, ReceiptLines: lines, PaperChars: 32})
 	if err != nil {
 		t.Fatalf("create snapshot: %v", err)
 	}
@@ -36,6 +36,24 @@ func TestPostgresStoreCreatesPublishesFailsAndLoadsSnapshot(t *testing.T) {
 	}
 	if !reflect.DeepEqual(created.ReceiptLines, lines) {
 		t.Fatalf("expected saved receipt lines %#v, got %#v", lines, created.ReceiptLines)
+	}
+	if created.PaperChars != 32 {
+		t.Fatalf("expected paper chars 32, got %#v", created)
+	}
+
+	finalLines := append(append([]ReceiptLine(nil), lines...), ReceiptLine{
+		QRCode:    "http://192.168.0.25:8080/snapshots/" + created.ID,
+		Alignment: "center",
+	})
+	if err := store.FinalizeReceiptLines(ctx, created.ID, finalLines, 42); err != nil {
+		t.Fatalf("finalize snapshot receipt lines: %v", err)
+	}
+	finalized, err := store.Load(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("load finalized snapshot: %v", err)
+	}
+	if !reflect.DeepEqual(finalized.ReceiptLines, finalLines) || finalized.PaperChars != 42 {
+		t.Fatalf("expected finalized receipt lines %#v and paper chars 42, got %#v", finalLines, finalized)
 	}
 
 	if err := store.Publish(ctx, created.ID); err != nil {
@@ -49,7 +67,7 @@ func TestPostgresStoreCreatesPublishesFailsAndLoadsSnapshot(t *testing.T) {
 		t.Fatalf("expected published snapshot, got %#v", published)
 	}
 
-	failed, err := store.Create(ctx, CreateInput{NewsItems: items, ReceiptLines: lines})
+	failed, err := store.Create(ctx, CreateInput{NewsItems: items, ReceiptLines: lines, PaperChars: 32})
 	if err != nil {
 		t.Fatalf("create failed snapshot: %v", err)
 	}

@@ -42,6 +42,7 @@ type Printer interface {
 
 type ReceiptSnapshotStore interface {
 	Create(context.Context, receiptsnapshot.CreateInput) (receiptsnapshot.Snapshot, error)
+	FinalizeReceiptLines(context.Context, string, []receiptsnapshot.ReceiptLine, int) error
 	Publish(context.Context, string) error
 	Fail(context.Context, string, error) error
 }
@@ -116,9 +117,11 @@ type ReceiptService struct {
 }
 
 type dailyReceiptBuild struct {
-	Lines     []receipt.Line
-	Warnings  []string
-	NewsItems []news.Item
+	Lines      []receipt.Line
+	Warnings   []string
+	NewsItems  []news.Item
+	PaperChars int
+	Style      receipt.StyleSettings
 }
 
 const defaultGeneratedAssetsPath = "/opt/atol-server/assets"
@@ -257,6 +260,14 @@ func (s *ReceiptService) BuildDailyReceiptWithWarnings(ctx context.Context) ([]r
 	return s.BuildDailyReceiptWithContentAndWarnings(ctx, content)
 }
 
+func (s *ReceiptService) BuildDailyReceiptPreviewWithWarnings(ctx context.Context) ([]receipt.Line, []string, error) {
+	content, err := s.store.LoadReceiptContent()
+	if err != nil {
+		return nil, nil, buildError(http.StatusInternalServerError, err)
+	}
+	return s.BuildDailyReceiptPreviewWithContentAndWarnings(ctx, content)
+}
+
 func (s *ReceiptService) BuildDailyReceiptWithContent(ctx context.Context, content receipt.ContentSettings) ([]receipt.Line, error) {
 	lines, _, err := s.BuildDailyReceiptWithContentAndWarnings(ctx, content)
 	return lines, err
@@ -268,6 +279,22 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 		return nil, nil, err
 	}
 	return result.Lines, result.Warnings, nil
+}
+
+func (s *ReceiptService) BuildDailyReceiptPreviewWithContentAndWarnings(ctx context.Context, content receipt.ContentSettings) ([]receipt.Line, []string, error) {
+	build, err := s.buildDailyReceipt(ctx, content)
+	if err != nil {
+		return nil, nil, err
+	}
+	lines, snapshotID, snapshotWarnings := s.appendNewsSnapshotQRCode(ctx, build.Lines, build.NewsItems, build.Style, build.PaperChars)
+	warnings := append([]string(nil), build.Warnings...)
+	warnings = append(warnings, snapshotWarnings...)
+	if snapshotID != "" && s.snapshotStore != nil {
+		if err := s.snapshotStore.Publish(ctx, snapshotID); err != nil {
+			warnings = append(warnings, "Слепок превью создан, но не удалось подтвердить его в БД: "+err.Error())
+		}
+	}
+	return lines, warnings, nil
 }
 
 func (s *ReceiptService) buildDailyReceipt(ctx context.Context, content receipt.ContentSettings) (dailyReceiptBuild, error) {
@@ -397,7 +424,13 @@ func (s *ReceiptService) buildDailyReceipt(ctx context.Context, content receipt.
 		NewsItems:        newsItems,
 	}, receiptStyle)
 	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning)
-	return dailyReceiptBuild{Lines: lines, Warnings: warnings, NewsItems: newsItems}, nil
+	return dailyReceiptBuild{
+		Lines:      lines,
+		Warnings:   warnings,
+		NewsItems:  newsItems,
+		PaperChars: receiptSnapshotPaperChars(receiptStyle),
+		Style:      receiptStyle.Normalized(),
+	}, nil
 }
 
 func (s *ReceiptService) PrintDailyReceipt(ctx context.Context) error {
@@ -428,7 +461,7 @@ func (s *ReceiptService) PrintDailyReceiptWithContentAndWarnings(ctx context.Con
 	if err != nil {
 		return nil, err
 	}
-	lines, snapshotID, snapshotWarnings := s.appendNewsSnapshotQRCode(ctx, build.Lines, build.NewsItems)
+	lines, snapshotID, snapshotWarnings := s.appendNewsSnapshotQRCode(ctx, build.Lines, build.NewsItems, build.Style, build.PaperChars)
 	warnings := append([]string(nil), build.Warnings...)
 	warnings = append(warnings, snapshotWarnings...)
 
@@ -449,7 +482,7 @@ func (s *ReceiptService) PrintDailyReceiptWithContentAndWarnings(ctx context.Con
 	return warnings, nil
 }
 
-func (s *ReceiptService) appendNewsSnapshotQRCode(ctx context.Context, lines []receipt.Line, items []news.Item) ([]receipt.Line, string, []string) {
+func (s *ReceiptService) appendNewsSnapshotQRCode(ctx context.Context, lines []receipt.Line, items []news.Item, style receipt.StyleSettings, paperChars int) ([]receipt.Line, string, []string) {
 	if len(items) == 0 || s.snapshotStore == nil {
 		return lines, "", nil
 	}
@@ -466,7 +499,8 @@ func (s *ReceiptService) appendNewsSnapshotQRCode(ctx context.Context, lines []r
 	}
 	snapshot, err := s.snapshotStore.Create(ctx, receiptsnapshot.CreateInput{
 		NewsItems:    newsSnapshotItems(items),
-		ReceiptLines: receiptSnapshotLines(lines),
+		ReceiptLines: receiptSnapshotLines(lines, style),
+		PaperChars:   paperChars,
 	})
 	if err != nil {
 		return lines, "", []string{"Онлайн-слепок новостей не создан: " + err.Error()}
@@ -475,12 +509,15 @@ func (s *ReceiptService) appendNewsSnapshotQRCode(ctx context.Context, lines []r
 	if !ok {
 		return lines, "", []string{"QR-ссылка на онлайн-слепок не настроена."}
 	}
-	lines = append(lines, receipt.Line{
+	finalLines := append(append([]receipt.Line(nil), lines...), receipt.Line{
 		QRCode:            snapshotURL,
 		Alignment:         receipt.AlignmentCenter,
 		ImageScalePercent: 100,
 	})
-	return lines, snapshot.ID, nil
+	if err := s.snapshotStore.FinalizeReceiptLines(ctx, snapshot.ID, receiptSnapshotLines(finalLines, style), paperChars); err != nil {
+		return lines, "", []string{"Онлайн-слепок создан, но финальный чек не сохранен: " + err.Error()}
+	}
+	return finalLines, snapshot.ID, nil
 }
 
 func newsSnapshotItems(items []news.Item) []receiptsnapshot.NewsItem {
@@ -499,19 +536,82 @@ func newsSnapshotItems(items []news.Item) []receiptsnapshot.NewsItem {
 	return result
 }
 
-func receiptSnapshotLines(lines []receipt.Line) []receiptsnapshot.ReceiptLine {
+func receiptSnapshotLines(lines []receipt.Line, style receipt.StyleSettings) []receiptsnapshot.ReceiptLine {
+	style = style.Normalized()
 	result := make([]receiptsnapshot.ReceiptLine, 0, len(lines))
 	for _, line := range lines {
 		result = append(result, receiptsnapshot.ReceiptLine{
-			Text:         line.Text,
-			Alignment:    string(line.Alignment),
-			Role:         string(line.Role),
-			Font:         line.Font,
-			DoubleWidth:  line.DoubleWidth,
-			DoubleHeight: line.DoubleHeight,
+			Text:              line.Text,
+			Link:              line.Link,
+			QRCode:            line.QRCode,
+			ImageKey:          line.ImageKey,
+			ImageURL:          line.ImageURL,
+			ImageWidth:        line.ImageWidth,
+			ImageHeight:       line.ImageHeight,
+			ImageScalePercent: line.ImageScalePercent,
+			Alignment:         string(line.Alignment),
+			Role:              string(line.Role),
+			Font:              line.Font,
+			DoubleWidth:       line.DoubleWidth,
+			DoubleHeight:      line.DoubleHeight,
+			LineSize:          receiptSnapshotLineSize(line, style),
 		})
 	}
 	return result
+}
+
+type receiptSnapshotFontMetric struct {
+	lineLength int
+	fontWidth  int
+}
+
+var receiptSnapshotFontMetrics = map[int]receiptSnapshotFontMetric{
+	0: {lineLength: 32, fontWidth: 12},
+	1: {lineLength: 42, fontWidth: 9},
+	2: {lineLength: 38, fontWidth: 10},
+	3: {lineLength: 32, fontWidth: 12},
+	4: {lineLength: 32, fontWidth: 12},
+	5: {lineLength: 32, fontWidth: 12},
+	6: {lineLength: 32, fontWidth: 12},
+	7: {lineLength: 32, fontWidth: 12},
+	8: {lineLength: 32, fontWidth: 12},
+	9: {lineLength: 32, fontWidth: 12},
+}
+
+func receiptSnapshotPaperChars(style receipt.StyleSettings) int {
+	metric := receiptSnapshotMetricForFont(style.Normalized().NormalFont)
+	if metric.lineLength <= 0 {
+		return 32
+	}
+	return metric.lineLength
+}
+
+func receiptSnapshotLineSize(line receipt.Line, style receipt.StyleSettings) float64 {
+	normalMetric := receiptSnapshotMetricForFont(style.Normalized().NormalFont)
+	metric := receiptSnapshotMetricForFont(line.Font)
+	baseWidth := normalMetric.fontWidth
+	if baseWidth <= 0 {
+		baseWidth = 12
+	}
+	fontWidth := metric.fontWidth
+	if fontWidth <= 0 {
+		fontWidth = baseWidth
+	}
+	lineSize := 16 * (float64(fontWidth) / float64(baseWidth))
+	if lineSize < 10 {
+		return 10
+	}
+	if lineSize > 32 {
+		return 32
+	}
+	return lineSize
+}
+
+func receiptSnapshotMetricForFont(font int) receiptSnapshotFontMetric {
+	if metric, ok := receiptSnapshotFontMetrics[font]; ok {
+		return metric
+	}
+	return receiptSnapshotFontMetrics[0]
 }
 
 func (s *ReceiptService) resolveMotivationContent(ctx context.Context, snapshot weather.Snapshot, includeAdvice bool, includeQuote bool) (*motivation.WeatherAdvice, *motivation.Quote, string, error) {

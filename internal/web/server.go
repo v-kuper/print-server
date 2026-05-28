@@ -102,6 +102,7 @@ type DailyReceiptService interface {
 
 type ReceiptSnapshotStore interface {
 	Create(context.Context, receiptsnapshot.CreateInput) (receiptsnapshot.Snapshot, error)
+	FinalizeReceiptLines(context.Context, string, []receiptsnapshot.ReceiptLine, int) error
 	Publish(context.Context, string) error
 	Fail(context.Context, string, error) error
 	Load(context.Context, string) (receiptsnapshot.Snapshot, error)
@@ -109,6 +110,10 @@ type ReceiptSnapshotStore interface {
 
 type DailyReceiptWarningService interface {
 	BuildDailyReceiptWithWarnings(context.Context) ([]receipt.Line, []string, error)
+}
+
+type DailyReceiptPreviewWarningService interface {
+	BuildDailyReceiptPreviewWithWarnings(context.Context) ([]receipt.Line, []string, error)
 }
 
 type DailyReceiptPrintWarningService interface {
@@ -158,7 +163,6 @@ const defaultAssetsPath = "/opt/atol-server/assets"
 const defaultImageEditorPath = "/data/image-editor"
 const maxImageEditorHeight = 2048
 const maxTextPrintFont = 9
-const previewTestQRCode = "https://example.com"
 
 type statusResponse struct {
 	OK       bool            `json:"ok"`
@@ -1156,7 +1160,9 @@ func (s *Server) handleReceiptPreview(w http.ResponseWriter, r *http.Request) {
 	var lines []receipt.Line
 	var warnings []string
 	var err error
-	if service, ok := s.receiptService.(DailyReceiptWarningService); ok {
+	if service, ok := s.receiptService.(DailyReceiptPreviewWarningService); ok {
+		lines, warnings, err = service.BuildDailyReceiptPreviewWithWarnings(r.Context())
+	} else if service, ok := s.receiptService.(DailyReceiptWarningService); ok {
 		lines, warnings, err = service.BuildDailyReceiptWithWarnings(r.Context())
 	} else {
 		lines, err = s.receiptService.BuildDailyReceipt(r.Context())
@@ -1168,10 +1174,6 @@ func (s *Server) handleReceiptPreview(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	lines = append(lines, receipt.Line{
-		QRCode:    previewTestQRCode,
-		Alignment: receipt.AlignmentCenter,
-	})
 
 	message := "Превью собрано."
 	if len(warnings) > 0 {
