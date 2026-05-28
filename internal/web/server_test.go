@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,28 @@ func TestPrinterFontsEndpointReturnsAtolFontMetrics(t *testing.T) {
 	}
 }
 
+func TestPrintTextEndpointRecordsPrintJob(t *testing.T) {
+	store := &fakeStore{config: printer.Config{Host: "192.168.0.118", Port: 5555}}
+	gateway := &fakePrinter{}
+	server := NewServer(store, gateway, fixedClock)
+
+	body := bytes.NewBufferString(`{"blocks":[{"text":"Hello","font":1,"alignment":"center"}]}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/print/text", body)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if len(store.printJobs) != 1 {
+		t.Fatalf("expected one print job, got %#v", store.printJobs)
+	}
+	if store.printJobs[0].kind != "text" || store.printJobs[0].status != "succeeded" || store.printJobs[0].err != "" {
+		t.Fatalf("unexpected print job: %#v", store.printJobs[0])
+	}
+}
+
 func TestIndexPageServesStaticClientShell(t *testing.T) {
 	store := &fakeStore{config: printer.DefaultConfig()}
 	server := NewServer(store, &fakePrinter{}, fixedClock)
@@ -144,6 +167,7 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`data-action="add-text-block"`,
 		`data-action="add-separator-block"`,
 		`data-action="print-text"`,
+		`id="content-history"`,
 		`value="rectangle"`,
 		`value="ellipse"`,
 		`id="calendar-font"`,
@@ -151,6 +175,7 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`id="normal-font"`,
 		`id="calendar-double-width"`,
 		`data-action="weather"`,
+		`Напечатать превью`,
 	} {
 		if !bytes.Contains([]byte(body), []byte(want)) {
 			t.Fatalf("expected static client shell to contain %q", want)
@@ -167,6 +192,7 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`Утро`,
 		`День`,
 		`Вечер`,
+		`Напечатать чек`,
 	} {
 		if bytes.Contains([]byte(body), []byte(unwanted)) {
 			t.Fatalf("expected static client shell not to contain template data %q", unwanted)
@@ -223,6 +249,7 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`function wrapTextPrintLine`,
 				`function effectiveTextPrintLineLength`,
 				`wrapTextPrintLine(lineText, effectiveTextPrintLineLength(block.font, block.doubleWidth))`,
+				`showHistory`,
 				`data-schedule-content-key`,
 				`data-interval-content-key`,
 				`function applyImageEditorProcessing`,
@@ -340,6 +367,7 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 			ShowBankRates:       false,
 			ShowMail:            true,
 			ShowCalendar:        true,
+			ShowHistory:         true,
 			ShowNews:            true,
 		},
 		scheduleSettings: schedule.Settings{
@@ -425,7 +453,7 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	if payload.Data.ReceiptStyle.CalendarFont != 2 || !payload.Data.ReceiptStyle.CalendarDoubleWidth {
 		t.Fatalf("expected receipt style in bootstrap, got %#v", payload.Data.ReceiptStyle)
 	}
-	if !payload.Data.ReceiptContent.ShowMail || payload.Data.ReceiptContent.ShowBankRates {
+	if !payload.Data.ReceiptContent.ShowMail || !payload.Data.ReceiptContent.ShowHistory || payload.Data.ReceiptContent.ShowBankRates {
 		t.Fatalf("expected receipt content in bootstrap, got %#v", payload.Data.ReceiptContent)
 	}
 	if payload.Data.Schedule.Mode != schedule.ModeDailyTimes || len(payload.Data.Schedule.Times) != 2 {
@@ -682,7 +710,7 @@ func TestSaveReceiptContentEndpointPersistsContent(t *testing.T) {
 	store := &fakeStore{}
 	server := NewServer(store, &fakePrinter{}, fixedClock)
 
-	body := bytes.NewBufferString(`{"configured":true,"showWeather":false,"showWeatherAdvice":false,"showMotivationQuote":true,"showTonPortfolio":false,"showUsdBynRate":true,"showBankRates":false,"showMail":true,"showCalendar":false,"showNews":true}`)
+	body := bytes.NewBufferString(`{"configured":true,"showWeather":false,"showWeatherAdvice":false,"showMotivationQuote":true,"showTonPortfolio":false,"showUsdBynRate":true,"showBankRates":false,"showMail":true,"showCalendar":false,"showHistory":true,"showNews":true}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/settings/receipt-content", body)
 	response := httptest.NewRecorder()
 
@@ -699,12 +727,13 @@ func TestSaveReceiptContentEndpointPersistsContent(t *testing.T) {
 		!store.receiptContent.ShowMotivationQuote ||
 		!store.receiptContent.ShowUsdBynRate ||
 		!store.receiptContent.ShowMail ||
+		!store.receiptContent.ShowHistory ||
 		!store.receiptContent.ShowNews {
 		t.Fatalf("expected saved receipt content toggles, got %#v", store.receiptContent)
 	}
 }
 
-func TestIndexPagePlacesPreviewButtonInPreviewPanel(t *testing.T) {
+func TestIndexPagePlacesPreviewActionsInPreviewPanel(t *testing.T) {
 	store := &fakeStore{config: printer.DefaultConfig()}
 	server := NewServer(store, &fakePrinter{}, fixedClock)
 
@@ -719,15 +748,22 @@ func TestIndexPagePlacesPreviewButtonInPreviewPanel(t *testing.T) {
 	body := response.Body.String()
 	panelIndex := bytes.Index([]byte(body), []byte(`class="preview-panel"`))
 	previewButtonIndex := bytes.Index([]byte(body), []byte(`data-action="preview"`))
+	printButtonIndex := bytes.Index([]byte(body), []byte(`data-action="weather"`))
 	previewPanelEnd := -1
 	if panelIndex >= 0 {
 		previewPanelEnd = panelIndex + bytes.Index([]byte(body[panelIndex:]), []byte(`</aside>`))
 	}
-	if panelIndex < 0 || previewButtonIndex < 0 {
-		t.Fatalf("expected preview panel and preview button in page")
+	if panelIndex < 0 || previewButtonIndex < 0 || printButtonIndex < 0 {
+		t.Fatalf("expected preview panel, preview button, and print preview button in page")
 	}
 	if previewPanelEnd < panelIndex || previewButtonIndex < panelIndex || previewButtonIndex > previewPanelEnd {
 		t.Fatalf("expected preview button to live inside preview panel")
+	}
+	if printButtonIndex < panelIndex || printButtonIndex > previewPanelEnd {
+		t.Fatalf("expected print preview button to live inside preview panel")
+	}
+	if !bytes.Contains([]byte(body[panelIndex:previewPanelEnd]), []byte(`Напечатать превью`)) {
+		t.Fatalf("expected print button to be labelled as preview print")
 	}
 }
 
@@ -759,7 +795,7 @@ func TestIndexPagePlacesPrinterActionsInCashSection(t *testing.T) {
 	}
 }
 
-func TestIndexPageMakesDailyPrintThePrimaryBottomAction(t *testing.T) {
+func TestIndexPageDoesNotKeepDailyPrintInHeader(t *testing.T) {
 	store := &fakeStore{config: printer.DefaultConfig()}
 	server := NewServer(store, &fakePrinter{}, fixedClock)
 
@@ -777,12 +813,12 @@ func TestIndexPageMakesDailyPrintThePrimaryBottomAction(t *testing.T) {
 	if headerIndex < 0 || weatherButtonIndex < 0 {
 		t.Fatal("expected app header and daily print button in page")
 	}
-	if !bytes.Contains([]byte(body), []byte(`class="primary-print" data-action="weather"`)) {
-		t.Fatalf("expected index page to contain primary daily print button")
-	}
 	headerEnd := headerIndex + bytes.Index([]byte(body[headerIndex:]), []byte(`</header>`))
-	if headerEnd < headerIndex || weatherButtonIndex < headerIndex || weatherButtonIndex > headerEnd {
-		t.Fatal("expected daily print button to live inside app header")
+	if headerEnd < headerIndex {
+		t.Fatal("expected app header to have a closing tag")
+	}
+	if weatherButtonIndex >= headerIndex && weatherButtonIndex <= headerEnd {
+		t.Fatal("daily print button must not live inside app header")
 	}
 }
 
@@ -1503,6 +1539,7 @@ type fakeStore struct {
 	scheduleSettings   schedule.Settings
 	scheduleState      schedule.State
 	motivationSettings motivation.Settings
+	printJobs          []fakePrintJob
 }
 
 func (s *fakeStore) LoadPrinter() (printer.Config, error) {
@@ -1625,6 +1662,35 @@ func (s *fakeStore) LoadScheduleState() (schedule.State, error) {
 func (s *fakeStore) SaveScheduleState(state schedule.State) error {
 	s.scheduleState = state
 	return nil
+}
+
+func (s *fakeStore) StartPrintJob(kind string, request any) (string, error) {
+	id := strconv.Itoa(len(s.printJobs) + 1)
+	s.printJobs = append(s.printJobs, fakePrintJob{id: id, kind: kind, request: request, status: "running"})
+	return id, nil
+}
+
+func (s *fakeStore) FinishPrintJob(id string, printErr error) error {
+	for index := range s.printJobs {
+		if s.printJobs[index].id == id {
+			if printErr != nil {
+				s.printJobs[index].status = "failed"
+				s.printJobs[index].err = printErr.Error()
+			} else {
+				s.printJobs[index].status = "succeeded"
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+type fakePrintJob struct {
+	id      string
+	kind    string
+	request any
+	status  string
+	err     string
 }
 
 type fakeScheduler struct {
@@ -1794,6 +1860,10 @@ func (p *fakeMotivationProvider) GenerateWeatherAdvice(context.Context, motivati
 
 func (p *fakeMotivationProvider) GenerateCalendarAdvice(context.Context, motivation.Settings, motivation.CalendarContext) (motivation.CalendarAdvice, error) {
 	return p.calendarAdvice, p.err
+}
+
+func (p *fakeMotivationProvider) GenerateHistoryFacts(context.Context, motivation.Settings, []motivation.HistoryEvent) ([]motivation.HistoryFact, error) {
+	return nil, p.err
 }
 
 func (p *fakeMotivationProvider) TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error) {

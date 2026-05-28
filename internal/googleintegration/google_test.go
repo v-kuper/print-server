@@ -3,6 +3,7 @@ package googleintegration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -92,6 +93,60 @@ func TestClientExchangeCodeSavesToken(t *testing.T) {
 	}
 	if token.AccessToken != "access-1" || token.RefreshToken != "refresh-1" || !token.Expiry.After(time.Date(2026, 5, 25, 10, 59, 0, 0, time.UTC)) {
 		t.Fatalf("unexpected saved token: %#v", token)
+	}
+}
+
+func TestClientExchangeCodeSavesTokenToConfiguredStore(t *testing.T) {
+	dir := t.TempDir()
+	var form url.Values
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse token form: %v", err)
+		}
+		form = r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"access-db","refresh_token":"refresh-db","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	credentialsPath := filepath.Join(dir, "credentials.json")
+	writeCredentials(t, credentialsPath, "https://accounts.example/auth", tokenServer.URL)
+	tokenStore := &memoryTokenStore{}
+	client := NewClient(Config{
+		CredentialsPath: credentialsPath,
+		TokenStore:      tokenStore,
+		Clock:           func() time.Time { return time.Date(2026, 5, 25, 10, 0, 0, 0, time.UTC) },
+	})
+
+	if err := client.ExchangeCode(context.Background(), "auth-code", "http://localhost:8080/oauth/google/callback"); err != nil {
+		t.Fatalf("exchange code: %v", err)
+	}
+
+	if form.Get("grant_type") != "authorization_code" || form.Get("code") != "auth-code" {
+		t.Fatalf("unexpected token form: %s", form.Encode())
+	}
+	if tokenStore.saved.AccessToken != "access-db" || tokenStore.saved.RefreshToken != "refresh-db" {
+		t.Fatalf("expected token saved to store, got %#v", tokenStore.saved)
+	}
+	if status := client.Status(); !status.TokenAvailable || !status.Authorized {
+		t.Fatalf("expected token store to make client authorized, got %#v", status)
+	}
+}
+
+func TestClientCurrentReturnsTokenStoreErrors(t *testing.T) {
+	dir := t.TempDir()
+	credentialsPath := filepath.Join(dir, "credentials.json")
+	writeCredentials(t, credentialsPath, "https://accounts.example/auth", "https://accounts.example/token")
+	tokenStore := &memoryTokenStore{err: errors.New("db unavailable")}
+	client := NewClient(Config{
+		CredentialsPath: credentialsPath,
+		TokenStore:      tokenStore,
+	})
+
+	_, err := client.Current(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "db unavailable") {
+		t.Fatalf("expected token store error, got %v", err)
 	}
 }
 
@@ -402,4 +457,32 @@ func writeToken(t *testing.T, path string, token Token) {
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatalf("write token: %v", err)
 	}
+}
+
+type memoryTokenStore struct {
+	saved   Token
+	deleted bool
+	err     error
+}
+
+func (s *memoryTokenStore) LoadToken(context.Context) (Token, error) {
+	if s.err != nil {
+		return Token{}, s.err
+	}
+	if s.deleted || (s.saved.AccessToken == "" && s.saved.RefreshToken == "") {
+		return Token{}, ErrNotAuthorized
+	}
+	return s.saved, nil
+}
+
+func (s *memoryTokenStore) SaveToken(_ context.Context, token Token) error {
+	s.saved = token
+	s.deleted = false
+	return nil
+}
+
+func (s *memoryTokenStore) DeleteToken(context.Context) error {
+	s.saved = Token{}
+	s.deleted = true
+	return nil
 }

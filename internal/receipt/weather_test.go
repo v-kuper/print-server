@@ -182,6 +182,64 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 	}
 }
 
+func TestDailyReceiptPrintsCalendarBeforeFinanceAndHistoryBeforeNews(t *testing.T) {
+	lines := DailyReceipt(DailyReceiptData{
+		Weather: weather.Snapshot{
+			ObservedAt:   time.Date(2026, 5, 24, 9, 15, 0, 0, time.UTC),
+			TemperatureC: 21.4,
+		},
+		WeatherAdvice:   &motivation.WeatherAdvice{Text: "Возьми зонт."},
+		MotivationQuote: &motivation.Quote{Text: "Сегодня достаточно одного честного шага."},
+		CalendarEvents: []googleintegration.CalendarEvent{
+			{TimeLabel: "10:00", Title: "Планирование"},
+		},
+		CalendarAdvice: &motivation.CalendarAdvice{Text: "Оставь воздух между встречами."},
+		TonPortfolio: &finance.TonPortfolioSummary{
+			AmountTon:       1230.591,
+			Price:           finance.TonPrice{USD: 1.7435687405482407},
+			CurrentValueUSD: 2145.62,
+			ProfitLossUSD:   168.04,
+		},
+		USDBYNRate: &finance.FiatRate{
+			BaseCode:  "USD",
+			QuoteCode: "BYN",
+			Scale:     1,
+			Rate:      3.1234,
+		},
+		BankRates: &bankrates.Summary{
+			SellUSD: &bankrates.Offer{Rate: 3.255, BankNames: []string{"Банк Б"}},
+		},
+		HistoryFacts: []motivation.HistoryFact{
+			{Year: 1961, Text: "запущена первая автоматическая станция к Венере."},
+		},
+		NewsItems: []news.Item{{Title: "Новость", SourceName: "BBC Russian"}},
+	})
+
+	got := texts(lines)
+	expectedOrder := []string{
+		"Возьми зонт.",
+		"Сегодня достаточно одного",
+		"Календарь",
+		"Оставь воздух между встречами.",
+		"TON",
+		"Курс доллара",
+		"В банках",
+		"История дня",
+		"Коротко о мире:",
+	}
+	previousIndex := -1
+	for _, text := range expectedOrder {
+		index := indexOfTextContaining(got, text)
+		if index < 0 {
+			t.Fatalf("expected %q in receipt, got %#v", text, got)
+		}
+		if index <= previousIndex {
+			t.Fatalf("expected order %#v, got %#v", expectedOrder, got)
+		}
+		previousIndex = index
+	}
+}
+
 func requireContainsImage(t *testing.T, lines []Line, path string, url string) {
 	t.Helper()
 	for _, line := range lines {
@@ -244,7 +302,37 @@ func TestDailyReceiptPrintsTranslatedNewsWithOriginalInSmallerFont(t *testing.T)
 	}
 }
 
-func TestDailyReceiptAppendsMailAndCalendarBeforeNews(t *testing.T) {
+func TestDailyReceiptPrintsHistoryBeforeNews(t *testing.T) {
+	weatherCode := 0
+	lines := DailyReceipt(DailyReceiptData{
+		Weather: weather.Snapshot{
+			ObservedAt:   time.Date(2026, 5, 28, 9, 15, 0, 0, time.UTC),
+			TemperatureC: 21.4,
+			WeatherCode:  &weatherCode,
+		},
+		HistoryFacts: []motivation.HistoryFact{
+			{Year: 1961, Text: "запущена первая автоматическая станция к Венере."},
+			{Year: -585, Text: "солнечное затмение остановило битву на Галисе."},
+		},
+		NewsItems: []news.Item{{Title: "Новость", SourceName: "BBC Russian"}},
+	})
+
+	got := texts(lines)
+	requireContains(t, got, "История дня")
+	requireContains(t, got, "1961 — запущена первая")
+	requireContains(t, got, "автоматическая станция к Венере.")
+	requireContains(t, got, "585 до н. э. — солнечное")
+	requireContains(t, got, "затмение остановило битву на")
+	requireContains(t, got, "Галисе.")
+
+	historyIndex := indexOfText(got, "История дня")
+	newsIndex := indexOfText(got, "Коротко о мире:")
+	if historyIndex < 0 || newsIndex < 0 || historyIndex > newsIndex {
+		t.Fatalf("expected history before news, got %#v", got)
+	}
+}
+
+func TestDailyReceiptAppendsCalendarAndMailBeforeNews(t *testing.T) {
 	weatherCode := 0
 	lines := DailyReceipt(DailyReceiptData{
 		Weather: weather.Snapshot{
@@ -274,8 +362,8 @@ func TestDailyReceiptAppendsMailAndCalendarBeforeNews(t *testing.T) {
 	mailIndex := indexOfText(got, "Почта")
 	calendarIndex := indexOfText(got, "Календарь")
 	newsIndex := indexOfText(got, "Коротко о мире:")
-	if mailIndex < 0 || calendarIndex < 0 || newsIndex < 0 || mailIndex > calendarIndex || calendarIndex > newsIndex {
-		t.Fatalf("expected mail then calendar before news, got %#v", got)
+	if mailIndex < 0 || calendarIndex < 0 || newsIndex < 0 || calendarIndex > mailIndex || mailIndex > newsIndex {
+		t.Fatalf("expected calendar then mail before news, got %#v", got)
 	}
 }
 

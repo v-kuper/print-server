@@ -18,6 +18,7 @@ type Provider interface {
 	Generate(context.Context, Settings) (Quote, error)
 	GenerateWeatherAdvice(context.Context, Settings, WeatherContext) (WeatherAdvice, error)
 	GenerateCalendarAdvice(context.Context, Settings, CalendarContext) (CalendarAdvice, error)
+	GenerateHistoryFacts(context.Context, Settings, []HistoryEvent) ([]HistoryFact, error)
 	TranslateNewsTitles(context.Context, Settings, []NewsTitle) ([]NewsTranslation, error)
 }
 
@@ -72,6 +73,13 @@ var newsTranslationOptions = ollamaOptions{
 	RepeatLastN:   96,
 }
 
+var historyFactsOptions = ollamaOptions{
+	Temperature:   0.25,
+	TopP:          0.8,
+	RepeatPenalty: 1.03,
+	RepeatLastN:   96,
+}
+
 func NewOllamaProvider(client *http.Client) *OllamaProvider {
 	if client == nil {
 		client = &http.Client{Timeout: defaultOllamaTimeout}
@@ -101,6 +109,17 @@ func (p *OllamaProvider) GenerateCalendarAdvice(ctx context.Context, settings Se
 		return CalendarAdvice{}, err
 	}
 	return CalendarAdvice{Text: text}, nil
+}
+
+func (p *OllamaProvider) GenerateHistoryFacts(ctx context.Context, settings Settings, events []HistoryEvent) ([]HistoryFact, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	text, err := p.chat(ctx, settings, historyFactsPrompt(events), historyFactsOptions)
+	if err != nil {
+		return nil, err
+	}
+	return parseHistoryFacts(text)
 }
 
 func (p *OllamaProvider) TranslateNewsTitles(ctx context.Context, settings Settings, titles []NewsTitle) ([]NewsTranslation, error) {

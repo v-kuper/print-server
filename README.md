@@ -37,7 +37,10 @@ docker compose up -d --force-recreate atol-server
 http://localhost:8080
 ```
 
-Настройки сохраняются в `data/settings.json`.
+Основное хранилище — Postgres из `docker-compose.yml`. Старые файлы
+`data/settings.json`, `data/image-editor/*` и `data/google/token.json`
+импортируются в БД один раз при первом запуске и остаются как backup.
+Google `credentials.json` по-прежнему нужно положить в `data/google/credentials.json`.
 
 Для Windows-машины с кассой используй подробный чеклист:
 `WINDOWS_DOCKER_CHECKLIST.md`.

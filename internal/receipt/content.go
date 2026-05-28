@@ -10,6 +10,7 @@ type ContentSettings struct {
 	ShowBankRates       bool `json:"showBankRates"`
 	ShowMail            bool `json:"showMail"`
 	ShowCalendar        bool `json:"showCalendar"`
+	ShowHistory         bool `json:"showHistory"`
 	ShowNews            bool `json:"showNews"`
 }
 
@@ -24,6 +25,7 @@ func DefaultContentSettings() ContentSettings {
 		ShowBankRates:       true,
 		ShowMail:            false,
 		ShowCalendar:        true,
+		ShowHistory:         true,
 		ShowNews:            true,
 	}
 }

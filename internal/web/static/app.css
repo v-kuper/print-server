@@ -47,12 +47,6 @@ body {
   letter-spacing: -0.01em;
 }
 
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
 /* ─── Notifications ─── */
 
 .toast-root {

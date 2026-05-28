@@ -10,9 +10,6 @@
 <body>
   <header class="app-header">
     <span class="app-logo">ATOL Server</span>
-    <div class="header-actions">
-      <button type="button" class="primary-print" data-action="weather">Напечатать чек</button>
-    </div>
   </header>
   <div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="false"></div>
 
@@ -98,6 +95,10 @@
                 </div>
                 <div class="content-group">
                   <div class="content-group-title">Новости</div>
+                  <label class="toggle-label">
+                    <input id="content-history" type="checkbox">
+                    История дня
+                  </label>
                   <label class="toggle-label">
                     <input id="content-news" type="checkbox">
                     Коротко о мире
@@ -414,7 +415,10 @@
         <section class="section">
           <div class="section-header">
             <h2>Превью</h2>
-            <button type="button" class="secondary" data-action="preview">Обновить</button>
+            <div class="section-actions">
+              <button type="button" class="secondary" data-action="preview">Обновить</button>
+              <button type="button" class="primary-print" data-action="weather">Напечатать превью</button>
+            </div>
           </div>
           <div id="receipt-preview" class="receipt-preview">
             <div class="receipt-empty">Нажми «Обновить», чтобы собрать чек с включенными блоками без печати на кассе.</div>

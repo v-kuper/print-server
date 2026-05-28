@@ -3,6 +3,7 @@ package motivation
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -289,6 +290,76 @@ func TestOllamaProviderTranslatesNewsTitles(t *testing.T) {
 	}
 }
 
+func TestOllamaProviderGeneratesHistoryFacts(t *testing.T) {
+	var requestPayload ollamaChatRequest
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/api/chat" {
+			t.Fatalf("expected /api/chat path, got %q", request.URL.Path)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&requestPayload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				`{"message":{"role":"assistant","content":"[{\"year\":1961,\"text\":\"Запущена первая автоматическая станция к Венере.\"},{\"year\":-585,\"text\":\"Солнечное затмение остановило битву на Галисе.\"}]"}}`,
+			)),
+		}, nil
+	})}
+
+	provider := NewOllamaProvider(client)
+	facts, err := provider.GenerateHistoryFacts(context.Background(), Settings{
+		Enabled: true,
+		BaseURL: "https://ollama.test",
+		Model:   "gemma4:31b-cloud",
+	}, []HistoryEvent{
+		{Year: 1961, Text: "Venera 1 became the first spacecraft to fly by Venus."},
+		{Year: -585, Text: "A solar eclipse interrupted a battle."},
+	})
+	if err != nil {
+		t.Fatalf("generate history facts: %v", err)
+	}
+	if len(facts) != 2 {
+		t.Fatalf("expected two facts, got %#v", facts)
+	}
+	if facts[0].Year != 1961 || facts[0].Text != "Запущена первая автоматическая станция к Венере." {
+		t.Fatalf("unexpected first fact: %#v", facts[0])
+	}
+	if facts[1].Year != -585 || facts[1].Text != "Солнечное затмение остановило битву на Галисе." {
+		t.Fatalf("unexpected second fact: %#v", facts[1])
+	}
+
+	prompt := requestPayload.Messages[0].Content
+	for _, want := range []string{
+		"исторические факты",
+		"не выдумывай",
+		"до 3",
+		"JSON",
+		"Venera 1 became the first spacecraft to fly by Venus.",
+		"A solar eclipse interrupted a battle.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected history prompt to contain %q, got %q", want, prompt)
+		}
+	}
+	if requestPayload.Options.Temperature > 0.4 {
+		t.Fatalf("expected stable history sampling options, got %#v", requestPayload.Options)
+	}
+}
+
+func TestParseHistoryFactsRejectsEmptyAndMalformedResponse(t *testing.T) {
+	for _, value := range []string{
+		`[]`,
+		`not json`,
+		`[{"year":2020,"text":"   "}]`,
+	} {
+		if _, err := parseHistoryFacts(value); err == nil {
+			t.Fatalf("expected parse error for %q", value)
+		}
+	}
+}
+
 func TestResolveDailyQuoteRefreshesQuoteEvenForSameMinskDate(t *testing.T) {
 	provider := &fakeProvider{quote: Quote{Text: "Новая цитата"}}
 	settings := Settings{
@@ -365,6 +436,11 @@ func (p *fakeProvider) GenerateCalendarAdvice(context.Context, Settings, Calenda
 	return p.calendarAdvice, p.err
 }
 
+func (p *fakeProvider) GenerateHistoryFacts(context.Context, Settings, []HistoryEvent) ([]HistoryFact, error) {
+	p.calls++
+	return nil, p.err
+}
+
 func (p *fakeProvider) TranslateNewsTitles(context.Context, Settings, []NewsTitle) ([]NewsTranslation, error) {
 	p.calls++
 	return nil, p.err
@@ -372,6 +448,12 @@ func (p *fakeProvider) TranslateNewsTitles(context.Context, Settings, []NewsTitl
 
 func ptrFloat(value float64) *float64 {
 	return &value
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func ptrInt(value int) *int {

@@ -159,6 +159,14 @@ func (s *Store) PreviewPath() string {
 	return s.previewPath()
 }
 
+func (s *Store) LoadPreviewPNG() ([]byte, error) {
+	data, err := os.ReadFile(s.previewPath())
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 func (s *Store) Clear() error {
 	for _, path := range []string{s.bufferPath(), s.metadataPath(), s.previewPath()} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

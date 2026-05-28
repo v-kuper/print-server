@@ -163,6 +163,7 @@ func (r Run) ResolveContent(global receipt.ContentSettings) receipt.ContentSetti
 			ShowUsdBynRate:    true,
 			ShowBankRates:     true,
 			ShowCalendar:      true,
+			ShowHistory:       true,
 		}
 	case ProfileEvening:
 		return receipt.ContentSettings{
@@ -172,6 +173,7 @@ func (r Run) ResolveContent(global receipt.ContentSettings) receipt.ContentSetti
 			ShowUsdBynRate:    true,
 			ShowBankRates:     true,
 			ShowCalendar:      true,
+			ShowHistory:       true,
 			ShowNews:          true,
 		}
 	case ProfileCustom:

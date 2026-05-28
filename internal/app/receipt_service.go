@@ -15,6 +15,7 @@ import (
 	"atol-server/internal/chart"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
+	"atol-server/internal/history"
 	"atol-server/internal/motivation"
 	"atol-server/internal/news"
 	"atol-server/internal/printer"
@@ -65,6 +66,10 @@ type NewsProvider interface {
 	Current(context.Context, news.Settings) ([]news.Item, error)
 }
 
+type HistoryProvider interface {
+	Current(context.Context, time.Time) ([]history.Event, error)
+}
+
 type GoogleProvider interface {
 	Current(context.Context) (googleintegration.Summary, error)
 }
@@ -77,6 +82,7 @@ type MotivationProvider interface {
 	Generate(context.Context, motivation.Settings) (motivation.Quote, error)
 	GenerateWeatherAdvice(context.Context, motivation.Settings, motivation.WeatherContext) (motivation.WeatherAdvice, error)
 	GenerateCalendarAdvice(context.Context, motivation.Settings, motivation.CalendarContext) (motivation.CalendarAdvice, error)
+	GenerateHistoryFacts(context.Context, motivation.Settings, []motivation.HistoryEvent) ([]motivation.HistoryFact, error)
 	TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error)
 }
 
@@ -92,6 +98,7 @@ type ReceiptService struct {
 	fiatChartProvider   FiatMarketChartProvider
 	bankRatesProvider   BankRatesProvider
 	newsProvider        NewsProvider
+	historyProvider     HistoryProvider
 	googleProvider      GoogleProvider
 	motivationProvider  MotivationProvider
 	generatedAssetsPath string
@@ -170,6 +177,12 @@ func WithNewsProvider(provider NewsProvider) ReceiptServiceOption {
 	}
 }
 
+func WithHistoryProvider(provider HistoryProvider) ReceiptServiceOption {
+	return func(s *ReceiptService) {
+		s.historyProvider = provider
+	}
+}
+
 func WithGoogleProvider(provider GoogleProvider) ReceiptServiceOption {
 	return func(s *ReceiptService) {
 		s.googleProvider = provider
@@ -198,6 +211,7 @@ func NewReceiptService(store SettingsStore, printerGateway Printer, clock func()
 		fiatChartProvider:   fiatProvider,
 		bankRatesProvider:   bankrates.NewTheMoneyProvider(nil),
 		newsProvider:        news.NewProvider(nil),
+		historyProvider:     history.NewProvider(nil),
 		motivationProvider:  motivation.NewOllamaProvider(nil),
 		generatedAssetsPath: defaultGeneratedAssetsPath,
 		clock:               clock,
@@ -309,6 +323,11 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 		return nil, nil, buildError(http.StatusInternalServerError, err)
 	}
 
+	historyFacts, historyWarning, err := s.resolveHistoryFacts(ctx, content.ShowHistory)
+	if err != nil {
+		return nil, nil, buildError(http.StatusInternalServerError, err)
+	}
+
 	var newsItems []news.Item
 	var newsTranslationWarning string
 	if content.ShowNews {
@@ -344,9 +363,10 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 		MailMessages:     googleSummary.Mail,
 		CalendarSections: calendarSections,
 		CalendarAdvice:   calendarAdvice,
+		HistoryFacts:     historyFacts,
 		NewsItems:        newsItems,
 	}, receiptStyle)
-	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, newsTranslationWarning)
+	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning)
 	return lines, warnings, nil
 }
 
@@ -454,6 +474,47 @@ func (s *ReceiptService) resolveCalendarAdvice(ctx context.Context, includeCalen
 		return nil, "", nil
 	}
 	return &advice, "", nil
+}
+
+func (s *ReceiptService) resolveHistoryFacts(ctx context.Context, includeHistory bool) ([]motivation.HistoryFact, string, error) {
+	if !includeHistory || s.historyProvider == nil || s.motivationProvider == nil {
+		return nil, "", nil
+	}
+	events, err := s.historyProvider.Current(ctx, s.clock().In(minskLocation()))
+	if err != nil {
+		return nil, "История дня недоступна: " + err.Error(), nil
+	}
+	if len(events) == 0 {
+		return nil, "", nil
+	}
+	settings, err := s.store.LoadMotivation()
+	if err != nil {
+		return nil, "", err
+	}
+	facts, err := s.motivationProvider.GenerateHistoryFacts(ctx, settings.Normalized(), historyEventsForAI(events))
+	if err != nil {
+		return nil, "AI-история дня недоступна: " + err.Error(), nil
+	}
+	if len(facts) == 0 {
+		return nil, "AI-история дня недоступна: пустой ответ", nil
+	}
+	return facts, "", nil
+}
+
+func historyEventsForAI(events []history.Event) []motivation.HistoryEvent {
+	result := make([]motivation.HistoryEvent, 0, len(events))
+	for _, event := range events {
+		text := strings.TrimSpace(event.Text)
+		if text == "" {
+			continue
+		}
+		result = append(result, motivation.HistoryEvent{
+			Year: event.Year,
+			Text: text,
+			Link: strings.TrimSpace(event.Link),
+		})
+	}
+	return result
 }
 
 func buildCalendarSections(events []googleintegration.CalendarEvent, now time.Time) []receipt.CalendarSection {

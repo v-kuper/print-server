@@ -61,7 +61,7 @@ func TestSettingsNormalizeSortsAndDeduplicatesRuns(t *testing.T) {
 }
 
 func TestSettingsNormalizePreservesIntervalContent(t *testing.T) {
-	content := receiptContent(true, false, false, false, true, true, false, false, true)
+	content := receiptContent(true, false, false, false, true, true, false, false, true, true)
 	settings := Settings{
 		Enabled:         true,
 		Mode:            ModeInterval,
@@ -125,27 +125,27 @@ func TestSettingsValidateRejectsCustomRunWithoutContent(t *testing.T) {
 }
 
 func TestRunResolvesPresetContent(t *testing.T) {
-	global := Run{Profile: ProfileDefault}.ResolveContent(receiptContent(false, false, true, false, false, false, false, false, false))
-	if global.ShowWeather || !global.ShowMotivationQuote {
+	global := Run{Profile: ProfileDefault}.ResolveContent(receiptContent(false, false, true, false, false, false, false, false, true, false))
+	if global.ShowWeather || !global.ShowMotivationQuote || !global.ShowHistory {
 		t.Fatalf("expected default profile to use global content, got %#v", global)
 	}
 
-	morning := Run{Profile: ProfileMorning}.ResolveContent(receiptContent(false, false, false, false, false, false, true, false, false))
+	morning := Run{Profile: ProfileMorning}.ResolveContent(receiptContent(false, false, false, false, false, false, true, false, false, false))
 	if !morning.ShowWeather || !morning.ShowWeatherAdvice || !morning.ShowMotivationQuote ||
 		!morning.ShowTonPortfolio || !morning.ShowUsdBynRate || !morning.ShowBankRates ||
-		!morning.ShowCalendar || !morning.ShowNews || morning.ShowMail {
+		!morning.ShowCalendar || !morning.ShowHistory || !morning.ShowNews || morning.ShowMail {
 		t.Fatalf("expected morning preset to enable all daily sections except mail, got %#v", morning)
 	}
 
-	day := Run{Profile: ProfileDay}.ResolveContent(receiptContent(false, false, false, false, false, false, false, false, false))
-	if !day.ShowWeather || !day.ShowWeatherAdvice || !day.ShowUsdBynRate || !day.ShowBankRates || !day.ShowCalendar ||
+	day := Run{Profile: ProfileDay}.ResolveContent(receiptContent(false, false, false, false, false, false, false, false, false, false))
+	if !day.ShowWeather || !day.ShowWeatherAdvice || !day.ShowUsdBynRate || !day.ShowBankRates || !day.ShowCalendar || !day.ShowHistory ||
 		day.ShowMotivationQuote || day.ShowTonPortfolio || day.ShowMail || day.ShowNews {
 		t.Fatalf("expected day preset to include weather, rates, calendar only, got %#v", day)
 	}
 
-	evening := Run{Profile: ProfileEvening}.ResolveContent(receiptContent(false, false, false, false, false, false, false, false, false))
+	evening := Run{Profile: ProfileEvening}.ResolveContent(receiptContent(false, false, false, false, false, false, false, false, false, false))
 	if !evening.ShowWeather || !evening.ShowWeatherAdvice || !evening.ShowUsdBynRate || !evening.ShowBankRates ||
-		!evening.ShowCalendar || !evening.ShowNews || evening.ShowMotivationQuote || evening.ShowTonPortfolio || evening.ShowMail {
+		!evening.ShowCalendar || !evening.ShowHistory || !evening.ShowNews || evening.ShowMotivationQuote || evening.ShowTonPortfolio || evening.ShowMail {
 		t.Fatalf("expected evening preset to include day sections plus news, got %#v", evening)
 	}
 }
@@ -240,7 +240,7 @@ func TestNextAfterForIntervalCountsFromReferenceTime(t *testing.T) {
 	}
 }
 
-func receiptContent(weather, weatherAdvice, motivation, ton, usdByn, bankRates, mail, calendar, news bool) receipt.ContentSettings {
+func receiptContent(weather, weatherAdvice, motivation, ton, usdByn, bankRates, mail, calendar, history, news bool) receipt.ContentSettings {
 	return receipt.ContentSettings{
 		Configured:          true,
 		ShowWeather:         weather,
@@ -251,6 +251,7 @@ func receiptContent(weather, weatherAdvice, motivation, ton, usdByn, bankRates, 
 		ShowBankRates:       bankRates,
 		ShowMail:            mail,
 		ShowCalendar:        calendar,
+		ShowHistory:         history,
 		ShowNews:            news,
 	}
 }

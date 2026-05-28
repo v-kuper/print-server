@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -97,8 +98,70 @@ func TestStoreLoadReturnsDefaultReceiptContentWhenFileDoesNotExist(t *testing.T)
 	if content.ShowMail {
 		t.Fatalf("mail must be disabled by default, got %#v", content)
 	}
-	if !content.ShowCalendar || !content.ShowWeather || !content.ShowUsdBynRate || !content.ShowBankRates {
+	if !content.ShowCalendar || !content.ShowHistory || !content.ShowWeather || !content.ShowUsdBynRate || !content.ShowBankRates {
 		t.Fatalf("expected main receipt sections enabled by default, got %#v", content)
+	}
+}
+
+func TestStoreMigratesOldContentSettingsToShowHistoryByDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	oldSettings := `{
+		"receiptContent": {
+			"configured": true,
+			"showWeather": true,
+			"showWeatherAdvice": false,
+			"showMotivationQuote": false,
+			"showTonPortfolio": false,
+			"showUsdBynRate": true,
+			"showBankRates": false,
+			"showMail": false,
+			"showCalendar": true,
+			"showNews": false
+		},
+		"schedule": {
+			"enabled": true,
+			"mode": "daily_times",
+			"intervalMinutes": 15,
+			"timezone": "Europe/Minsk",
+			"times": ["07:00"],
+			"intervalContent": {
+				"configured": true,
+				"showWeather": true,
+				"showNews": false
+			},
+			"runs": [{
+				"time": "07:00",
+				"profile": "custom",
+				"content": {
+					"configured": true,
+					"showWeather": true,
+					"showNews": false
+				}
+			}]
+		}
+	}`
+	if err := os.WriteFile(path, []byte(oldSettings), 0o644); err != nil {
+		t.Fatalf("write old settings: %v", err)
+	}
+
+	store := NewStore(path)
+	content, err := store.LoadReceiptContent()
+	if err != nil {
+		t.Fatalf("load receipt content: %v", err)
+	}
+	if !content.ShowHistory || content.ShowNews {
+		t.Fatalf("expected migrated history=true and preserved news=false, got %#v", content)
+	}
+
+	scheduleSettings, err := store.LoadSchedule()
+	if err != nil {
+		t.Fatalf("load schedule: %v", err)
+	}
+	if scheduleSettings.IntervalContent == nil || !scheduleSettings.IntervalContent.ShowHistory || scheduleSettings.IntervalContent.ShowNews {
+		t.Fatalf("expected migrated interval content, got %#v", scheduleSettings.IntervalContent)
+	}
+	if len(scheduleSettings.Runs) != 1 || scheduleSettings.Runs[0].Content == nil || !scheduleSettings.Runs[0].Content.ShowHistory || scheduleSettings.Runs[0].Content.ShowNews {
+		t.Fatalf("expected migrated run content, got %#v", scheduleSettings.Runs)
 	}
 }
 
@@ -281,6 +344,7 @@ func TestStoreSavesAndLoadsReceiptContent(t *testing.T) {
 		ShowBankRates:       false,
 		ShowMail:            true,
 		ShowCalendar:        false,
+		ShowHistory:         true,
 		ShowNews:            true,
 	}
 

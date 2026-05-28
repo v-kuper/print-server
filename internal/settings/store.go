@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"atol-server/internal/finance"
@@ -305,6 +306,9 @@ func (s *Store) load() (fileSettings, error) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return fileSettings{}, err
 	}
+	if !strings.Contains(string(data), `"showHistory"`) {
+		enableHistoryInExistingContent(&settings)
+	}
 	if settings.Printer.Host == "" && settings.Printer.Port == 0 {
 		settings.Printer = printer.DefaultConfig()
 	}
@@ -330,6 +334,20 @@ func (s *Store) load() (fileSettings, error) {
 		settings.Schedule = settings.Schedule.Normalized()
 	}
 	return settings, nil
+}
+
+func enableHistoryInExistingContent(settings *fileSettings) {
+	if settings.ReceiptContent.Configured {
+		settings.ReceiptContent.ShowHistory = true
+	}
+	if settings.Schedule.IntervalContent != nil {
+		settings.Schedule.IntervalContent.ShowHistory = true
+	}
+	for i := range settings.Schedule.Runs {
+		if settings.Schedule.Runs[i].Content != nil {
+			settings.Schedule.Runs[i].Content.ShowHistory = true
+		}
+	}
 }
 
 func isZeroSchedule(settings schedule.Settings) bool {

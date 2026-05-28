@@ -57,6 +57,7 @@ type DailyReceiptData struct {
 	CalendarEvents   []googleintegration.CalendarEvent
 	CalendarSections []CalendarSection
 	CalendarAdvice   *motivation.CalendarAdvice
+	HistoryFacts     []motivation.HistoryFact
 	NewsItems        []news.Item
 }
 
@@ -139,6 +140,25 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 		result = append(result, blankLine(normalStyle))
 		result = append(result, wrappedAligned(data.MotivationQuote.Text, normalStyle)...)
 	}
+	calendarSections := normalizedCalendarSections(data.CalendarSections, data.CalendarEvents)
+	if len(calendarSections) > 0 {
+		result = appendSectionHeader(result, "Календарь", normalStyle)
+		for sectionIndex, section := range calendarSections {
+			if strings.TrimSpace(section.Title) != "" {
+				if sectionIndex > 0 {
+					result = append(result, blankLine(normalStyle))
+				}
+				result = append(result, wrappedAligned(section.Title, normalStyle)...)
+			}
+			for _, event := range section.Events {
+				result = append(result, calendarEventLines(event, normalStyle)...)
+			}
+		}
+		if data.CalendarAdvice != nil && strings.TrimSpace(data.CalendarAdvice.Text) != "" {
+			result = append(result, blankLine(normalStyle))
+			result = append(result, wrappedAligned(data.CalendarAdvice.Text, normalStyle)...)
+		}
+	}
 	if data.TonPortfolio != nil {
 		result = appendSectionHeader(result, "TON", normalStyle)
 		result = append(result, wrappedAligned(formatTonPortfolioLine(*data.TonPortfolio), normalStyle)...)
@@ -185,23 +205,14 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 			}
 		}
 	}
-	calendarSections := normalizedCalendarSections(data.CalendarSections, data.CalendarEvents)
-	if len(calendarSections) > 0 {
-		result = appendSectionHeader(result, "Календарь", normalStyle)
-		for sectionIndex, section := range calendarSections {
-			if strings.TrimSpace(section.Title) != "" {
-				if sectionIndex > 0 {
-					result = append(result, blankLine(normalStyle))
-				}
-				result = append(result, wrappedAligned(section.Title, normalStyle)...)
+	if len(data.HistoryFacts) > 0 {
+		result = appendSectionHeader(result, "История дня", normalStyle)
+		for _, fact := range data.HistoryFacts {
+			text := strings.TrimSpace(fact.Text)
+			if text == "" {
+				continue
 			}
-			for _, event := range section.Events {
-				result = append(result, calendarEventLines(event, normalStyle)...)
-			}
-		}
-		if data.CalendarAdvice != nil && strings.TrimSpace(data.CalendarAdvice.Text) != "" {
-			result = append(result, blankLine(normalStyle))
-			result = append(result, wrappedAligned(data.CalendarAdvice.Text, normalStyle)...)
+			result = append(result, wrappedAligned(formatHistoryFact(fact.Year, text), normalStyle)...)
 		}
 	}
 	if len(data.NewsItems) > 0 {
@@ -294,6 +305,16 @@ func formatBankRatesUpdate(updatedAt time.Time, location *time.Location) string 
 		location = time.Local
 	}
 	return "Обн. " + updatedAt.In(location).Format("15:04")
+}
+
+func formatHistoryFact(year int, text string) string {
+	if year == 0 {
+		return text
+	}
+	if year < 0 {
+		return fmt.Sprintf("%d до н. э. — %s", -year, text)
+	}
+	return fmt.Sprintf("%d — %s", year, text)
 }
 
 func calendarEventLines(event googleintegration.CalendarEvent, style lineStyle) []Line {

@@ -56,6 +56,7 @@ const scheduleContentOptions = [
   { key: "showBankRates",       label: "Банки",           group: "Финансы"  },
   { key: "showMail",            label: "Почта",           group: "Google"   },
   { key: "showCalendar",        label: "Календарь",       group: "Google"   },
+  { key: "showHistory",         label: "История дня",     group: "Новости"  },
   { key: "showNews",            label: "Коротко о мире",  group: "Новости"  },
 ];
 
@@ -273,6 +274,7 @@ function applyBootstrap(data) {
   setChecked("#content-bank-rates", content.showBankRates);
   setChecked("#content-mail", content.showMail);
   setChecked("#content-calendar", content.showCalendar);
+  setChecked("#content-history", content.showHistory);
   setChecked("#content-news", content.showNews);
 
   const weather = data.weather || {};
@@ -850,6 +852,7 @@ function readReceiptContentSettings() {
     showBankRates: checked("#content-bank-rates"),
     showMail: checked("#content-mail"),
     showCalendar: checked("#content-calendar"),
+    showHistory: checked("#content-history"),
     showNews: checked("#content-news")
   };
 }
@@ -902,6 +905,7 @@ function scheduleContentFromSettings(settings) {
     showBankRates: Boolean(content.showBankRates),
     showMail: Boolean(content.showMail),
     showCalendar: Boolean(content.showCalendar),
+    showHistory: Boolean(content.showHistory),
     showNews: Boolean(content.showNews)
   };
 }

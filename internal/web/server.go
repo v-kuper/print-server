@@ -80,6 +80,7 @@ type MotivationProvider interface {
 	Generate(context.Context, motivation.Settings) (motivation.Quote, error)
 	GenerateWeatherAdvice(context.Context, motivation.Settings, motivation.WeatherContext) (motivation.WeatherAdvice, error)
 	GenerateCalendarAdvice(context.Context, motivation.Settings, motivation.CalendarContext) (motivation.CalendarAdvice, error)
+	GenerateHistoryFacts(context.Context, motivation.Settings, []motivation.HistoryEvent) ([]motivation.HistoryFact, error)
 	TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error)
 }
 
@@ -98,6 +99,19 @@ type DailyReceiptService interface {
 
 type DailyReceiptWarningService interface {
 	BuildDailyReceiptWithWarnings(context.Context) ([]receipt.Line, []string, error)
+}
+
+type ImageEditorStore interface {
+	State() (imageeditor.State, error)
+	Save(imageeditor.SaveInput) (imageeditor.State, error)
+	LoadBuffer() (printer.PixelBuffer, error)
+	LoadPreviewPNG() ([]byte, error)
+	Clear() error
+}
+
+type PrintJobStore interface {
+	StartPrintJob(kind string, request any) (string, error)
+	FinishPrintJob(id string, printErr error) error
 }
 
 type Scheduler interface {
@@ -119,6 +133,7 @@ type Server struct {
 	motivationProvider     MotivationProvider
 	receiptService         DailyReceiptService
 	scheduler              Scheduler
+	imageStore             ImageEditorStore
 	clock                  func() time.Time
 	assetsPath             string
 	imageEditorPath        string
@@ -261,6 +276,12 @@ func WithImageEditorPath(path string) ServerOption {
 	}
 }
 
+func WithImageEditorStore(store ImageEditorStore) ServerOption {
+	return func(s *Server) {
+		s.imageStore = store
+	}
+}
+
 func WithReceiptService(service DailyReceiptService) ServerOption {
 	return func(s *Server) {
 		s.receiptService = service
@@ -362,7 +383,10 @@ func (s *Server) imageEditorPathOrDefault() string {
 	return s.imageEditorPath
 }
 
-func (s *Server) imageEditorStore() *imageeditor.Store {
+func (s *Server) imageEditorStore() ImageEditorStore {
+	if s.imageStore != nil {
+		return s.imageStore
+	}
 	return imageeditor.NewStore(s.imageEditorPathOrDefault(), s.clock)
 }
 
@@ -955,10 +979,27 @@ func (s *Server) handlePrintTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.printer.PrintReceipt(r.Context(), config, receipt.TestReceipt(s.clock())); err != nil {
-		writeJSON(w, http.StatusBadGateway, statusResponse{
+	jobID, err := s.startPrintJob("test", map[string]any{"receipt": "test"})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, statusResponse{
 			OK:    false,
 			Error: err.Error(),
+		})
+		return
+	}
+	printErr := s.printer.PrintReceipt(r.Context(), config, receipt.TestReceipt(s.clock()))
+	finishErr := s.finishPrintJob(jobID, printErr)
+	if printErr != nil {
+		writeJSON(w, http.StatusBadGateway, statusResponse{
+			OK:    false,
+			Error: printErr.Error(),
+		})
+		return
+	}
+	if finishErr != nil {
+		writeJSON(w, http.StatusInternalServerError, statusResponse{
+			OK:    false,
+			Error: finishErr.Error(),
 		})
 		return
 	}
@@ -996,10 +1037,27 @@ func (s *Server) handlePrintText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.printer.PrintReceipt(r.Context(), config, lines); err != nil {
-		writeJSON(w, http.StatusBadGateway, statusResponse{
+	jobID, err := s.startPrintJob("text", request)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, statusResponse{
 			OK:    false,
 			Error: err.Error(),
+		})
+		return
+	}
+	printErr := s.printer.PrintReceipt(r.Context(), config, lines)
+	finishErr := s.finishPrintJob(jobID, printErr)
+	if printErr != nil {
+		writeJSON(w, http.StatusBadGateway, statusResponse{
+			OK:    false,
+			Error: printErr.Error(),
+		})
+		return
+	}
+	if finishErr != nil {
+		writeJSON(w, http.StatusInternalServerError, statusResponse{
+			OK:    false,
+			Error: finishErr.Error(),
 		})
 		return
 	}
@@ -1040,10 +1098,27 @@ func (s *Server) handleReceiptPreview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePrintWeather(w http.ResponseWriter, r *http.Request) {
-	if err := s.receiptService.PrintDailyReceipt(r.Context()); err != nil {
-		writeJSON(w, statusForBuildError(err), statusResponse{
+	jobID, err := s.startPrintJob("weather", map[string]any{"receipt": "daily"})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, statusResponse{
 			OK:    false,
 			Error: err.Error(),
+		})
+		return
+	}
+	printErr := s.receiptService.PrintDailyReceipt(r.Context())
+	finishErr := s.finishPrintJob(jobID, printErr)
+	if printErr != nil {
+		writeJSON(w, statusForBuildError(printErr), statusResponse{
+			OK:    false,
+			Error: printErr.Error(),
+		})
+		return
+	}
+	if finishErr != nil {
+		writeJSON(w, http.StatusInternalServerError, statusResponse{
+			OK:    false,
+			Error: finishErr.Error(),
 		})
 		return
 	}
@@ -1094,7 +1169,7 @@ func (s *Server) handleImageEditorSave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImageEditorPreview(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile(s.imageEditorStore().PreviewPath())
+	data, err := s.imageEditorStore().LoadPreviewPNG()
 	if os.IsNotExist(err) {
 		writeJSON(w, http.StatusNotFound, imageEditorResponse{
 			OK:    false,
@@ -1132,10 +1207,27 @@ func (s *Server) handleImageEditorPrint(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
-	if err := s.printer.PrintPixelBuffer(r.Context(), config, buffer); err != nil {
-		writeJSON(w, http.StatusBadGateway, imageEditorResponse{
+	jobID, err := s.startPrintJob("image", map[string]any{"source": "image_editor"})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, imageEditorResponse{
 			OK:    false,
 			Error: err.Error(),
+		})
+		return
+	}
+	printErr := s.printer.PrintPixelBuffer(r.Context(), config, buffer)
+	finishErr := s.finishPrintJob(jobID, printErr)
+	if printErr != nil {
+		writeJSON(w, http.StatusBadGateway, imageEditorResponse{
+			OK:    false,
+			Error: printErr.Error(),
+		})
+		return
+	}
+	if finishErr != nil {
+		writeJSON(w, http.StatusInternalServerError, imageEditorResponse{
+			OK:    false,
+			Error: finishErr.Error(),
 		})
 		return
 	}
@@ -1159,6 +1251,25 @@ func (s *Server) handleImageEditorClear(w http.ResponseWriter, r *http.Request) 
 		Message: "Изображение удалено.",
 		Data:    &state,
 	})
+}
+
+func (s *Server) startPrintJob(kind string, request any) (string, error) {
+	store, ok := s.store.(PrintJobStore)
+	if !ok {
+		return "", nil
+	}
+	return store.StartPrintJob(kind, request)
+}
+
+func (s *Server) finishPrintJob(id string, printErr error) error {
+	if id == "" {
+		return nil
+	}
+	store, ok := s.store.(PrintJobStore)
+	if !ok {
+		return nil
+	}
+	return store.FinishPrintJob(id, printErr)
 }
 
 func decodeImageEditorSaveRequest(r *http.Request) (imageeditor.SaveInput, error) {

@@ -12,6 +12,7 @@ import (
 	"atol-server/internal/bankrates"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
+	"atol-server/internal/history"
 	"atol-server/internal/motivation"
 	"atol-server/internal/news"
 	"atol-server/internal/printer"
@@ -328,6 +329,7 @@ func TestReceiptServiceAddsBankRatesWhenAvailable(t *testing.T) {
 			},
 		}}),
 		WithNewsProvider(&fakeNewsProvider{}),
+		WithHistoryProvider(&fakeHistoryProvider{}),
 		WithMotivationProvider(&fakeMotivationProvider{
 			quote:  motivation.Quote{Text: "Спокойный фокус."},
 			advice: motivation.WeatherAdvice{Text: "Погода рабочая."},
@@ -529,6 +531,7 @@ func TestReceiptServiceTranslatesEnglishNewsTitles(t *testing.T) {
 			{Title: "Reuters prepares a new market wrap", SourceName: "Reuters"},
 			{Title: "Founder mode and startup growth", SourceName: "Hacker News"},
 		}}),
+		WithHistoryProvider(&fakeHistoryProvider{}),
 		WithMotivationProvider(provider),
 	)
 
@@ -601,6 +604,7 @@ func TestReceiptServiceIncludesGoogleMailAndCalendar(t *testing.T) {
 		WithFiatRateProvider(&fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}),
 		WithBankRatesProvider(&fakeBankRatesProvider{}),
 		WithNewsProvider(&fakeNewsProvider{}),
+		WithHistoryProvider(&fakeHistoryProvider{}),
 		WithMotivationProvider(&fakeMotivationProvider{
 			quote:  motivation.Quote{Text: "Спокойный фокус."},
 			advice: motivation.WeatherAdvice{Text: "Погода рабочая."},
@@ -625,6 +629,156 @@ func TestReceiptServiceIncludesGoogleMailAndCalendar(t *testing.T) {
 	}
 	if !lineTextsContain(lines, "Календарь") || !lineTextsContain(lines, "18:30      Ветеринар") {
 		t.Fatalf("expected calendar block, got %#v", lines)
+	}
+}
+
+func TestReceiptServicePrintsHistoryBeforeNews(t *testing.T) {
+	store := &fakeStore{
+		newsSettings: news.Settings{Sources: []news.SourceSettings{
+			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+		}},
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowUsdBynRate:      false,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        false,
+			ShowHistory:         true,
+			ShowNews:            true,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: true},
+	}
+	historyProvider := &fakeHistoryProvider{events: []history.Event{
+		{Year: 1961, Text: "Venera 1 became the first spacecraft to fly by Venus.", Link: "https://en.example/venera"},
+		{Year: -585, Text: "A solar eclipse interrupted a battle.", Link: "https://en.example/eclipse"},
+	}}
+	motivationProvider := &fakeMotivationProvider{historyFacts: []motivation.HistoryFact{
+		{Year: 1961, Text: "запущена первая автоматическая станция к Венере."},
+		{Year: -585, Text: "солнечное затмение остановило битву на Галисе."},
+	}}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithHistoryProvider(historyProvider),
+		WithMotivationProvider(motivationProvider),
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Новость", SourceName: "BBC Russian"}}}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if historyProvider.calls != 1 {
+		t.Fatalf("expected one history provider call, got %d", historyProvider.calls)
+	}
+	if got := historyProvider.date.Location().String(); got != "Europe/Minsk" {
+		t.Fatalf("expected history lookup in Europe/Minsk date, got %q", got)
+	}
+	if motivationProvider.historyFactCalls != 1 {
+		t.Fatalf("expected one history AI call, got %d", motivationProvider.historyFactCalls)
+	}
+	if len(motivationProvider.historyEvents) != 2 || motivationProvider.historyEvents[0].Link != "https://en.example/venera" {
+		t.Fatalf("expected history events passed to AI, got %#v", motivationProvider.historyEvents)
+	}
+	if !lineTextsContain(lines, "История дня") || !lineTextsContainSubstring(lines, "1961 — запущена первая") {
+		t.Fatalf("expected history block, got %#v", lines)
+	}
+	historyIndex := indexOfLineText(lines, "История дня")
+	newsIndex := indexOfLineText(lines, "Коротко о мире:")
+	if historyIndex < 0 || newsIndex < 0 || historyIndex > newsIndex {
+		t.Fatalf("expected history before news, got %#v", lines)
+	}
+}
+
+func TestReceiptServiceHistoryFailureDoesNotBreakReceipt(t *testing.T) {
+	store := &fakeStore{
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowUsdBynRate:      false,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        false,
+			ShowHistory:         true,
+			ShowNews:            false,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: true},
+	}
+	historyProvider := &fakeHistoryProvider{err: errors.New("wikimedia offline")}
+	motivationProvider := &fakeMotivationProvider{historyFacts: []motivation.HistoryFact{{Year: 1961, Text: "не должно печататься"}}}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithHistoryProvider(historyProvider),
+		WithMotivationProvider(motivationProvider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "История дня недоступна: wikimedia offline") {
+		t.Fatalf("expected history warning, got %#v", warnings)
+	}
+	if lineTextsContain(lines, "История дня") {
+		t.Fatalf("expected history block to be omitted, got %#v", lines)
+	}
+	if motivationProvider.historyFactCalls != 0 {
+		t.Fatalf("expected AI to be skipped when history API fails, got %d calls", motivationProvider.historyFactCalls)
+	}
+}
+
+func TestReceiptServiceSkipsDisabledHistory(t *testing.T) {
+	store := &fakeStore{
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowUsdBynRate:      false,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        false,
+			ShowHistory:         false,
+			ShowNews:            false,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: true},
+	}
+	historyProvider := &fakeHistoryProvider{events: []history.Event{{Year: 1961, Text: "Venera"}}}
+	motivationProvider := &fakeMotivationProvider{historyFacts: []motivation.HistoryFact{{Year: 1961, Text: "не должно печататься"}}}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithHistoryProvider(historyProvider),
+		WithMotivationProvider(motivationProvider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if historyProvider.calls != 0 || motivationProvider.historyFactCalls != 0 {
+		t.Fatalf("expected disabled history to skip providers, history=%d ai=%d", historyProvider.calls, motivationProvider.historyFactCalls)
+	}
+	if lineTextsContain(lines, "История дня") {
+		t.Fatalf("expected no history block, got %#v", lines)
 	}
 }
 
@@ -655,6 +809,7 @@ func TestReceiptServiceDefaultContentOmitsMailAndKeepsCalendar(t *testing.T) {
 		WithFiatRateProvider(&fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}),
 		WithBankRatesProvider(&fakeBankRatesProvider{}),
 		WithNewsProvider(&fakeNewsProvider{}),
+		WithHistoryProvider(&fakeHistoryProvider{}),
 		WithMotivationProvider(&fakeMotivationProvider{
 			quote:  motivation.Quote{Text: "Спокойный фокус."},
 			advice: motivation.WeatherAdvice{Text: "Погода рабочая."},
@@ -904,7 +1059,7 @@ func TestReceiptServiceSkipsDisabledAIContent(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings, got %#v", warnings)
 	}
-	if motivationProvider.quoteCalls != 0 || motivationProvider.adviceCalls != 0 || motivationProvider.calendarAdviceCalls != 0 {
+	if motivationProvider.quoteCalls != 0 || motivationProvider.adviceCalls != 0 || motivationProvider.calendarAdviceCalls != 0 || motivationProvider.historyFactCalls != 0 {
 		t.Fatalf("expected disabled AI content to skip provider calls, provider=%#v", motivationProvider)
 	}
 	if lineTextsContain(lines, "Цитата не нужна.") || lineTextsContain(lines, "Совет не нужен.") || lineTextsContain(lines, "Календарный совет не нужен.") {
@@ -1257,6 +1412,22 @@ func (p *fakeNewsProvider) Current(context.Context, news.Settings) ([]news.Item,
 	return p.items, nil
 }
 
+type fakeHistoryProvider struct {
+	events []history.Event
+	err    error
+	calls  int
+	date   time.Time
+}
+
+func (p *fakeHistoryProvider) Current(_ context.Context, date time.Time) ([]history.Event, error) {
+	p.calls++
+	p.date = date
+	if p.err != nil {
+		return nil, p.err
+	}
+	return append([]history.Event(nil), p.events...), nil
+}
+
 type fakeGoogleProvider struct {
 	summary         googleintegration.Summary
 	err             error
@@ -1293,16 +1464,20 @@ type fakeMotivationProvider struct {
 	quotes              []motivation.Quote
 	advice              motivation.WeatherAdvice
 	calendarAdvice      motivation.CalendarAdvice
+	historyFacts        []motivation.HistoryFact
 	translations        []motivation.NewsTranslation
 	err                 error
 	calendarAdviceErr   error
+	historyFactsErr     error
 	translationErr      error
 	weatherContext      motivation.WeatherContext
 	calendarContext     motivation.CalendarContext
+	historyEvents       []motivation.HistoryEvent
 	translatedTitles    []motivation.NewsTitle
 	quoteCalls          int
 	adviceCalls         int
 	calendarAdviceCalls int
+	historyFactCalls    int
 }
 
 func (p *fakeMotivationProvider) Generate(context.Context, motivation.Settings) (motivation.Quote, error) {
@@ -1330,6 +1505,15 @@ func (p *fakeMotivationProvider) GenerateCalendarAdvice(_ context.Context, _ mot
 	return p.calendarAdvice, p.err
 }
 
+func (p *fakeMotivationProvider) GenerateHistoryFacts(_ context.Context, _ motivation.Settings, events []motivation.HistoryEvent) ([]motivation.HistoryFact, error) {
+	p.historyFactCalls++
+	p.historyEvents = append([]motivation.HistoryEvent(nil), events...)
+	if p.historyFactsErr != nil {
+		return nil, p.historyFactsErr
+	}
+	return append([]motivation.HistoryFact(nil), p.historyFacts...), p.err
+}
+
 func (p *fakeMotivationProvider) TranslateNewsTitles(_ context.Context, _ motivation.Settings, titles []motivation.NewsTitle) ([]motivation.NewsTranslation, error) {
 	p.translatedTitles = append([]motivation.NewsTitle(nil), titles...)
 	return append([]motivation.NewsTranslation(nil), p.translations...), p.translationErr
@@ -1351,6 +1535,15 @@ func lineTextsContainSubstring(lines []receipt.Line, want string) bool {
 		}
 	}
 	return false
+}
+
+func indexOfLineText(lines []receipt.Line, want string) int {
+	for index, line := range lines {
+		if line.Text == want {
+			return index
+		}
+	}
+	return -1
 }
 
 func receiptLinesContainImage(lines []receipt.Line, path string) bool {

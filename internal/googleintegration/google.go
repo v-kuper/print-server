@@ -36,10 +36,17 @@ var (
 type Config struct {
 	CredentialsPath string
 	TokenPath       string
+	TokenStore      TokenStore
 	GmailBaseURL    string
 	CalendarBaseURL string
 	Client          *http.Client
 	Clock           func() time.Time
+}
+
+type TokenStore interface {
+	LoadToken(context.Context) (Token, error)
+	SaveToken(context.Context, Token) error
+	DeleteToken(context.Context) error
 }
 
 type Client struct {
@@ -131,7 +138,7 @@ func DefaultConfig(dataDir string) Config {
 
 func (c *Client) Status() Status {
 	credentialsAvailable := fileExists(c.config.CredentialsPath)
-	tokenAvailable := fileExists(c.config.TokenPath)
+	tokenAvailable := c.tokenAvailable(context.Background())
 	return Status{
 		CredentialsAvailable: credentialsAvailable,
 		TokenAvailable:       tokenAvailable,
@@ -215,10 +222,13 @@ func (c *Client) ExchangeCode(ctx context.Context, code string, redirectURI stri
 	if token.AccessToken == "" {
 		return fmt.Errorf("Google OAuth token response has no access token")
 	}
-	return c.saveToken(token)
+	return c.saveToken(ctx, token)
 }
 
 func (c *Client) Disconnect() error {
+	if c.config.TokenStore != nil {
+		return c.config.TokenStore.DeleteToken(context.Background())
+	}
 	if c.config.TokenPath == "" {
 		return nil
 	}
@@ -239,11 +249,14 @@ func (c *Client) CurrentSelected(ctx context.Context, includeMail bool, includeC
 	if !fileExists(c.config.CredentialsPath) {
 		return Summary{}, nil
 	}
-	if !fileExists(c.config.TokenPath) {
+	if c.config.TokenStore == nil && !fileExists(c.config.TokenPath) {
 		return Summary{}, nil
 	}
 	token, err := c.validToken(ctx)
 	if err != nil {
+		if errors.Is(err, ErrNotAuthorized) {
+			return Summary{}, nil
+		}
 		return Summary{}, err
 	}
 	var summary Summary
@@ -265,7 +278,7 @@ func (c *Client) CurrentSelected(ctx context.Context, includeMail bool, includeC
 }
 
 func (c *Client) validToken(ctx context.Context) (Token, error) {
-	token, err := c.loadToken()
+	token, err := c.loadToken(ctx)
 	if err != nil {
 		return Token{}, err
 	}
@@ -282,7 +295,7 @@ func (c *Client) validToken(ctx context.Context) (Token, error) {
 	if refreshed.RefreshToken == "" {
 		refreshed.RefreshToken = token.RefreshToken
 	}
-	if err := c.saveToken(refreshed); err != nil {
+	if err := c.saveToken(ctx, refreshed); err != nil {
 		return Token{}, err
 	}
 	return refreshed, nil
@@ -653,7 +666,10 @@ func (c *Client) loadCredentials() (oauthClient, error) {
 	return *credentials, nil
 }
 
-func (c *Client) loadToken() (Token, error) {
+func (c *Client) loadToken(ctx context.Context) (Token, error) {
+	if c.config.TokenStore != nil {
+		return c.config.TokenStore.LoadToken(ctx)
+	}
 	if c.config.TokenPath == "" {
 		return Token{}, ErrNotAuthorized
 	}
@@ -677,7 +693,10 @@ func (c *Client) loadToken() (Token, error) {
 	return token, nil
 }
 
-func (c *Client) saveToken(token Token) error {
+func (c *Client) saveToken(ctx context.Context, token Token) error {
+	if c.config.TokenStore != nil {
+		return c.config.TokenStore.SaveToken(ctx, token)
+	}
 	if c.config.TokenPath == "" {
 		return ErrNotAuthorized
 	}
@@ -689,6 +708,14 @@ func (c *Client) saveToken(token Token) error {
 		return err
 	}
 	return os.WriteFile(c.config.TokenPath, body, 0o600)
+}
+
+func (c *Client) tokenAvailable(ctx context.Context) bool {
+	if c.config.TokenStore != nil {
+		token, err := c.config.TokenStore.LoadToken(ctx)
+		return err == nil && (token.AccessToken != "" || token.RefreshToken != "")
+	}
+	return fileExists(c.config.TokenPath)
 }
 
 func (c *Client) client() *http.Client {
