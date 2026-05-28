@@ -1,4 +1,4 @@
-const statusEl = document.querySelector("#status");
+const toastRootEl = document.querySelector("#toast-root");
 const previewEl = document.querySelector("#receipt-preview");
 const fontMetricsEl = document.querySelector("#font-metrics");
 const schedulerStatusEl = document.querySelector("#scheduler-status");
@@ -46,6 +46,7 @@ const fallbackFontMetrics = [
   { font: 9, lineLength: 32, fontWidth: 12 }
 ];
 let fontMetrics = new Map(fallbackFontMetrics.map(metric => [metric.font, metric]));
+let activeLoadingToast = null;
 const scheduleContentOptions = [
   { key: "showWeather",         label: "Погода",          group: "Основное" },
   { key: "showWeatherAdvice",   label: "AI-совет",        group: "Основное" },
@@ -327,9 +328,78 @@ function setBusy(busy) {
   document.querySelectorAll("button").forEach(button => button.disabled = busy);
 }
 
+function toastKind(kind, text) {
+  if (kind === "ok" || kind === "error") {
+    return kind;
+  }
+  return String(text || "").trim().endsWith("...") ? "loading" : "info";
+}
+
+function removeToast(toast) {
+  if (!toast) {
+    return;
+  }
+  if (toast === activeLoadingToast) {
+    activeLoadingToast = null;
+  }
+  toast.remove();
+}
+
+function showToast(kind, text) {
+  if (!toastRootEl) {
+    return;
+  }
+  const message = String(text || "").trim();
+  if (!message) {
+    removeToast(activeLoadingToast);
+    return;
+  }
+
+  const normalizedKind = toastKind(kind, message);
+  if (normalizedKind === "loading" && activeLoadingToast) {
+    const currentMessage = activeLoadingToast.querySelector(".toast-message");
+    if (currentMessage) {
+      currentMessage.textContent = message;
+    }
+    return;
+  }
+
+  if (normalizedKind !== "loading") {
+    removeToast(activeLoadingToast);
+  }
+
+  const toast = document.createElement("div");
+  toast.className = "toast-notification " + normalizedKind;
+  toast.setAttribute("role", normalizedKind === "error" ? "alert" : "status");
+
+  const icon = document.createElement("span");
+  icon.className = "toast-icon";
+  icon.setAttribute("aria-hidden", "true");
+
+  const messageEl = document.createElement("div");
+  messageEl.className = "toast-message";
+  messageEl.textContent = message;
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "toast-close";
+  close.setAttribute("aria-label", "Закрыть уведомление");
+  close.textContent = "x";
+  close.addEventListener("click", () => removeToast(toast));
+
+  toast.append(icon, messageEl, close);
+  toastRootEl.prepend(toast);
+
+  if (normalizedKind === "loading") {
+    activeLoadingToast = toast;
+    return;
+  }
+
+  window.setTimeout(() => removeToast(toast), normalizedKind === "error" ? 7000 : 4200);
+}
+
 function setStatus(kind, text) {
-  statusEl.className = kind;
-  statusEl.textContent = text;
+  showToast(kind, text);
 }
 
 function setWeatherLocationSelected(selected) {

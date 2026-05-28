@@ -124,6 +124,8 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 	for _, want := range []string{
 		`<link rel="stylesheet" href="/static/app.css">`,
 		`<script src="/static/app.js" defer></script>`,
+		`id="toast-root"`,
+		`class="toast-root"`,
 		`id="settings-form"`,
 		`data-section="printer"`,
 		`id="weather-location-results"`,
@@ -156,6 +158,8 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 	}
 	for _, unwanted := range []string{
 		`{{`,
+		`id="status"`,
+		`class="app-status"`,
 		`value="192.168.0.118"`,
 		`id="content-calendar" type="checkbox" checked`,
 		`data-schedule-run-profile`,
@@ -189,8 +193,16 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`[hidden]`,
 				`display: none !important`,
 				`overflow-wrap: anywhere`,
+				`.toast-root {`,
+				`.toast-notification {`,
+				`.toast-notification.loading .toast-icon`,
+				`.toast-notification.ok`,
+				`.toast-notification.error`,
 				`font-size: 16px;`,
 				`.primary-print {`,
+			},
+			unwanted: []string{
+				`.app-status`,
 			},
 		},
 		{
@@ -199,6 +211,10 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 			contains: []string{
 				`fetch("/api/bootstrap")`,
 				`function applyBootstrap`,
+				`const toastRootEl = document.querySelector("#toast-root")`,
+				`function showToast`,
+				`function removeToast`,
+				`function setStatus(kind, text)`,
 				`data-action="preview"`,
 				`data-action="google-disconnect"`,
 				`/api/image-editor/save`,
