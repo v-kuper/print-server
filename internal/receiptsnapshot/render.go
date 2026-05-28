@@ -358,24 +358,7 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
 <body>
   <main>
     <section class="receipt-preview">
-      <article class="receipt-paper" style="--paper-chars: {{.PaperChars}};">
-        {{if .PendingNotice}}<p class="notice">Этот слепок создан, но печать еще не подтверждена.</p>{{end}}
-        {{range .Lines}}
-          {{if .QRCode}}
-          <div class="receipt-line receipt-qr-line align-{{.Alignment}} role-{{.Role}}">
-            {{if .QRDataURL}}<img class="receipt-qr" src="{{.QRDataURL}}" alt="{{.QRCode}}">{{else}}<span class="receipt-line-text">{{.QRCode}}</span>{{end}}
-          </div>
-          {{else if .ImageSrc}}
-          <div class="receipt-line receipt-image-line align-{{.Alignment}} role-{{.Role}}" style="--image-line-height: {{.ImageLineHeight}}px;">
-            <img class="receipt-image" src="{{.ImageSrc}}" alt="" style="width: {{.ImagePreviewWidth}}px; height: {{.ImagePreviewHeight}}px;">
-          </div>
-          {{else}}
-          <div class="receipt-line align-{{.Alignment}} role-{{.Role}}" style="--line-size: {{.LineSize}}px; --line-scale-x: {{.ScaleX}}; --line-scale-y: {{.ScaleY}};">
-            {{if .Link}}<a class="receipt-line-text" href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</a>{{else}}<span class="receipt-line-text">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</span>{{end}}
-          </div>
-          {{end}}
-        {{end}}
-      </article>
+      <article class="receipt-paper" style="--paper-chars: {{.PaperChars}};">{{- if .PendingNotice -}}<p class="notice">Этот слепок создан, но печать еще не подтверждена.</p>{{- end -}}{{- range .Lines -}}{{- if .QRCode -}}<div class="receipt-line receipt-qr-line align-{{.Alignment}} role-{{.Role}}">{{- if .QRDataURL -}}<img class="receipt-qr" src="{{.QRDataURL}}" alt="{{.QRCode}}">{{- else -}}<span class="receipt-line-text">{{.QRCode}}</span>{{- end -}}</div>{{- else if .ImageSrc -}}<div class="receipt-line receipt-image-line align-{{.Alignment}} role-{{.Role}}" style="--image-line-height: {{.ImageLineHeight}}px;"><img class="receipt-image" src="{{.ImageSrc}}" alt="" style="width: {{.ImagePreviewWidth}}px; height: {{.ImagePreviewHeight}}px;"></div>{{- else -}}<div class="receipt-line align-{{.Alignment}} role-{{.Role}}" style="--line-size: {{.LineSize}}px; --line-scale-x: {{.ScaleX}}; --line-scale-y: {{.ScaleY}};">{{- if .Link -}}<a class="receipt-line-text" href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</a>{{- else -}}<span class="receipt-line-text">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</span>{{- end -}}</div>{{- end -}}{{- end -}}</article>
     </section>
   </main>
 </body>

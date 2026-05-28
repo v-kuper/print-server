@@ -1,6 +1,7 @@
 package receiptsnapshot
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,7 @@ func TestRenderSnapshotHTMLGroupsNewsAndEscapesContent(t *testing.T) {
 	if strings.Contains(body, "javascript:alert") {
 		t.Fatalf("unsafe javascript link must not be rendered:\n%s", body)
 	}
+	assertReceiptPaperHasNoWhitespaceNodes(t, body)
 }
 
 func TestRenderSnapshotHTMLShowsPendingNotice(t *testing.T) {
@@ -71,5 +73,22 @@ func TestRenderSnapshotHTMLShowsPendingNotice(t *testing.T) {
 	}
 	if !strings.Contains(string(html), "печать еще не подтверждена") {
 		t.Fatalf("expected pending notice in HTML:\n%s", string(html))
+	}
+}
+
+func assertReceiptPaperHasNoWhitespaceNodes(t *testing.T, body string) {
+	t.Helper()
+	start := strings.Index(body, `<article class="receipt-paper"`)
+	if start < 0 {
+		t.Fatalf("receipt paper not found:\n%s", body)
+	}
+	start = strings.Index(body[start:], ">") + start + 1
+	end := strings.Index(body[start:], "</article>")
+	if end < 0 {
+		t.Fatalf("receipt paper closing tag not found:\n%s", body)
+	}
+	articleBody := body[start : start+end]
+	if regexp.MustCompile(`>\s+<`).MatchString(articleBody) {
+		t.Fatalf("receipt paper must not contain whitespace text nodes between line elements:\n%s", articleBody)
 	}
 }
