@@ -44,6 +44,10 @@ func TestRenderSnapshotHTMLGroupsNewsAndEscapesContent(t *testing.T) {
 	body := string(html)
 
 	for _, want := range []string{
+		`class="receipt-preview"`,
+		`class="receipt-paper"`,
+		`class="receipt-line align-center role-calendar"`,
+		`class="receipt-line-text"`,
 		"25 Мая",
 		"Погода",
 		"Коротко о мире",
@@ -57,6 +61,9 @@ func TestRenderSnapshotHTMLGroupsNewsAndEscapesContent(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected rendered HTML to contain %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, `class="receipt"`) || strings.Contains(body, `class="line `) {
+		t.Fatalf("snapshot must use receipt preview structure:\n%s", body)
 	}
 	if strings.Contains(body, "javascript:alert") {
 		t.Fatalf("unsafe javascript link must not be rendered:\n%s", body)
