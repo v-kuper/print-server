@@ -259,12 +259,15 @@ function applyBootstrap(data) {
   setValue("#calendar-font", style.calendarFont || 0);
   setChecked("#calendar-double-width", style.calendarDoubleWidth);
   setChecked("#calendar-double-height", style.calendarDoubleHeight);
+  setFontRowAlign("calendar", style.calendarAlignment || "center");
   setValue("#temperature-font", style.temperatureFont || 0);
   setChecked("#temperature-double-width", style.temperatureDoubleWidth);
   setChecked("#temperature-double-height", style.temperatureDoubleHeight);
+  setFontRowAlign("temperature", style.temperatureAlignment || "center");
   setValue("#normal-font", style.normalFont || 0);
-  setValue("#text-print-title-font", 0);
-  setValue("#text-print-body-font", 0);
+  setFontRowAlign("normal", style.normalAlignment || "center");
+  renderAllFontRowPreviews();
+  initTextPrintBlocks();
 
   const news = data.news || {};
   setChecked("#news-translate", news.translateTitles);
@@ -613,6 +616,59 @@ function readAlignment(selector, fallback) {
   return ["left", "center", "right"].includes(value) ? value : fallback;
 }
 
+function readFontRowAlign(name) {
+  const btn = document.querySelector(`.font-align-group[data-for="${name}"] .align-btn.active`);
+  return btn ? btn.dataset.align : "center";
+}
+
+function setFontRowAlign(name, value) {
+  const group = document.querySelector(`.font-align-group[data-for="${name}"]`);
+  if (!group) return;
+  const target = ["left", "center", "right"].includes(value) ? value : "center";
+  group.querySelectorAll(".align-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.align === target)
+  );
+}
+
+const fontRowSamples = {
+  calendar: "1 июня · Пятница",
+  temperature: "+24°C",
+  normal: "Коротко о мире"
+};
+
+function renderFontRowPreview(card) {
+  const container = card.querySelector(".font-row-preview");
+  if (!container) return;
+  const name = card.dataset.row;
+  const fontSelect = card.querySelector("[data-font-select]");
+  const font = fontSelect ? (Number.parseInt(fontSelect.value, 10) || 0) : 0;
+  const metric = metricForFont(font);
+  const baseWidth = fallbackFontMetrics[0].fontWidth;
+  const fontWidth = metric.fontWidth || baseWidth;
+  const lineSize = Math.max(10, Math.min(32, 16 * fontWidth / baseWidth));
+  const dwCb = card.querySelector(".font-toggle-input[id$='-double-width']");
+  const dhCb = card.querySelector(".font-toggle-input[id$='-double-height']");
+  const dw = dwCb ? dwCb.checked : false;
+  const dh = dhCb ? dhCb.checked : false;
+  const alignBtn = card.querySelector(".font-align-group .align-btn.active");
+  const alignment = alignBtn ? alignBtn.dataset.align : "center";
+  container.innerHTML = "";
+  const line = document.createElement("div");
+  line.className = "receipt-line align-" + alignment;
+  line.style.setProperty("--line-size", lineSize.toFixed(2) + "px");
+  line.style.setProperty("--line-scale-x", dw ? 2 : 1);
+  line.style.setProperty("--line-scale-y", dh ? 2 : 1);
+  const text = document.createElement("span");
+  text.className = "receipt-line-text";
+  text.textContent = fontRowSamples[name] || "Пример текста";
+  line.appendChild(text);
+  container.appendChild(line);
+}
+
+function renderAllFontRowPreviews() {
+  document.querySelectorAll(".font-row-card[data-row]").forEach(renderFontRowPreview);
+}
+
 function metricForFont(font) {
   return fontMetrics.get(font) || fontMetrics.get(0) || fallbackFontMetrics[0];
 }
@@ -639,6 +695,7 @@ function updateFontControls() {
     }
   });
   fontMetricsEl.textContent = visibleMetrics.map(fontLabel).join("\n");
+  renderAllFontRowPreviews();
 }
 
 async function saveReceiptStyle() {
@@ -654,7 +711,10 @@ async function saveReceiptStyle() {
       calendarDoubleWidth: document.querySelector("#calendar-double-width").checked,
       calendarDoubleHeight: document.querySelector("#calendar-double-height").checked,
       temperatureDoubleWidth: document.querySelector("#temperature-double-width").checked,
-      temperatureDoubleHeight: document.querySelector("#temperature-double-height").checked
+      temperatureDoubleHeight: document.querySelector("#temperature-double-height").checked,
+      calendarAlignment: readFontRowAlign("calendar"),
+      temperatureAlignment: readFontRowAlign("temperature"),
+      normalAlignment: readFontRowAlign("normal")
     })
   });
   const payload = await response.json();
@@ -1583,11 +1643,13 @@ function styledPreviewLines(lines) {
         next.Font = readFont("#calendar-font");
         next.DoubleWidth = document.querySelector("#calendar-double-width").checked;
         next.DoubleHeight = document.querySelector("#calendar-double-height").checked;
+        next.Alignment = readFontRowAlign("calendar");
         break;
       case "temperature":
         next.Font = readFont("#temperature-font");
         next.DoubleWidth = document.querySelector("#temperature-double-width").checked;
         next.DoubleHeight = document.querySelector("#temperature-double-height").checked;
+        next.Alignment = readFontRowAlign("temperature");
         break;
       case "original":
         next.Font = 1;
@@ -1598,6 +1660,7 @@ function styledPreviewLines(lines) {
         next.Font = readFont("#normal-font");
         next.DoubleWidth = false;
         next.DoubleHeight = false;
+        next.Alignment = readFontRowAlign("normal");
         break;
     }
     return next;
@@ -1611,48 +1674,154 @@ function refreshPreviewStyle() {
   renderPreview(styledPreviewLines(lastPreviewLines));
 }
 
+// ─── Block-based text print editor ───────────────────────────
+
+function initTextPrintBlocks() {
+  const container = document.querySelector("#text-print-blocks");
+  if (container && container.children.length === 0) {
+    addTextBlock("text");
+  }
+}
+
+function populateBlockFontSelect(selectEl, selectedFont) {
+  const metrics = Array.from(fontMetrics.values()).sort((a, b) => a.font - b.font);
+  const visible = metrics.length > 0 ? metrics : fallbackFontMetrics;
+  selectEl.replaceChildren(...visible.map(m => {
+    const opt = document.createElement("option");
+    opt.value = String(m.font);
+    opt.textContent = fontLabel(m);
+    return opt;
+  }));
+  selectEl.value = String(selectedFont != null ? selectedFont : 0);
+}
+
+function buildTextBlockToolbar(opts) {
+  const toolbar = document.createElement("div");
+  toolbar.className = "text-block-toolbar";
+
+  const fontSelect = document.createElement("select");
+  fontSelect.className = "text-block-font-select";
+  fontSelect.dataset.fontSelect = "";
+  fontSelect.addEventListener("change", updateTextPrintPreview);
+  populateBlockFontSelect(fontSelect, opts.font || 0);
+
+  const alignGroup = document.createElement("div");
+  alignGroup.className = "align-btn-group";
+  for (const align of ["left", "center", "right"]) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "align-btn" + ((opts.alignment || "left") === align ? " active" : "");
+    btn.dataset.align = align;
+    btn.textContent = align === "left" ? "←" : align === "center" ? "≡" : "→";
+    btn.addEventListener("click", () => {
+      alignGroup.querySelectorAll(".align-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      updateTextPrintPreview();
+    });
+    alignGroup.append(btn);
+  }
+
+  const dwLabel = document.createElement("label");
+  dwLabel.className = "toggle-label";
+  const dwCb = document.createElement("input");
+  dwCb.type = "checkbox";
+  dwCb.className = "text-block-dw";
+  dwCb.checked = Boolean(opts.doubleWidth);
+  dwCb.addEventListener("change", updateTextPrintPreview);
+  dwLabel.append(dwCb, " 2W");
+
+  const dhLabel = document.createElement("label");
+  dhLabel.className = "toggle-label";
+  const dhCb = document.createElement("input");
+  dhCb.type = "checkbox";
+  dhCb.className = "text-block-dh";
+  dhCb.checked = Boolean(opts.doubleHeight);
+  dhCb.addEventListener("change", updateTextPrintPreview);
+  dhLabel.append(dhCb, " 2H");
+
+  toolbar.append(fontSelect, alignGroup, dwLabel, dhLabel);
+  return toolbar;
+}
+
+function createTextBlock(type, opts = {}) {
+  const block = document.createElement("div");
+  block.className = "text-block text-block-" + type;
+
+  const top = document.createElement("div");
+  top.className = "text-block-top";
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "text-block-delete secondary";
+  deleteBtn.textContent = "×";
+  deleteBtn.addEventListener("click", () => {
+    block.remove();
+    updateTextPrintPreview();
+  });
+
+  if (type === "text") {
+    const textarea = document.createElement("textarea");
+    textarea.className = "text-block-textarea";
+    textarea.rows = 2;
+    textarea.placeholder = "Текст...";
+    textarea.value = opts.text || "";
+    textarea.addEventListener("input", updateTextPrintPreview);
+    top.append(textarea, deleteBtn);
+    block.append(top, buildTextBlockToolbar(opts));
+  } else {
+    const label = document.createElement("span");
+    label.className = "text-block-label";
+    label.textContent = type === "separator" ? "--------------------------------" : "Пустая строка";
+    top.append(label, deleteBtn);
+    block.append(top);
+  }
+  return block;
+}
+
+function addTextBlock(type, opts = {}) {
+  const container = document.querySelector("#text-print-blocks");
+  if (!container) return;
+  container.append(createTextBlock(type, opts));
+  updateTextPrintPreview();
+}
+
 function textPrintPayload() {
-  return {
-    title: document.querySelector("#text-print-title").value,
-    body: document.querySelector("#text-print-body").value,
-    titleFont: readFont("#text-print-title-font"),
-    bodyFont: readFont("#text-print-body-font"),
-    titleAlignment: readAlignment("#text-print-title-alignment", "center"),
-    bodyAlignment: readAlignment("#text-print-body-alignment", "left")
-  };
+  const blocks = [];
+  for (const block of document.querySelectorAll("#text-print-blocks .text-block")) {
+    if (block.classList.contains("text-block-separator")) {
+      blocks.push({ text: "--------------------------------", font: 0, alignment: "center", doubleWidth: false, doubleHeight: false });
+    } else if (block.classList.contains("text-block-empty")) {
+      blocks.push({ text: "", font: 0, alignment: "left", doubleWidth: false, doubleHeight: false });
+    } else {
+      const fontSelect = block.querySelector(".text-block-font-select");
+      const activeAlign = block.querySelector(".align-btn.active");
+      const dw = block.querySelector(".text-block-dw");
+      const dh = block.querySelector(".text-block-dh");
+      blocks.push({
+        text: (block.querySelector(".text-block-textarea") || {}).value || "",
+        font: fontSelect ? (parseInt(fontSelect.value, 10) || 0) : 0,
+        alignment: activeAlign ? activeAlign.dataset.align : "left",
+        doubleWidth: dw ? dw.checked : false,
+        doubleHeight: dh ? dh.checked : false,
+      });
+    }
+  }
+  return { blocks };
 }
 
 function textPrintPreviewLines(payload = textPrintPayload()) {
   const lines = [];
-  const title = payload.title.trim();
-  if (title) {
-    lines.push({
-      Text: title,
-      Alignment: payload.titleAlignment,
-      Role: "normal",
-      Font: payload.titleFont,
-      DoubleWidth: false,
-      DoubleHeight: false
-    });
-    lines.push({
-      Text: "",
-      Alignment: payload.bodyAlignment,
-      Role: "normal",
-      Font: payload.bodyFont,
-      DoubleWidth: false,
-      DoubleHeight: false
-    });
-  }
-  const body = payload.body.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  if (body.trim()) {
-    for (const text of body.split("\n")) {
+  for (const block of payload.blocks) {
+    const font = metricForFont(block.font);
+    const text = (block.text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    for (const lineText of text.split("\n")) {
       lines.push({
-        Text: text,
-        Alignment: payload.bodyAlignment,
+        Text: lineText,
+        Alignment: block.alignment || "left",
         Role: "normal",
-        Font: payload.bodyFont,
-        DoubleWidth: false,
-        DoubleHeight: false
+        Font: font,
+        DoubleWidth: block.doubleWidth,
+        DoubleHeight: block.doubleHeight,
       });
     }
   }
@@ -1660,24 +1829,22 @@ function textPrintPreviewLines(payload = textPrintPayload()) {
 }
 
 function updateTextPrintPreview() {
-  renderLinesPreview(textPrintPreviewEl, textPrintPreviewLines(), "#text-print-body-font");
+  renderLinesPreview(textPrintPreviewEl, textPrintPreviewLines(), null);
 }
 
 function clearTextPrint() {
-  setValue("#text-print-title", "");
-  setValue("#text-print-body", "");
-  setValue("#text-print-title-font", 0);
-  setValue("#text-print-body-font", 0);
-  setValue("#text-print-title-alignment", "center");
-  setValue("#text-print-body-alignment", "left");
+  const container = document.querySelector("#text-print-blocks");
+  if (container) container.replaceChildren();
+  addTextBlock("text");
   updateTextPrintPreview();
   setStatus("", "");
 }
 
 async function printText() {
   const payload = textPrintPayload();
-  if (!payload.body.trim()) {
-    setStatus("error", "Введи текст для печати.");
+  const hasText = payload.blocks && payload.blocks.some(b => (b.text || "").trim() !== "");
+  if (!hasText) {
+    setStatus("error", "Добавь хотя бы один блок с текстом.");
     return;
   }
   updateTextPrintPreview();
@@ -1824,16 +1991,14 @@ function bindEventListeners() {
   document.querySelector('[data-action="clear-text-print"]').addEventListener("click", () => {
     clearTextPrint();
   });
-  [
-    "#text-print-title",
-    "#text-print-body",
-    "#text-print-title-font",
-    "#text-print-body-font",
-    "#text-print-title-alignment",
-    "#text-print-body-alignment"
-  ].forEach(selector => {
-    document.querySelector(selector).addEventListener("input", updateTextPrintPreview);
-    document.querySelector(selector).addEventListener("change", updateTextPrintPreview);
+  document.querySelector('[data-action="add-text-block"]').addEventListener("click", () => {
+    addTextBlock("text");
+  });
+  document.querySelector('[data-action="add-separator-block"]').addEventListener("click", () => {
+    addTextBlock("separator");
+  });
+  document.querySelector('[data-action="add-empty-block"]').addEventListener("click", () => {
+    addTextBlock("empty");
   });
   imageEditorFileInput.addEventListener("change", event => {
     loadImageEditorFile(event.target.files && event.target.files[0]).catch(error => {
@@ -1925,8 +2090,11 @@ function bindEventListeners() {
     "#temperature-double-height",
     "#normal-font"
   ].forEach(selector => {
-    document.querySelector(selector).addEventListener("input", refreshPreviewStyle);
-    document.querySelector(selector).addEventListener("change", refreshPreviewStyle);
+    const el = document.querySelector(selector);
+    const card = el.closest(".font-row-card[data-row]");
+    const handler = () => { refreshPreviewStyle(); if (card) renderFontRowPreview(card); };
+    el.addEventListener("input", handler);
+    el.addEventListener("change", handler);
   });
 }
 
@@ -1956,4 +2124,34 @@ async function initializeApp() {
 
 initializeApp().catch(error => {
   setStatus("error", error.message);
+});
+
+// Tab navigation
+(function () {
+  const tabBtns = document.querySelectorAll("[data-tab-target]");
+  const tabPanels = document.querySelectorAll("[data-tab-panel]");
+
+  tabBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      tabPanels.forEach(p => { p.hidden = true; });
+      tabBtns.forEach(b => b.classList.remove("active"));
+      const target = document.querySelector(btn.dataset.tabTarget);
+      if (target) target.hidden = false;
+      btn.classList.add("active");
+    });
+  });
+
+  if (tabBtns.length) tabBtns[0].click();
+}());
+
+// Font row alignment buttons
+document.querySelectorAll(".font-align-group .align-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    btn.closest(".font-align-group").querySelectorAll(".align-btn")
+      .forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    refreshPreviewStyle();
+    const card = btn.closest(".font-row-card[data-row]");
+    if (card) renderFontRowPreview(card);
+  });
 });

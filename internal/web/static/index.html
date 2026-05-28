@@ -3,404 +3,421 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ATOL Go Server</title>
+  <title>ATOL Server</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/app.js" defer></script>
 </head>
 <body>
+  <header class="app-header">
+    <span class="app-logo">ATOL Server</span>
+    <div class="header-actions">
+      <button type="button" class="primary-print" data-action="weather">Напечатать чек</button>
+    </div>
+  </header>
+  <div id="status" class="app-status"></div>
+
   <main>
-    <h1>ATOL Go Server</h1>
-    <div class="layout">
-      <div class="settings-column">
+    <div class="page-layout">
+      <div class="content-area">
+        <nav class="tab-bar" role="tablist">
+          <button class="tab-btn" role="tab" data-tab-target="#tab-printer">Принтер</button>
+          <button class="tab-btn" role="tab" data-tab-target="#tab-receipt">Чек</button>
+          <button class="tab-btn" role="tab" data-tab-target="#tab-editor">Редактор</button>
+          <button class="tab-btn" role="tab" data-tab-target="#tab-schedule">Расписание</button>
+        </nav>
+
         <form id="settings-form">
-          <section class="section" data-section="printer">
-            <h2>Касса</h2>
-            <div class="section-grid">
-              <label>
-                IP address
-                <input id="host" name="host" autocomplete="off" inputmode="decimal" value="">
-              </label>
-              <label>
-                Port
-                <input id="port" name="port" autocomplete="off" inputmode="numeric" value="">
-              </label>
-            </div>
-            <div class="actions printer-actions">
-              <button type="button" class="secondary" data-action="check">Проверить связь</button>
-              <button type="button" class="secondary" data-action="print">Тестовый чек</button>
-            </div>
-          </section>
 
-          <section class="section">
-            <h2>Состав чека</h2>
-            <div class="content-options">
-              <div class="content-group">
-                <div class="content-group-title">Основное</div>
-                <label class="toggle-label">
-                  <input id="content-weather" type="checkbox">
-                  Погода
+          <!-- ─── Tab 1: Принтер ─── -->
+          <div id="tab-printer" data-tab-panel>
+            <section class="section" data-section="printer">
+              <h2>Касса</h2>
+              <div class="section-grid">
+                <label>
+                  IP address
+                  <input id="host" name="host" autocomplete="off" inputmode="decimal" value="">
                 </label>
-                <label class="toggle-label">
-                  <input id="content-weather-advice" type="checkbox">
-                  AI-совет
-                </label>
-                <label class="toggle-label">
-                  <input id="content-motivation-quote" type="checkbox">
-                  AI-цитата
+                <label>
+                  Port
+                  <input id="port" name="port" autocomplete="off" inputmode="numeric" value="">
                 </label>
               </div>
-              <div class="content-group">
-                <div class="content-group-title">Финансы</div>
-                <label class="toggle-label">
-                  <input id="content-ton-portfolio" type="checkbox">
-                  TON
-                </label>
-                <label class="toggle-label">
-                  <input id="content-usd-byn-rate" type="checkbox">
-                  USD/BYN
-                </label>
-                <label class="toggle-label">
-                  <input id="content-bank-rates" type="checkbox">
-                  Курсы в банках
-                </label>
+              <div class="actions printer-actions">
+                <button type="button" class="secondary" data-action="check">Проверить связь</button>
+                <button type="button" class="secondary" data-action="print">Тестовый чек</button>
               </div>
-              <div class="content-group">
-                <div class="content-group-title">Google</div>
-                <label class="toggle-label">
-                  <input id="content-mail" type="checkbox">
-                  Почта
-                </label>
-                <label class="toggle-label">
-                  <input id="content-calendar" type="checkbox">
-                  Календарь
-                </label>
-              </div>
-              <div class="content-group">
-                <div class="content-group-title">Новости</div>
-                <label class="toggle-label">
-                  <input id="content-news" type="checkbox">
-                  Коротко о мире
-                </label>
-              </div>
-            </div>
-          </section>
+            </section>
+          </div>
 
-          <section class="section">
-            <h2>Погода</h2>
-            <div class="section-grid">
-              <label class="wide">
-                Город
-                <div class="weather-search-row">
-                  <input id="weather-name" name="weather-name" autocomplete="off" value="" data-weather-location-selected="true">
-                  <button type="button" class="secondary" data-action="search-weather-location">Найти</button>
+          <!-- ─── Tab 2: Чек ─── -->
+          <div id="tab-receipt" data-tab-panel hidden>
+
+            <section class="section">
+              <h2>Состав чека</h2>
+              <div class="content-options">
+                <div class="content-group">
+                  <div class="content-group-title">Основное</div>
+                  <label class="toggle-label">
+                    <input id="content-weather" type="checkbox">
+                    Погода
+                  </label>
+                  <label class="toggle-label">
+                    <input id="content-weather-advice" type="checkbox">
+                    AI-совет
+                  </label>
+                  <label class="toggle-label">
+                    <input id="content-motivation-quote" type="checkbox">
+                    AI-цитата
+                  </label>
                 </div>
-              </label>
-              <div id="weather-location-results" class="location-results wide"></div>
-              <p id="weather-location-help" class="section-note wide">Начни вводить город и выбери подходящий вариант из списка. Координаты заполнятся автоматически.</p>
-              <label>
-                Latitude
-                <input id="weather-latitude" name="weather-latitude" autocomplete="off" inputmode="decimal" value="" readonly>
-              </label>
-              <label>
-                Longitude
-                <input id="weather-longitude" name="weather-longitude" autocomplete="off" inputmode="decimal" value="" readonly>
-              </label>
-            </div>
-          </section>
-
-          <section class="section">
-            <div class="section-header">
-              <h2>AI-модель</h2>
-              <button type="button" class="secondary" data-action="test-motivation">Проверить AI</button>
-            </div>
-            <div class="section-grid">
-              <label>
-                Base URL
-                <input id="motivation-base-url" autocomplete="off" value="">
-              </label>
-              <label>
-                Model
-                <input id="motivation-model" autocomplete="off" value="">
-              </label>
-            </div>
-            <div id="motivation-status" class="motivation-status">Модель будет использоваться для включенных AI-блоков в составе чека.</div>
-          </section>
-
-          <section class="section">
-            <div class="section-header">
-              <h2>Google</h2>
-              <div class="section-actions">
-                <a class="button-link secondary" href="/api/google/auth/start">Авторизовать</a>
-                <button type="button" class="secondary" data-action="google-disconnect">Отключить</button>
+                <div class="content-group">
+                  <div class="content-group-title">Финансы</div>
+                  <label class="toggle-label">
+                    <input id="content-ton-portfolio" type="checkbox">
+                    TON
+                  </label>
+                  <label class="toggle-label">
+                    <input id="content-usd-byn-rate" type="checkbox">
+                    USD/BYN
+                  </label>
+                  <label class="toggle-label">
+                    <input id="content-bank-rates" type="checkbox">
+                    Курсы в банках
+                  </label>
+                </div>
+                <div class="content-group">
+                  <div class="content-group-title">Google</div>
+                  <label class="toggle-label">
+                    <input id="content-mail" type="checkbox">
+                    Почта
+                  </label>
+                  <label class="toggle-label">
+                    <input id="content-calendar" type="checkbox">
+                    Календарь
+                  </label>
+                </div>
+                <div class="content-group">
+                  <div class="content-group-title">Новости</div>
+                  <label class="toggle-label">
+                    <input id="content-news" type="checkbox">
+                    Коротко о мире
+                  </label>
+                </div>
               </div>
-            </div>
-            <div id="google-status" class="motivation-status"></div>
-            <p class="section-note">credentials.json: <span id="google-credentials-path"></span></p>
-            <p class="section-note">token.json: <span id="google-token-path"></span></p>
-          </section>
+            </section>
 
-          <section class="section">
-            <div class="section-header">
-              <h2>TON</h2>
-              <div class="section-actions">
-                <button type="button" class="secondary" data-action="edit-finance">Редактировать</button>
-                <button type="button" data-action="save-finance" class="hidden">Сохранить TON</button>
-                <button type="button" class="secondary hidden" data-action="cancel-finance">Отмена</button>
+            <div class="group-label">Данные</div>
+
+            <section class="section">
+              <h2>Погода</h2>
+              <div class="section-grid">
+                <label class="wide">
+                  Город
+                  <div class="weather-search-row">
+                    <input id="weather-name" name="weather-name" autocomplete="off" value="" data-weather-location-selected="true">
+                    <button type="button" class="secondary" data-action="search-weather-location">Найти</button>
+                  </div>
+                </label>
+                <div id="weather-location-results" class="location-results wide"></div>
+                <p id="weather-location-help" class="section-note wide">Начни вводить город и выбери подходящий вариант из списка. Координаты заполнятся автоматически.</p>
+                <label>
+                  Latitude
+                  <input id="weather-latitude" name="weather-latitude" autocomplete="off" inputmode="decimal" value="" readonly>
+                </label>
+                <label>
+                  Longitude
+                  <input id="weather-longitude" name="weather-longitude" autocomplete="off" inputmode="decimal" value="" readonly>
+                </label>
               </div>
-            </div>
-            <div class="section-grid">
-              <label>
-                Количество TON
-                <input id="ton-amount" name="ton-amount" autocomplete="off" inputmode="decimal" value="" data-finance-input readonly>
-              </label>
-              <label>
-                Куплено на, USD
-                <input id="ton-invested" name="ton-invested" autocomplete="off" inputmode="decimal" value="" data-finance-input readonly>
-              </label>
-            </div>
-          </section>
+            </section>
 
-          <details class="section font-settings">
-            <summary class="font-summary">Шрифт чека</summary>
-            <p class="section-note">Эти поля напрямую соответствуют параметрам ATOL printText: LIBFPTR_PARAM_FONT, LIBFPTR_PARAM_FONT_DOUBLE_WIDTH и LIBFPTR_PARAM_FONT_DOUBLE_HEIGHT. Метрики ниже читаются через LIBFPTR_DT_FONT_INFO.</p>
-            <div class="style-row">
-              <strong>Дата</strong>
-              <label>
-                LIBFPTR_PARAM_FONT
-                <select id="calendar-font" data-font-select>
-
-                </select>
-              </label>
-              <label class="toggle-label">
-                <input id="calendar-double-width" type="checkbox">
-                Двойная ширина
-              </label>
-              <label class="toggle-label">
-                <input id="calendar-double-height" type="checkbox">
-                Двойная высота
-              </label>
-            </div>
-            <div class="style-row">
-              <strong>Температура</strong>
-              <label>
-                LIBFPTR_PARAM_FONT
-                <select id="temperature-font" data-font-select>
-
-                </select>
-              </label>
-              <label class="toggle-label">
-                <input id="temperature-double-width" type="checkbox">
-                Двойная ширина
-              </label>
-              <label class="toggle-label">
-                <input id="temperature-double-height" type="checkbox">
-                Двойная высота
-              </label>
-            </div>
-            <div class="style-row">
-              <strong>Информация</strong>
-              <label>
-                LIBFPTR_PARAM_FONT
-                <select id="normal-font" data-font-select>
-
-                </select>
-              </label>
-              <span></span>
-              <span></span>
-            </div>
-            <div class="font-tools">
-              <button type="button" class="secondary" data-action="fonts">Загрузить шрифты ККТ</button>
-              <div id="font-metrics" class="font-metrics">Пока используется приблизительная сетка. После загрузки сервер спросит у ККТ длину строки и ширину символа для каждого шрифта.</div>
-            </div>
-          </details>
-
-          <section class="section">
-            <h2>Коротко о мире</h2>
-            <label class="switch-label">
-              <input id="news-translate" class="switch-input" type="checkbox">
-              <span class="switch-track" aria-hidden="true"></span>
-              <span>Переводить английские заголовки через AI</span>
-            </label>
-            <div id="news-source-list" class="news-source-list"></div>
-          </section>
-
-          <section class="section text-print-section">
-            <div class="section-header">
-              <h2>Текст на чек</h2>
-              <div class="section-actions">
-                <button type="button" class="secondary" data-action="print-text">Напечатать текст</button>
-                <button type="button" class="secondary" data-action="clear-text-print">Очистить</button>
+            <section class="section">
+              <div class="section-header">
+                <h2>TON</h2>
+                <div class="section-actions">
+                  <button type="button" class="secondary" data-action="edit-finance">Редактировать</button>
+                  <button type="button" data-action="save-finance" class="hidden">Сохранить TON</button>
+                  <button type="button" class="secondary hidden" data-action="cancel-finance">Отмена</button>
+                </div>
               </div>
-            </div>
-            <div class="section-grid">
-              <label class="wide">
-                Заголовок
-                <input id="text-print-title" type="text" placeholder="Заметка">
-              </label>
-              <label>
-                Шрифт заголовка
-                <select id="text-print-title-font" data-font-select></select>
-              </label>
-              <label>
-                Выравнивание заголовка
-                <select id="text-print-title-alignment">
-                  <option value="left">Слева</option>
-                  <option value="center" selected>По центру</option>
-                  <option value="right">Справа</option>
-                </select>
-              </label>
-              <label class="wide">
-                Текст
-                <textarea id="text-print-body" rows="5" placeholder="Текст заметки"></textarea>
-              </label>
-              <label>
-                Шрифт текста
-                <select id="text-print-body-font" data-font-select></select>
-              </label>
-              <label>
-                Выравнивание текста
-                <select id="text-print-body-alignment">
-                  <option value="left" selected>Слева</option>
-                  <option value="center">По центру</option>
-                  <option value="right">Справа</option>
-                </select>
-              </label>
-            </div>
-            <div id="text-print-preview" class="receipt-preview text-print-preview"></div>
-          </section>
-
-          <section class="section image-editor-section">
-            <div class="section-header">
-              <h2>Изображение на чек</h2>
-              <div class="section-actions">
-                <button type="button" class="secondary" data-action="new-image-editor-canvas">Новый холст</button>
-                <button type="button" class="secondary" data-action="save-image-editor">Сохранить</button>
-                <button type="button" class="secondary" data-action="print-image-editor">Напечатать изображение</button>
-                <button type="button" class="secondary" data-action="clear-image-editor">Очистить</button>
+              <div class="section-grid">
+                <label>
+                  Количество TON
+                  <input id="ton-amount" name="ton-amount" autocomplete="off" inputmode="decimal" value="" data-finance-input readonly>
+                </label>
+                <label>
+                  Куплено на, USD
+                  <input id="ton-invested" name="ton-invested" autocomplete="off" inputmode="decimal" value="" data-finance-input readonly>
+                </label>
               </div>
-            </div>
-            <div class="section-grid image-editor-controls">
-              <label class="wide">
-                Файл
-                <input id="image-editor-file" type="file" accept="image/png,image/jpeg,image/webp">
-              </label>
-              <label>
-                Высота холста
-                <input id="image-editor-canvas-height" type="number" min="32" max="2048" step="16" value="160">
-              </label>
-              <label>
-                Поворот
-                <select id="image-editor-rotation">
-                  <option value="0">0°</option>
-                  <option value="90">90°</option>
-                  <option value="180">180°</option>
-                  <option value="270">270°</option>
-                </select>
-              </label>
-              <label>
-                Яркость
-                <input id="image-editor-brightness" type="range" min="-100" max="100" value="0">
-              </label>
-              <label>
-                Контраст
-                <input id="image-editor-contrast" type="range" min="-100" max="100" value="0">
-              </label>
-              <label>
-                Порог
-                <input id="image-editor-threshold" type="range" min="0" max="255" value="128">
-              </label>
-              <label class="toggle-label">
-                <input id="image-editor-dither" type="checkbox" checked>
-                Dither
-              </label>
-              <label class="toggle-label">
-                <input id="image-editor-invert" type="checkbox">
-                Инверсия
-              </label>
-              <label>
-                Инструмент
-                <select id="image-editor-tool">
-                  <option value="brush">Кисть</option>
-                  <option value="eraser">Ластик</option>
-                  <option value="line">Линия</option>
-                  <option value="rectangle">Прямоугольник</option>
-                  <option value="filled-rectangle">Заливка прямоугольника</option>
-                  <option value="ellipse">Овал</option>
-                  <option value="filled-ellipse">Заливка овала</option>
-                </select>
-              </label>
-              <label>
-                Размер кисти
-                <input id="image-editor-brush" type="range" min="1" max="24" value="6">
-              </label>
-            </div>
-            <div class="image-editor-canvases">
-              <div class="image-editor-canvas-block">
-                <div class="image-editor-canvas-title">Исходник</div>
-                <canvas id="image-editor-source" width="384" height="160"></canvas>
-              </div>
-              <div class="image-editor-canvas-block">
-                <div class="image-editor-canvas-title">Pixel buffer 384 px</div>
-                <canvas id="image-editor-result" width="384" height="160"></canvas>
-              </div>
-            </div>
-            <div id="image-editor-status" class="image-editor-status">Нет сохраненного изображения.</div>
-          </section>
+            </section>
 
-          <section class="section">
-            <h2>Расписание</h2>
-            <div class="mode-options">
-              <label>
-                <input type="radio" name="schedule-mode" value="interval">
-                Интервал
-              </label>
-              <label>
-                <input type="radio" name="schedule-mode" value="daily_times">
-                Точное время и состав
-              </label>
-            </div>
-            <div id="schedule-interval-panel" class="section-grid">
-              <label>
-                Печатать каждые
-                <select id="schedule-interval">
-
-                </select>
-              </label>
-            </div>
-            <div id="schedule-times-panel">
-              <div id="schedule-run-header" class="schedule-run-header">
-                <span>Время</span>
-                <span>Состав печати</span>
+            <section class="section">
+              <div class="section-header">
+                <h2>Google</h2>
+                <div class="section-actions">
+                  <a class="button-link secondary" href="/api/google/auth/start">Авторизовать</a>
+                  <button type="button" class="secondary" data-action="google-disconnect">Отключить</button>
+                </div>
               </div>
-              <div id="schedule-time-list" class="schedule-time-list">
+              <div id="google-status" class="motivation-status"></div>
+              <p class="section-note">credentials.json: <span id="google-credentials-path"></span></p>
+              <p class="section-note">token.json: <span id="google-token-path"></span></p>
+            </section>
 
+            <section class="section">
+              <div class="section-header">
+                <h2>AI-модель</h2>
+                <button type="button" class="secondary" data-action="test-motivation">Проверить AI</button>
+              </div>
+              <div class="section-grid">
+                <label>
+                  Base URL
+                  <input id="motivation-base-url" autocomplete="off" value="">
+                </label>
+                <label>
+                  Model
+                  <input id="motivation-model" autocomplete="off" value="">
+                </label>
+              </div>
+              <div id="motivation-status" class="motivation-status">Модель будет использоваться для включенных AI-блоков в составе чека.</div>
+            </section>
+
+            <div class="group-label">Контент</div>
+
+            <section class="section">
+              <h2>Коротко о мире</h2>
+              <label class="switch-label">
+                <input id="news-translate" class="switch-input" type="checkbox">
+                <span class="switch-track" aria-hidden="true"></span>
+                <span>Переводить английские заголовки через AI</span>
+              </label>
+              <div id="news-source-list" class="news-source-list"></div>
+            </section>
+
+            <div class="group-label">Оформление</div>
+
+            <details class="section font-settings">
+              <summary class="font-summary">Шрифт чека</summary>
+
+              <div class="font-cards">
+                <div class="font-row-card" data-row="calendar">
+                  <div class="font-row-label">Дата</div>
+                  <div class="font-row-toolbar">
+                    <select id="calendar-font" data-font-select class="font-row-select"></select>
+                    <div class="align-btn-group font-align-group" data-for="calendar">
+                      <button type="button" class="align-btn" data-align="left" title="Влево">←</button>
+                      <button type="button" class="align-btn active" data-align="center" title="По центру">≡</button>
+                      <button type="button" class="align-btn" data-align="right" title="Вправо">→</button>
+                    </div>
+                    <div class="font-toggle-group">
+                      <label class="font-toggle-btn" title="Двойная ширина">
+                        <input id="calendar-double-width" type="checkbox" class="font-toggle-input">
+                        <span class="font-toggle-face">2W</span>
+                      </label>
+                      <label class="font-toggle-btn" title="Двойная высота">
+                        <input id="calendar-double-height" type="checkbox" class="font-toggle-input">
+                        <span class="font-toggle-face">2H</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="font-row-preview"></div>
+                </div>
+
+                <div class="font-row-card" data-row="temperature">
+                  <div class="font-row-label">Температура</div>
+                  <div class="font-row-toolbar">
+                    <select id="temperature-font" data-font-select class="font-row-select"></select>
+                    <div class="align-btn-group font-align-group" data-for="temperature">
+                      <button type="button" class="align-btn" data-align="left" title="Влево">←</button>
+                      <button type="button" class="align-btn active" data-align="center" title="По центру">≡</button>
+                      <button type="button" class="align-btn" data-align="right" title="Вправо">→</button>
+                    </div>
+                    <div class="font-toggle-group">
+                      <label class="font-toggle-btn" title="Двойная ширина">
+                        <input id="temperature-double-width" type="checkbox" class="font-toggle-input">
+                        <span class="font-toggle-face">2W</span>
+                      </label>
+                      <label class="font-toggle-btn" title="Двойная высота">
+                        <input id="temperature-double-height" type="checkbox" class="font-toggle-input">
+                        <span class="font-toggle-face">2H</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="font-row-preview"></div>
+                </div>
+
+                <div class="font-row-card" data-row="normal">
+                  <div class="font-row-label">Информация</div>
+                  <div class="font-row-toolbar">
+                    <select id="normal-font" data-font-select class="font-row-select"></select>
+                    <div class="align-btn-group font-align-group" data-for="normal">
+                      <button type="button" class="align-btn" data-align="left" title="Влево">←</button>
+                      <button type="button" class="align-btn active" data-align="center" title="По центру">≡</button>
+                      <button type="button" class="align-btn" data-align="right" title="Вправо">→</button>
+                    </div>
+                  </div>
+                  <div class="font-row-preview"></div>
+                </div>
+              </div>
+
+              <div class="font-tools">
+                <button type="button" class="secondary" data-action="fonts">Загрузить шрифты ККТ</button>
+                <div id="font-metrics" class="font-metrics">Пока используется приблизительная сетка. После загрузки сервер спросит у ККТ длину строки и ширину символа для каждого шрифта.</div>
+              </div>
+            </details>
+
+          </div>
+
+          <!-- ─── Tab 3: Редактор ─── -->
+          <div id="tab-editor" data-tab-panel hidden>
+
+            <section class="section text-print-section">
+              <div class="section-header">
+                <h2>Текст на чек</h2>
+                <div class="section-actions">
+                  <button type="button" class="secondary" data-action="print-text">Напечатать текст</button>
+                  <button type="button" class="secondary" data-action="clear-text-print">Очистить</button>
+                </div>
+              </div>
+              <div id="text-print-blocks" class="text-print-blocks"></div>
+              <div class="text-print-add-row">
+                <button type="button" class="secondary" data-action="add-text-block">+ Текст</button>
+                <button type="button" class="secondary" data-action="add-separator-block">─── Разделитель</button>
+                <button type="button" class="secondary" data-action="add-empty-block">Пустая строка</button>
+              </div>
+              <div id="text-print-preview" class="receipt-preview text-print-preview"></div>
+            </section>
+
+            <section class="section image-editor-section">
+              <div class="section-header">
+                <h2>Изображение на чек</h2>
+                <div class="section-actions">
+                  <button type="button" class="secondary" data-action="new-image-editor-canvas">Новый холст</button>
+                  <button type="button" class="secondary" data-action="save-image-editor">Сохранить</button>
+                  <button type="button" class="secondary" data-action="print-image-editor">Напечатать изображение</button>
+                  <button type="button" class="secondary" data-action="clear-image-editor">Очистить</button>
+                </div>
+              </div>
+              <div class="section-grid image-editor-controls">
+                <label class="wide">
+                  Файл
+                  <input id="image-editor-file" type="file" accept="image/png,image/jpeg,image/webp">
+                </label>
+                <label>
+                  Высота холста
+                  <input id="image-editor-canvas-height" type="number" min="32" max="2048" step="16" value="160">
+                </label>
+                <label>
+                  Поворот
+                  <select id="image-editor-rotation">
+                    <option value="0">0°</option>
+                    <option value="90">90°</option>
+                    <option value="180">180°</option>
+                    <option value="270">270°</option>
+                  </select>
+                </label>
+                <label>
+                  Яркость
+                  <input id="image-editor-brightness" type="range" min="-100" max="100" value="0">
+                </label>
+                <label>
+                  Контраст
+                  <input id="image-editor-contrast" type="range" min="-100" max="100" value="0">
+                </label>
+                <label>
+                  Порог
+                  <input id="image-editor-threshold" type="range" min="0" max="255" value="128">
+                </label>
+                <label class="toggle-label">
+                  <input id="image-editor-dither" type="checkbox" checked>
+                  Dither
+                </label>
+                <label class="toggle-label">
+                  <input id="image-editor-invert" type="checkbox">
+                  Инверсия
+                </label>
+                <label>
+                  Инструмент
+                  <select id="image-editor-tool">
+                    <option value="brush">Кисть</option>
+                    <option value="eraser">Ластик</option>
+                    <option value="line">Линия</option>
+                    <option value="rectangle">Прямоугольник</option>
+                    <option value="filled-rectangle">Заливка прямоугольника</option>
+                    <option value="ellipse">Овал</option>
+                    <option value="filled-ellipse">Заливка овала</option>
+                  </select>
+                </label>
+                <label>
+                  Размер кисти
+                  <input id="image-editor-brush" type="range" min="1" max="24" value="6">
+                </label>
+              </div>
+              <div class="image-editor-canvases">
+                <div class="image-editor-canvas-block">
+                  <div class="image-editor-canvas-title">Исходник</div>
+                  <canvas id="image-editor-source" width="384" height="160"></canvas>
+                </div>
+                <div class="image-editor-canvas-block">
+                  <div class="image-editor-canvas-title">Pixel buffer 384 px</div>
+                  <canvas id="image-editor-result" width="384" height="160"></canvas>
+                </div>
+              </div>
+              <div id="image-editor-status" class="image-editor-status">Нет сохраненного изображения.</div>
+            </section>
+
+          </div>
+
+          <!-- ─── Tab 4: Расписание ─── -->
+          <div id="tab-schedule" data-tab-panel hidden>
+            <section class="section">
+              <h2>Расписание</h2>
+              <div class="mode-options">
+                <label>
+                  <input type="radio" name="schedule-mode" value="interval">
+                  Интервал
+                </label>
+                <label>
+                  <input type="radio" name="schedule-mode" value="daily_times">
+                  Точное время и состав
+                </label>
+              </div>
+              <div id="schedule-interval-panel" class="section-grid">
+                <label>
+                  Печатать каждые
+                  <select id="schedule-interval"></select>
+                </label>
+              </div>
+              <div id="schedule-times-panel">
+                <div id="schedule-run-header" class="schedule-run-header">
+                  <span>Время</span>
+                  <span>Состав печати</span>
+                </div>
+                <div id="schedule-time-list" class="schedule-time-list"></div>
+                <div class="actions">
+                  <button type="button" class="secondary" data-action="add-schedule-time">Добавить время</button>
+                </div>
               </div>
               <div class="actions">
-                <button type="button" class="secondary" data-action="add-schedule-time">Добавить время</button>
+                <button type="button" data-action="save-schedule">Сохранить расписание</button>
+                <button type="button" class="secondary" data-action="stop-schedule">Остановить расписание</button>
               </div>
-            </div>
-            <div class="actions">
-              <button type="button" data-action="save-schedule">Сохранить расписание</button>
-              <button type="button" class="secondary" data-action="stop-schedule">Остановить расписание</button>
-            </div>
-            <div id="scheduler-status" class="scheduler-status">Статус расписания загружается...</div>
-          </section>
-        </form>
+              <div id="scheduler-status" class="scheduler-status">Статус расписания загружается...</div>
+            </section>
+          </div>
 
-        <div class="actions main-actions">
-          <button type="button" class="primary-print" data-action="weather">Напечатать чек</button>
-        </div>
-        <div id="status"></div>
+        </form>
       </div>
 
       <aside class="preview-panel">
         <section class="section">
           <div class="section-header">
             <h2>Превью</h2>
-            <button type="button" class="secondary" data-action="preview">Показать превью</button>
+            <button type="button" class="secondary" data-action="preview">Обновить</button>
           </div>
           <div id="receipt-preview" class="receipt-preview">
-            <div class="receipt-empty">Нажми «Показать превью», чтобы собрать чек с включенными блоками без печати на кассе.</div>
+            <div class="receipt-empty">Нажми «Обновить», чтобы собрать чек с включенными блоками без печати на кассе.</div>
           </div>
         </section>
       </aside>

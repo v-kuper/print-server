@@ -137,16 +137,16 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`data-action="new-image-editor-canvas"`,
 		`data-action="save-image-editor"`,
 		`data-action="print-image-editor"`,
-		`id="text-print-title"`,
-		`id="text-print-body"`,
-		`id="text-print-title-font"`,
-		`id="text-print-body-font"`,
-		`id="text-print-title-alignment"`,
-		`id="text-print-body-alignment"`,
+		`id="text-print-blocks"`,
+		`data-action="add-text-block"`,
+		`data-action="add-separator-block"`,
 		`data-action="print-text"`,
 		`value="rectangle"`,
 		`value="ellipse"`,
-		`LIBFPTR_PARAM_FONT`,
+		`id="calendar-font"`,
+		`id="temperature-font"`,
+		`id="normal-font"`,
+		`id="calendar-double-width"`,
 		`data-action="weather"`,
 	} {
 		if !bytes.Contains([]byte(body), []byte(want)) {
@@ -182,7 +182,7 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 			path:        "/static/app.css",
 			contentType: "text/css; charset=utf-8",
 			contains: []string{
-				`.layout { grid-template-columns: minmax(0, 1fr); }`,
+				`.page-layout {`,
 				`.section-grid { grid-template-columns: minmax(0, 1fr); }`,
 				`.weather-search-row { grid-template-columns: minmax(0, 1fr); }`,
 				`[hidden]`,
@@ -686,7 +686,6 @@ func TestIndexPagePlacesPreviewButtonInPreviewPanel(t *testing.T) {
 	body := response.Body.String()
 	panelIndex := bytes.Index([]byte(body), []byte(`class="preview-panel"`))
 	previewButtonIndex := bytes.Index([]byte(body), []byte(`data-action="preview"`))
-	mainActionsIndex := bytes.Index([]byte(body), []byte(`<div class="actions main-actions">`))
 	previewPanelEnd := -1
 	if panelIndex >= 0 {
 		previewPanelEnd = panelIndex + bytes.Index([]byte(body[panelIndex:]), []byte(`</aside>`))
@@ -696,13 +695,6 @@ func TestIndexPagePlacesPreviewButtonInPreviewPanel(t *testing.T) {
 	}
 	if previewPanelEnd < panelIndex || previewButtonIndex < panelIndex || previewButtonIndex > previewPanelEnd {
 		t.Fatalf("expected preview button to live inside preview panel")
-	}
-	if mainActionsIndex < 0 {
-		t.Fatal("expected bottom action row to be marked")
-	}
-	mainActionsEnd := mainActionsIndex + bytes.Index([]byte(body[mainActionsIndex:]), []byte(`</div>`))
-	if mainActionsEnd > mainActionsIndex && bytes.Contains([]byte(body[mainActionsIndex:mainActionsEnd]), []byte(`data-action="preview"`)) {
-		t.Fatal("expected preview button to be removed from bottom action row")
 	}
 }
 
@@ -722,7 +714,6 @@ func TestIndexPagePlacesPrinterActionsInCashSection(t *testing.T) {
 	cashSectionIndex := bytes.Index([]byte(body), []byte(`data-section="printer"`))
 	checkButtonIndex := bytes.Index([]byte(body), []byte(`data-action="check"`))
 	testPrintButtonIndex := bytes.Index([]byte(body), []byte(`data-action="print"`))
-	mainActionsIndex := bytes.Index([]byte(body), []byte(`<div class="actions main-actions">`))
 	if cashSectionIndex < 0 || checkButtonIndex < 0 || testPrintButtonIndex < 0 {
 		t.Fatal("expected cash section, check button, and test receipt button in page")
 	}
@@ -732,18 +723,6 @@ func TestIndexPagePlacesPrinterActionsInCashSection(t *testing.T) {
 	}
 	if testPrintButtonIndex < cashSectionIndex || testPrintButtonIndex > cashSectionEnd {
 		t.Fatal("expected test receipt button to live inside cash section")
-	}
-	if mainActionsIndex < 0 {
-		t.Fatal("expected bottom action row to be marked")
-	}
-	mainActionsEnd := mainActionsIndex + bytes.Index([]byte(body[mainActionsIndex:]), []byte(`</div>`))
-	if mainActionsEnd > mainActionsIndex {
-		mainActions := []byte(body[mainActionsIndex:mainActionsEnd])
-		for _, action := range [][]byte{[]byte(`data-action="check"`), []byte(`data-action="print"`)} {
-			if bytes.Contains(mainActions, action) {
-				t.Fatalf("expected %s to be removed from bottom action row", action)
-			}
-		}
 	}
 }
 
@@ -760,21 +739,17 @@ func TestIndexPageMakesDailyPrintThePrimaryBottomAction(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
 	}
 	body := response.Body.String()
-	mainActionsIndex := bytes.Index([]byte(body), []byte(`<div class="actions main-actions">`))
+	headerIndex := bytes.Index([]byte(body), []byte(`class="app-header"`))
 	weatherButtonIndex := bytes.Index([]byte(body), []byte(`data-action="weather"`))
-	if mainActionsIndex < 0 || weatherButtonIndex < 0 {
-		t.Fatal("expected bottom action row and daily print button in page")
+	if headerIndex < 0 || weatherButtonIndex < 0 {
+		t.Fatal("expected app header and daily print button in page")
 	}
-	mainActionsEnd := mainActionsIndex + bytes.Index([]byte(body[mainActionsIndex:]), []byte(`</div>`))
-	if mainActionsEnd < mainActionsIndex || weatherButtonIndex < mainActionsIndex || weatherButtonIndex > mainActionsEnd {
-		t.Fatal("expected daily print button to live inside bottom action row")
-	}
-	mainActions := body[mainActionsIndex:mainActionsEnd]
 	if !bytes.Contains([]byte(body), []byte(`class="primary-print" data-action="weather"`)) {
 		t.Fatalf("expected index page to contain primary daily print button")
 	}
-	if bytes.Count([]byte(mainActions), []byte(`<button`)) != 1 {
-		t.Fatalf("expected bottom action row to contain only daily print button, got %q", mainActions)
+	headerEnd := headerIndex + bytes.Index([]byte(body[headerIndex:]), []byte(`</header>`))
+	if headerEnd < headerIndex || weatherButtonIndex < headerIndex || weatherButtonIndex > headerEnd {
+		t.Fatal("expected daily print button to live inside app header")
 	}
 }
 
@@ -877,7 +852,7 @@ func TestPrintTextEndpointPrintsFormattedText(t *testing.T) {
 	gateway := &fakePrinter{}
 	server := NewServer(store, gateway, fixedClock)
 
-	body := bytes.NewBufferString(`{"title":"Заметка","body":"Первая строка\n\nВторая строка","titleFont":2,"bodyFont":1,"titleAlignment":"center","bodyAlignment":"left"}`)
+	body := bytes.NewBufferString(`{"blocks":[{"text":"Заметка","font":2,"alignment":"center"},{"text":"","font":1,"alignment":"left"},{"text":"Первая строка\n\nВторая строка","font":1,"alignment":"left"}]}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/print/text", body)
 	response := httptest.NewRecorder()
 
@@ -914,16 +889,20 @@ func TestPrintTextEndpointRejectsInvalidRequests(t *testing.T) {
 		body string
 	}{
 		{
-			name: "empty body",
-			body: `{"title":"Заметка","body":"   ","titleFont":0,"bodyFont":0,"titleAlignment":"center","bodyAlignment":"left"}`,
+			name: "empty blocks",
+			body: `{"blocks":[]}`,
+		},
+		{
+			name: "all empty text",
+			body: `{"blocks":[{"text":"   ","font":0,"alignment":"left"}]}`,
 		},
 		{
 			name: "bad alignment",
-			body: `{"title":"Заметка","body":"Текст","titleFont":0,"bodyFont":0,"titleAlignment":"middle","bodyAlignment":"left"}`,
+			body: `{"blocks":[{"text":"Текст","font":0,"alignment":"middle"}]}`,
 		},
 		{
 			name: "bad font",
-			body: `{"title":"Заметка","body":"Текст","titleFont":10,"bodyFont":0,"titleAlignment":"center","bodyAlignment":"left"}`,
+			body: `{"blocks":[{"text":"Текст","font":10,"alignment":"left"}]}`,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -946,7 +925,7 @@ func TestPrintTextEndpointReturnsBadGatewayWhenPrinterFails(t *testing.T) {
 		fixedClock,
 	)
 
-	body := bytes.NewBufferString(`{"title":"","body":"Текст","titleFont":0,"bodyFont":0,"titleAlignment":"center","bodyAlignment":"left"}`)
+	body := bytes.NewBufferString(`{"blocks":[{"text":"Текст","font":0,"alignment":"left"}]}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/print/text", body)
 	response := httptest.NewRecorder()
 

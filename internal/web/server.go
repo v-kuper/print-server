@@ -195,13 +195,16 @@ type imageEditorSaveRequest struct {
 	PreviewPNG string         `json:"previewPng"`
 }
 
+type textPrintBlock struct {
+	Text         string `json:"text"`
+	Font         int    `json:"font"`
+	Alignment    string `json:"alignment"`
+	DoubleWidth  bool   `json:"doubleWidth"`
+	DoubleHeight bool   `json:"doubleHeight"`
+}
+
 type textPrintRequest struct {
-	Title          string `json:"title"`
-	Body           string `json:"body"`
-	TitleFont      int    `json:"titleFont"`
-	BodyFont       int    `json:"bodyFont"`
-	TitleAlignment string `json:"titleAlignment"`
-	BodyAlignment  string `json:"bodyAlignment"`
+	Blocks []textPrintBlock `json:"blocks"`
 }
 
 func WithWeatherProvider(provider WeatherProvider) ServerOption {
@@ -1271,56 +1274,44 @@ func decodePreviewPNGField(value string) ([]byte, error) {
 }
 
 func textPrintLines(request textPrintRequest) ([]receipt.Line, error) {
-	if strings.TrimSpace(request.Body) == "" {
-		return nil, fmt.Errorf("body is required")
+	if len(request.Blocks) == 0 {
+		return nil, fmt.Errorf("blocks is required")
 	}
-	titleFont, err := validatedTextPrintFont(request.TitleFont, "titleFont")
-	if err != nil {
-		return nil, err
+	hasContent := false
+	for _, b := range request.Blocks {
+		if strings.TrimSpace(b.Text) != "" {
+			hasContent = true
+			break
+		}
 	}
-	bodyFont, err := validatedTextPrintFont(request.BodyFont, "bodyFont")
-	if err != nil {
-		return nil, err
+	if !hasContent {
+		return nil, fmt.Errorf("at least one block must have text")
 	}
-	if strings.TrimSpace(request.TitleAlignment) == "" {
-		request.TitleAlignment = string(receipt.AlignmentCenter)
-	}
-	if strings.TrimSpace(request.BodyAlignment) == "" {
-		request.BodyAlignment = string(receipt.AlignmentLeft)
-	}
-	titleAlignment, err := validatedTextPrintAlignment(request.TitleAlignment, "titleAlignment")
-	if err != nil {
-		return nil, err
-	}
-	bodyAlignment, err := validatedTextPrintAlignment(request.BodyAlignment, "bodyAlignment")
-	if err != nil {
-		return nil, err
-	}
-
-	body := strings.ReplaceAll(request.Body, "\r\n", "\n")
-	body = strings.ReplaceAll(body, "\r", "\n")
-	lines := make([]receipt.Line, 0, strings.Count(body, "\n")+3)
-	if title := strings.TrimSpace(request.Title); title != "" {
-		lines = append(lines, receipt.Line{
-			Text:      title,
-			Alignment: titleAlignment,
-			Role:      receipt.RoleNormal,
-			Font:      titleFont,
-		})
-		lines = append(lines, receipt.Line{
-			Text:      "",
-			Alignment: bodyAlignment,
-			Role:      receipt.RoleNormal,
-			Font:      bodyFont,
-		})
-	}
-	for _, text := range strings.Split(body, "\n") {
-		lines = append(lines, receipt.Line{
-			Text:      text,
-			Alignment: bodyAlignment,
-			Role:      receipt.RoleNormal,
-			Font:      bodyFont,
-		})
+	var lines []receipt.Line
+	for _, block := range request.Blocks {
+		font, err := validatedTextPrintFont(block.Font, "font")
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(block.Alignment) == "" {
+			block.Alignment = string(receipt.AlignmentLeft)
+		}
+		alignment, err := validatedTextPrintAlignment(block.Alignment, "alignment")
+		if err != nil {
+			return nil, err
+		}
+		text := strings.ReplaceAll(block.Text, "\r\n", "\n")
+		text = strings.ReplaceAll(text, "\r", "\n")
+		for _, lineText := range strings.Split(text, "\n") {
+			lines = append(lines, receipt.Line{
+				Text:         lineText,
+				Alignment:    alignment,
+				Role:         receipt.RoleNormal,
+				Font:         font,
+				DoubleWidth:  block.DoubleWidth,
+				DoubleHeight: block.DoubleHeight,
+			})
+		}
 	}
 	return lines, nil
 }

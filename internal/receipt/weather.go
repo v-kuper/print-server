@@ -79,42 +79,42 @@ func WeatherReceiptWithStyle(snapshot weather.Snapshot, styleSettings StyleSetti
 	result := make([]Line, 0, 12)
 
 	result = append(result, blankLine(normalStyle))
-	result = append(result, center(calendarTitle(observedAt), calendarStyle))
-	result = append(result, center(weekdayName(observedAt.Weekday()), normalStyle))
+	result = append(result, aligned(calendarTitle(observedAt), calendarStyle))
+	result = append(result, aligned(weekdayName(observedAt.Weekday()), normalStyle))
 	result = append(result, blankLine(normalStyle))
 	if iconKey := weather.ConditionIconKey(snapshot); iconKey != "" {
 		result = append(result, weatherIcon(iconKey, normalStyle))
 	}
-	result = append(result, center(weather.ConditionLabel(snapshot), normalStyle))
-	result = append(result, center(formatTemperature(displayTemperature(snapshot)), temperatureStyle))
+	result = append(result, aligned(weather.ConditionLabel(snapshot), normalStyle))
+	result = append(result, aligned(formatTemperature(displayTemperature(snapshot)), temperatureStyle))
 	result = append(result, blankLine(normalStyle))
 
 	if snapshot.DayTemperatureC != nil {
-		result = append(result, wrappedCenter("Днем "+formatTemperature(*snapshot.DayTemperatureC), normalStyle)...)
+		result = append(result, wrappedAligned("Днем "+formatTemperature(*snapshot.DayTemperatureC), normalStyle)...)
 	}
 	if snapshot.NightTemperatureC != nil {
-		result = append(result, wrappedCenter("Ночью "+formatTemperature(*snapshot.NightTemperatureC), normalStyle)...)
+		result = append(result, wrappedAligned("Ночью "+formatTemperature(*snapshot.NightTemperatureC), normalStyle)...)
 	}
 	if snapshot.WindSpeedMs != nil {
-		result = append(result, wrappedCenter(formatWindLine(snapshot.WindSpeedMs, snapshot.WindDirectionDeg), normalStyle)...)
+		result = append(result, wrappedAligned(formatWindLine(snapshot.WindSpeedMs, snapshot.WindDirectionDeg), normalStyle)...)
 	}
 	if snapshot.WindGustsMs != nil {
-		result = append(result, wrappedCenter(fmt.Sprintf("Порывы до %d м/с", round(*snapshot.WindGustsMs)), normalStyle)...)
+		result = append(result, wrappedAligned(fmt.Sprintf("Порывы до %d м/с", round(*snapshot.WindGustsMs)), normalStyle)...)
 	}
 	if snapshot.RelativeHumidityPct != nil {
-		result = append(result, wrappedCenter(fmt.Sprintf("Влажность %d%%", round(*snapshot.RelativeHumidityPct)), normalStyle)...)
+		result = append(result, wrappedAligned(fmt.Sprintf("Влажность %d%%", round(*snapshot.RelativeHumidityPct)), normalStyle)...)
 	}
 	if uvLine := formatUVLine(snapshot.UVIndexMax, snapshot.UVIndex); uvLine != "" {
-		result = append(result, wrappedCenter(uvLine, normalStyle)...)
+		result = append(result, wrappedAligned(uvLine, normalStyle)...)
 	}
 	if snapshot.PrecipitationProbabilityMaxPct != nil {
-		result = append(result, wrappedCenter(fmt.Sprintf("Вероятность осадков %d%%", round(*snapshot.PrecipitationProbabilityMaxPct)), normalStyle)...)
+		result = append(result, wrappedAligned(fmt.Sprintf("Вероятность осадков %d%%", round(*snapshot.PrecipitationProbabilityMaxPct)), normalStyle)...)
 	}
 	if snapshot.SurfacePressureHpa != nil {
-		result = append(result, wrappedCenter(fmt.Sprintf("Давление %d гПа", round(*snapshot.SurfacePressureHpa)), normalStyle)...)
+		result = append(result, wrappedAligned(fmt.Sprintf("Давление %d гПа", round(*snapshot.SurfacePressureHpa)), normalStyle)...)
 	}
 	if snapshot.PrecipitationMm != nil {
-		result = append(result, wrappedCenter(fmt.Sprintf("Осадки %s мм", formatDecimal(*snapshot.PrecipitationMm)), normalStyle)...)
+		result = append(result, wrappedAligned(fmt.Sprintf("Осадки %s мм", formatDecimal(*snapshot.PrecipitationMm)), normalStyle)...)
 	}
 
 	return result
@@ -133,23 +133,23 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 	}
 	if data.WeatherAdvice != nil && strings.TrimSpace(data.WeatherAdvice.Text) != "" {
 		result = append(result, blankLine(normalStyle))
-		result = append(result, wrappedCenter(data.WeatherAdvice.Text, normalStyle)...)
+		result = append(result, wrappedAligned(data.WeatherAdvice.Text, normalStyle)...)
 	}
 	if data.MotivationQuote != nil && strings.TrimSpace(data.MotivationQuote.Text) != "" {
 		result = append(result, blankLine(normalStyle))
-		result = append(result, wrappedCenter(data.MotivationQuote.Text, normalStyle)...)
+		result = append(result, wrappedAligned(data.MotivationQuote.Text, normalStyle)...)
 	}
 	if data.TonPortfolio != nil {
 		result = appendSectionHeader(result, "TON", normalStyle)
-		result = append(result, wrappedCenter(formatTonPortfolioLine(*data.TonPortfolio), normalStyle)...)
-		result = append(result, wrappedCenter(formatTonValueLine(*data.TonPortfolio), normalStyle)...)
+		result = append(result, wrappedAligned(formatTonPortfolioLine(*data.TonPortfolio), normalStyle)...)
+		result = append(result, wrappedAligned(formatTonValueLine(*data.TonPortfolio), normalStyle)...)
 		if data.TonChartImage != nil {
 			result = append(result, imageLine(*data.TonChartImage, normalStyle))
 		}
 	}
 	if data.USDBYNRate != nil {
 		result = appendSectionHeader(result, "Курс доллара", normalStyle)
-		result = append(result, wrappedCenter(formatFiatRate(*data.USDBYNRate), normalStyle)...)
+		result = append(result, wrappedAligned(formatFiatRate(*data.USDBYNRate), normalStyle)...)
 		if data.USDBYNChartImage != nil {
 			result = append(result, imageLine(*data.USDBYNChartImage, normalStyle))
 		}
@@ -157,28 +157,28 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 	if data.BankRates != nil && (data.BankRates.SellUSD != nil || data.BankRates.BuyUSD != nil) {
 		result = appendSectionHeader(result, "В банках", normalStyle)
 		if data.BankRates.SellUSD != nil {
-			result = append(result, wrappedCenter(formatBankRateLine("Продать $", *data.BankRates.SellUSD), normalStyle)...)
-			result = append(result, wrappedCenter(formatBankNames(data.BankRates.SellUSD.BankNames), normalStyle)...)
+			result = append(result, wrappedAligned(formatBankRateLine("Продать $", *data.BankRates.SellUSD), normalStyle)...)
+			result = append(result, wrappedAligned(formatBankNames(data.BankRates.SellUSD.BankNames), normalStyle)...)
 		}
 		if data.BankRates.SellUSD != nil && data.BankRates.BuyUSD != nil {
 			result = append(result, blankLine(normalStyle))
 		}
 		if data.BankRates.BuyUSD != nil {
-			result = append(result, wrappedCenter(formatBankRateLine("Купить $", *data.BankRates.BuyUSD), normalStyle)...)
-			result = append(result, wrappedCenter(formatBankNames(data.BankRates.BuyUSD.BankNames), normalStyle)...)
+			result = append(result, wrappedAligned(formatBankRateLine("Купить $", *data.BankRates.BuyUSD), normalStyle)...)
+			result = append(result, wrappedAligned(formatBankNames(data.BankRates.BuyUSD.BankNames), normalStyle)...)
 		}
 		if !data.BankRates.UpdatedAt.IsZero() {
-			result = append(result, wrappedCenter(formatBankRatesUpdate(data.BankRates.UpdatedAt, data.Weather.TimeLocation()), normalStyle)...)
+			result = append(result, wrappedAligned(formatBankRatesUpdate(data.BankRates.UpdatedAt, data.Weather.TimeLocation()), normalStyle)...)
 		}
 	}
 	if len(data.MailMessages) > 0 {
 		result = appendSectionHeader(result, "Почта", normalStyle)
 		for itemIndex, message := range data.MailMessages {
 			if strings.TrimSpace(message.From) != "" {
-				result = append(result, wrappedCenter(message.From, normalStyle)...)
+				result = append(result, wrappedAligned(message.From, normalStyle)...)
 			}
 			if strings.TrimSpace(message.Subject) != "" {
-				result = append(result, wrappedCenter(message.Subject, normalStyle)...)
+				result = append(result, wrappedAligned(message.Subject, normalStyle)...)
 			}
 			if itemIndex < len(data.MailMessages)-1 {
 				result = append(result, blankLine(normalStyle))
@@ -193,7 +193,7 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 				if sectionIndex > 0 {
 					result = append(result, blankLine(normalStyle))
 				}
-				result = append(result, wrappedCenter(section.Title, normalStyle)...)
+				result = append(result, wrappedAligned(section.Title, normalStyle)...)
 			}
 			for _, event := range section.Events {
 				result = append(result, calendarEventLines(event, normalStyle)...)
@@ -201,7 +201,7 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 		}
 		if data.CalendarAdvice != nil && strings.TrimSpace(data.CalendarAdvice.Text) != "" {
 			result = append(result, blankLine(normalStyle))
-			result = append(result, wrappedCenter(data.CalendarAdvice.Text, normalStyle)...)
+			result = append(result, wrappedAligned(data.CalendarAdvice.Text, normalStyle)...)
 		}
 	}
 	if len(data.NewsItems) > 0 {
@@ -210,11 +210,11 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 
 		grouped := groupNews(data.NewsItems)
 		for sourceIndex, group := range grouped {
-			result = append(result, wrappedCenter(group.SourceName, normalStyle)...)
+			result = append(result, wrappedAligned(group.SourceName, normalStyle)...)
 			for itemIndex, item := range group.Items {
-				result = append(result, wrappedCenter("- "+item.Title, normalStyle)...)
+				result = append(result, wrappedAligned("- "+item.Title, normalStyle)...)
 				if strings.TrimSpace(item.OriginalTitle) != "" {
-					result = append(result, wrappedCenter(item.OriginalTitle, originalStyle)...)
+					result = append(result, wrappedAligned(item.OriginalTitle, originalStyle)...)
 				}
 				if itemIndex < len(group.Items)-1 {
 					result = append(result, blankLine(normalStyle))
@@ -468,6 +468,30 @@ func imageLine(image Image, style lineStyle) Line {
 		DoubleWidth:       style.DoubleWidth,
 		DoubleHeight:      style.DoubleHeight,
 	}
+}
+
+func aligned(text string, style lineStyle) Line {
+	return Line{
+		Text:         text,
+		Alignment:    style.Alignment,
+		Role:         style.Role,
+		Font:         style.Font,
+		DoubleWidth:  style.DoubleWidth,
+		DoubleHeight: style.DoubleHeight,
+	}
+}
+
+func wrappedAligned(text string, style lineStyle) []Line {
+	lineLength := weatherMaxLineLength
+	if style.DoubleWidth {
+		lineLength /= 2
+	}
+	parts := wrapWords(text, lineLength)
+	result := make([]Line, 0, len(parts))
+	for _, part := range parts {
+		result = append(result, aligned(part, style))
+	}
+	return result
 }
 
 func wrappedCenter(text string, style lineStyle) []Line {
