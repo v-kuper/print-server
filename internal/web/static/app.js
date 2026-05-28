@@ -47,15 +47,15 @@ const fallbackFontMetrics = [
 ];
 let fontMetrics = new Map(fallbackFontMetrics.map(metric => [metric.font, metric]));
 const scheduleContentOptions = [
-  { key: "showWeather", label: "Погода" },
-  { key: "showWeatherAdvice", label: "AI по погоде" },
-  { key: "showMotivationQuote", label: "Цитата" },
-  { key: "showTonPortfolio", label: "TON" },
-  { key: "showUsdBynRate", label: "USD/BYN" },
-  { key: "showBankRates", label: "Банки" },
-  { key: "showMail", label: "Почта" },
-  { key: "showCalendar", label: "Календарь" },
-  { key: "showNews", label: "Новости" }
+  { key: "showWeather",         label: "Погода",          group: "Основное" },
+  { key: "showWeatherAdvice",   label: "AI-совет",        group: "Основное" },
+  { key: "showMotivationQuote", label: "Цитата",          group: "Основное" },
+  { key: "showTonPortfolio",    label: "TON",             group: "Финансы"  },
+  { key: "showUsdBynRate",      label: "USD/BYN",         group: "Финансы"  },
+  { key: "showBankRates",       label: "Банки",           group: "Финансы"  },
+  { key: "showMail",            label: "Почта",           group: "Google"   },
+  { key: "showCalendar",        label: "Календарь",       group: "Google"   },
+  { key: "showNews",            label: "Коротко о мире",  group: "Новости"  },
 ];
 
 
@@ -852,26 +852,37 @@ function addScheduleTime(value = "07:00") {
   remove.dataset.action = "remove-schedule-time";
   remove.textContent = "Удалить";
 
+  const groups = {};
+  const groupOrder = [];
+  for (const opt of scheduleContentOptions) {
+    if (!groups[opt.group]) { groups[opt.group] = []; groupOrder.push(opt.group); }
+    groups[opt.group].push(opt);
+  }
+
   const custom = document.createElement("div");
   custom.className = "schedule-custom-content";
-  custom.replaceChildren(...scheduleContentOptions.map(option => {
-    const label = document.createElement("label");
-    label.className = "schedule-content-option";
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.dataset.scheduleContentKey = option.key;
-    checkbox.checked = Boolean(customContent[option.key]);
-    label.append(checkbox, document.createTextNode(option.label));
-    return label;
-  }));
+  for (const groupName of groupOrder) {
+    const col = document.createElement("div");
+    col.className = "content-group";
+    const title = document.createElement("div");
+    title.className = "content-group-title";
+    title.textContent = groupName;
+    col.appendChild(title);
+    for (const option of groups[groupName]) {
+      const label = document.createElement("label");
+      label.className = "toggle-label";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.dataset.scheduleContentKey = option.key;
+      checkbox.checked = Boolean(customContent[option.key]);
+      label.append(checkbox, document.createTextNode(option.label));
+      col.appendChild(label);
+    }
+    custom.appendChild(col);
+  }
 
-  const summary = document.createElement("div");
-  summary.className = "schedule-run-summary";
-  summary.dataset.scheduleRunSummary = "";
-
-  row.append(timeField, remove, custom, summary);
+  row.append(timeField, remove, custom);
   document.querySelector("#schedule-time-list").appendChild(row);
-  updateScheduleRowSummary(row);
 }
 
 function readScheduleSettings(enabled) {
