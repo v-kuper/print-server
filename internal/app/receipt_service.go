@@ -218,6 +218,15 @@ func (s *ReceiptService) BuildDailyReceiptWithWarnings(ctx context.Context) ([]r
 	if err != nil {
 		return nil, nil, buildError(http.StatusInternalServerError, err)
 	}
+	return s.BuildDailyReceiptWithContentAndWarnings(ctx, content)
+}
+
+func (s *ReceiptService) BuildDailyReceiptWithContent(ctx context.Context, content receipt.ContentSettings) ([]receipt.Line, error) {
+	lines, _, err := s.BuildDailyReceiptWithContentAndWarnings(ctx, content)
+	return lines, err
+}
+
+func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Context, content receipt.ContentSettings) ([]receipt.Line, []string, error) {
 	content = content.Normalized()
 
 	snapshot := weather.Snapshot{
@@ -342,12 +351,20 @@ func (s *ReceiptService) BuildDailyReceiptWithWarnings(ctx context.Context) ([]r
 }
 
 func (s *ReceiptService) PrintDailyReceipt(ctx context.Context) error {
+	content, err := s.store.LoadReceiptContent()
+	if err != nil {
+		return buildError(http.StatusInternalServerError, err)
+	}
+	return s.PrintDailyReceiptWithContent(ctx, content)
+}
+
+func (s *ReceiptService) PrintDailyReceiptWithContent(ctx context.Context, content receipt.ContentSettings) error {
 	config, err := s.store.LoadPrinter()
 	if err != nil {
 		return buildError(http.StatusInternalServerError, err)
 	}
 
-	lines, err := s.BuildDailyReceipt(ctx)
+	lines, err := s.BuildDailyReceiptWithContent(ctx, content)
 	if err != nil {
 		return err
 	}

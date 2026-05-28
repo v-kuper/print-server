@@ -46,6 +46,17 @@ const fallbackFontMetrics = [
   { font: 9, lineLength: 32, fontWidth: 12 }
 ];
 let fontMetrics = new Map(fallbackFontMetrics.map(metric => [metric.font, metric]));
+const scheduleContentOptions = [
+  { key: "showWeather", label: "Погода" },
+  { key: "showWeatherAdvice", label: "AI по погоде" },
+  { key: "showMotivationQuote", label: "Цитата" },
+  { key: "showTonPortfolio", label: "TON" },
+  { key: "showUsdBynRate", label: "USD/BYN" },
+  { key: "showBankRates", label: "Банки" },
+  { key: "showMail", label: "Почта" },
+  { key: "showCalendar", label: "Календарь" },
+  { key: "showNews", label: "Новости" }
+];
 
 
 async function loadBootstrap() {
@@ -120,14 +131,25 @@ function renderScheduleIntervals(intervals, selectedMinutes) {
   })), selectedMinutes);
 }
 
-function renderScheduleTimes(times) {
+function scheduleRunsFromBootstrap(times, runs) {
+  if (Array.isArray(runs) && runs.length > 0) {
+    return runs.map(run => ({
+      time: valueOrEmpty(run.time),
+      content: run.content || null
+    }));
+  }
+  const values = Array.isArray(times) && times.length > 0 ? times : [""];
+  return values.map(time => ({ time, content: null }));
+}
+
+function renderScheduleTimes(times, runs) {
   const list = document.querySelector("#schedule-time-list");
   if (!list) {
     return;
   }
   list.replaceChildren();
-  const values = Array.isArray(times) && times.length > 0 ? times : [""];
-  values.forEach(value => addScheduleTime(value));
+  const values = scheduleRunsFromBootstrap(times, runs);
+  values.forEach(run => addScheduleTime(run));
 }
 
 function renderNewsSources(newsSettings, presets) {
@@ -251,7 +273,7 @@ function applyBootstrap(data) {
   const schedule = data.schedule || {};
   setScheduleMode(schedule.mode);
   renderScheduleIntervals(data.scheduleIntervals || [], schedule.intervalMinutes);
-  renderScheduleTimes(schedule.times || []);
+  renderScheduleTimes(schedule.times || [], schedule.runs || []);
 
   renderGoogleStatus(data.googleStatus || {});
   updateTextPrintPreview();
@@ -697,33 +719,123 @@ function updateScheduleMode() {
   document.querySelector("#schedule-times-panel").hidden = mode !== "daily_times";
 }
 
+function scheduleContentFromSettings(settings) {
+  const content = settings || {};
+  return {
+    configured: true,
+    showWeather: Boolean(content.showWeather),
+    showWeatherAdvice: Boolean(content.showWeatherAdvice),
+    showMotivationQuote: Boolean(content.showMotivationQuote),
+    showTonPortfolio: Boolean(content.showTonPortfolio),
+    showUsdBynRate: Boolean(content.showUsdBynRate),
+    showBankRates: Boolean(content.showBankRates),
+    showMail: Boolean(content.showMail),
+    showCalendar: Boolean(content.showCalendar),
+    showNews: Boolean(content.showNews)
+  };
+}
+
+function scheduleRunFromValue(value) {
+  if (typeof value === "object" && value !== null) {
+    return {
+      time: valueOrEmpty(value.time),
+      content: value.content || null
+    };
+  }
+  return {
+    time: valueOrEmpty(value),
+    content: null
+  };
+}
+
+function scheduleRowContent(row) {
+  const content = { configured: true };
+  row.querySelectorAll("[data-schedule-content-key]").forEach(input => {
+    content[input.dataset.scheduleContentKey] = input.checked;
+  });
+  return scheduleContentFromSettings(content);
+}
+
+function updateScheduleRowSummary(row) {
+  const summary = row.querySelector("[data-schedule-run-summary]");
+  if (!summary) {
+    return;
+  }
+  const selected = scheduleContentOptions
+    .filter(option => row.querySelector('[data-schedule-content-key="' + option.key + '"]')?.checked)
+    .map(option => option.label);
+  summary.textContent = selected.length > 0 ? "Печатает: " + selected.join(", ") : "Ничего не выбрано";
+}
+
 function addScheduleTime(value = "07:00") {
+  const run = scheduleRunFromValue(value);
+  const customContent = scheduleContentFromSettings(run.content || readReceiptContentSettings());
   const row = document.createElement("div");
   row.className = "schedule-time-row";
   row.dataset.scheduleTimeRow = "";
+
   const input = document.createElement("input");
   input.type = "time";
   input.dataset.scheduleTime = "";
-  input.value = value;
+  input.value = run.time;
+
+  const timeField = document.createElement("label");
+  timeField.className = "schedule-row-field";
+  const timeTitle = document.createElement("span");
+  timeTitle.className = "schedule-row-label";
+  timeTitle.textContent = "Время";
+  timeField.append(timeTitle, input);
+
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "secondary";
   remove.dataset.action = "remove-schedule-time";
   remove.textContent = "Удалить";
-  row.append(input, remove);
+
+  const custom = document.createElement("div");
+  custom.className = "schedule-custom-content";
+  custom.replaceChildren(...scheduleContentOptions.map(option => {
+    const label = document.createElement("label");
+    label.className = "schedule-content-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.dataset.scheduleContentKey = option.key;
+    checkbox.checked = Boolean(customContent[option.key]);
+    label.append(checkbox, document.createTextNode(option.label));
+    return label;
+  }));
+
+  const summary = document.createElement("div");
+  summary.className = "schedule-run-summary";
+  summary.dataset.scheduleRunSummary = "";
+
+  row.append(timeField, remove, custom, summary);
   document.querySelector("#schedule-time-list").appendChild(row);
+  updateScheduleRowSummary(row);
 }
 
 function readScheduleSettings(enabled) {
   const interval = Number.parseInt(document.querySelector("#schedule-interval").value, 10);
-  const times = Array.from(document.querySelectorAll("[data-schedule-time]"))
-    .map(input => input.value.trim())
+  const runs = Array.from(document.querySelectorAll("[data-schedule-time-row]"))
+    .map(row => {
+      const time = row.querySelector("[data-schedule-time]")?.value.trim() || "";
+      if (!time) {
+        return null;
+      }
+      return {
+        time,
+        profile: "custom",
+        content: scheduleRowContent(row)
+      };
+    })
     .filter(Boolean);
+  const times = runs.map(run => run.time);
   return {
     enabled,
     mode: scheduleMode(),
     intervalMinutes: Number.isFinite(interval) ? interval : 15,
     times,
+    runs,
     timezone: "Europe/Minsk"
   };
 }
@@ -1792,6 +1904,12 @@ function bindEventListeners() {
     }
     if (document.querySelectorAll("[data-schedule-time-row]").length === 0) {
       addScheduleTime("");
+    }
+  });
+  document.querySelector("#schedule-time-list").addEventListener("change", event => {
+    const row = event.target.closest("[data-schedule-time-row]");
+    if (row && event.target.matches("[data-schedule-content-key]")) {
+      updateScheduleRowSummary(row);
     }
   });
   document.querySelectorAll('input[name="schedule-mode"]').forEach(input => {

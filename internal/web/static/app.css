@@ -314,12 +314,58 @@ textarea {
   display: grid;
   gap: 8px;
 }
+.schedule-run-header {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) minmax(0, 1fr);
+  gap: 8px;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
 .schedule-time-row {
   display: grid;
-  grid-template-columns: minmax(140px, 180px) auto;
+  grid-template-columns: minmax(120px, 160px) auto;
   gap: 8px;
   align-items: center;
   justify-content: start;
+}
+.schedule-row-field {
+  display: grid;
+  gap: 4px;
+}
+.schedule-row-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.schedule-custom-content,
+.schedule-run-summary {
+  grid-column: 1 / -1;
+}
+.schedule-custom-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px 12px;
+}
+.schedule-content-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.schedule-content-option input {
+  width: 16px;
+  min-height: 16px;
+}
+.schedule-run-summary {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 .scheduler-status {
   color: var(--muted);

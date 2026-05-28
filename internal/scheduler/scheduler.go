@@ -2,9 +2,11 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"atol-server/internal/receipt"
 	"atol-server/internal/schedule"
 )
 
@@ -16,6 +18,10 @@ type Store interface {
 
 type Job interface {
 	PrintDailyReceipt(context.Context) error
+}
+
+type ContentJob interface {
+	PrintDailyReceiptWithContent(context.Context, receipt.ContentSettings) error
 }
 
 type Service struct {
@@ -132,7 +138,7 @@ func (s *Service) RunDue(ctx context.Context) (bool, error) {
 	}
 
 	now := s.clock()
-	_, due, err := schedule.DueRun(settings, state, now)
+	scheduledAt, due, err := schedule.DueRun(settings, state, now)
 	if err != nil {
 		return false, err
 	}
@@ -146,7 +152,7 @@ func (s *Service) RunDue(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	printErr := s.job.PrintDailyReceipt(ctx)
+	printErr := s.printScheduledReceipt(ctx, settings, scheduledAt)
 	finishedAt := s.clock()
 	if printErr != nil {
 		state.LastError = printErr.Error()
@@ -167,6 +173,25 @@ func (s *Service) RunDue(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	return true, printErr
+}
+
+func (s *Service) printScheduledReceipt(ctx context.Context, settings schedule.Settings, scheduledAt time.Time) error {
+	normalized := settings.Normalized()
+	if normalized.Mode != schedule.ModeDailyTimes {
+		return s.job.PrintDailyReceipt(ctx)
+	}
+	run, ok, err := schedule.RunForScheduledAt(normalized, scheduledAt)
+	if err != nil {
+		return err
+	}
+	if !ok || run.Profile == schedule.ProfileDefault {
+		return s.job.PrintDailyReceipt(ctx)
+	}
+	contentJob, ok := s.job.(ContentJob)
+	if !ok {
+		return fmt.Errorf("scheduled content printing is not supported")
+	}
+	return contentJob.PrintDailyReceiptWithContent(ctx, run.ResolveContent(receipt.DefaultContentSettings()))
 }
 
 func (s *Service) Reload() {

@@ -912,6 +912,59 @@ func TestReceiptServiceSkipsDisabledAIContent(t *testing.T) {
 	}
 }
 
+func TestReceiptServicePrintsDailyReceiptWithExplicitContent(t *testing.T) {
+	weatherCode := 0
+	tonProvider := &fakeTonProvider{price: finance.TonPrice{USD: 1.7}}
+	fiatProvider := &fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.12}}
+	bankProvider := &fakeBankRatesProvider{}
+	store := &fakeStore{
+		config:         printer.Config{Host: "192.168.0.118", Port: 5555},
+		location:       weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
+		receiptContent: receipt.DefaultContentSettings(),
+	}
+	gateway := &fakePrinter{}
+	service := NewReceiptService(
+		store,
+		gateway,
+		fixedClock,
+		WithWeatherProvider(&fakeWeatherProvider{snapshot: weather.Snapshot{
+			Timezone:     "Europe/Minsk",
+			ObservedAt:   fixedClock(),
+			TemperatureC: 22.2,
+			WeatherCode:  &weatherCode,
+		}}),
+		WithTonPriceProvider(tonProvider),
+		WithFiatRateProvider(fiatProvider),
+		WithBankRatesProvider(bankProvider),
+		WithNewsProvider(&fakeNewsProvider{}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+	content := receipt.ContentSettings{
+		Configured:       true,
+		ShowWeather:      true,
+		ShowUsdBynRate:   false,
+		ShowBankRates:    false,
+		ShowTonPortfolio: false,
+	}
+
+	if err := service.PrintDailyReceiptWithContent(context.Background(), content); err != nil {
+		t.Fatalf("print daily receipt with content: %v", err)
+	}
+
+	if store.receiptContentLoadCalls != 0 {
+		t.Fatalf("expected explicit content path not to load global receipt content, got %d calls", store.receiptContentLoadCalls)
+	}
+	if tonProvider.calls != 0 || fiatProvider.calls != 0 || bankProvider.calls != 0 {
+		t.Fatalf("expected disabled finance providers not to be called, got ton=%d fiat=%d bank=%d", tonProvider.calls, fiatProvider.calls, bankProvider.calls)
+	}
+	if gateway.printedConfig != store.config {
+		t.Fatalf("expected printer config %#v, got %#v", store.config, gateway.printedConfig)
+	}
+	if lineTextsContain(gateway.printedLines, "TON") || lineTextsContain(gateway.printedLines, "Курс доллара") || lineTextsContain(gateway.printedLines, "В банках") {
+		t.Fatalf("expected explicit content to omit finance sections, got %#v", gateway.printedLines)
+	}
+}
+
 func TestReceiptServicePrintsWeatherAdviceWhenLegacyMotivationDisabled(t *testing.T) {
 	weatherCode := 0
 	motivationProvider := &fakeMotivationProvider{
@@ -1070,13 +1123,14 @@ func fixedClock() time.Time {
 }
 
 type fakeStore struct {
-	config             printer.Config
-	location           weather.Location
-	portfolio          finance.TonPortfolio
-	newsSettings       news.Settings
-	receiptStyle       receipt.StyleSettings
-	receiptContent     receipt.ContentSettings
-	motivationSettings motivation.Settings
+	config                  printer.Config
+	location                weather.Location
+	portfolio               finance.TonPortfolio
+	newsSettings            news.Settings
+	receiptStyle            receipt.StyleSettings
+	receiptContent          receipt.ContentSettings
+	receiptContentLoadCalls int
+	motivationSettings      motivation.Settings
 }
 
 func (s *fakeStore) LoadPrinter() (printer.Config, error) {
@@ -1103,6 +1157,7 @@ func (s *fakeStore) LoadReceiptStyle() (receipt.StyleSettings, error) {
 }
 
 func (s *fakeStore) LoadReceiptContent() (receipt.ContentSettings, error) {
+	s.receiptContentLoadCalls++
 	return s.receiptContent.Normalized(), nil
 }
 

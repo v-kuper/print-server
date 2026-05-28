@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"atol-server/internal/receipt"
 	"atol-server/internal/schedule"
 )
 
@@ -73,6 +74,148 @@ func TestRunDuePrintsMissedRunOnceAndAdvancesNextRun(t *testing.T) {
 	}
 	if job.calls != 1 {
 		t.Fatalf("expected no second print call, got %d", job.calls)
+	}
+}
+
+func TestRunDueUsesDailyRunPresetContent(t *testing.T) {
+	location, err := time.LoadLocation(schedule.DefaultTimezone)
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	now := time.Date(2026, 5, 25, 7, 1, 0, 0, location)
+	store := &fakeStore{
+		settings: schedule.Settings{
+			Enabled:         true,
+			Mode:            schedule.ModeDailyTimes,
+			IntervalMinutes: 15,
+			Runs: []schedule.Run{
+				{Time: "07:00", Profile: schedule.ProfileMorning},
+				{Time: "13:00", Profile: schedule.ProfileDay},
+			},
+			Timezone: schedule.DefaultTimezone,
+		},
+		state: schedule.State{
+			NextRunAt: time.Date(2026, 5, 25, 7, 0, 0, 0, location),
+		},
+	}
+	job := &fakeJob{}
+	service := NewService(store, job, func() time.Time { return now })
+
+	didRun, err := service.RunDue(context.Background())
+	if err != nil {
+		t.Fatalf("run due: %v", err)
+	}
+	if !didRun {
+		t.Fatal("expected due run")
+	}
+	if job.calls != 0 {
+		t.Fatalf("expected global print not to be called, got %d", job.calls)
+	}
+	if job.contentCalls != 1 {
+		t.Fatalf("expected one content print call, got %d", job.contentCalls)
+	}
+	if !job.printedContent.ShowWeather || !job.printedContent.ShowTonPortfolio || job.printedContent.ShowMail {
+		t.Fatalf("expected morning preset content, got %#v", job.printedContent)
+	}
+}
+
+func TestRunDueUsesCustomDailyRunContent(t *testing.T) {
+	location, err := time.LoadLocation(schedule.DefaultTimezone)
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	custom := receipt.ContentSettings{
+		Configured:       true,
+		ShowWeather:      true,
+		ShowUsdBynRate:   true,
+		ShowBankRates:    true,
+		ShowCalendar:     true,
+		ShowNews:         true,
+		ShowTonPortfolio: false,
+	}
+	now := time.Date(2026, 5, 25, 21, 1, 0, 0, location)
+	store := &fakeStore{
+		settings: schedule.Settings{
+			Enabled:         true,
+			Mode:            schedule.ModeDailyTimes,
+			IntervalMinutes: 15,
+			Runs: []schedule.Run{
+				{Time: "21:00", Profile: schedule.ProfileCustom, Content: &custom},
+			},
+			Timezone: schedule.DefaultTimezone,
+		},
+		state: schedule.State{
+			NextRunAt: time.Date(2026, 5, 25, 21, 0, 0, 0, location),
+		},
+	}
+	job := &fakeJob{}
+	service := NewService(store, job, func() time.Time { return now })
+
+	didRun, err := service.RunDue(context.Background())
+	if err != nil {
+		t.Fatalf("run due: %v", err)
+	}
+	if !didRun {
+		t.Fatal("expected due run")
+	}
+	if job.contentCalls != 1 {
+		t.Fatalf("expected one content print call, got %d", job.contentCalls)
+	}
+	if job.printedContent != custom {
+		t.Fatalf("expected custom content %#v, got %#v", custom, job.printedContent)
+	}
+}
+
+func TestRunDueUsesGlobalPrintForDefaultProfileAndInterval(t *testing.T) {
+	location, err := time.LoadLocation(schedule.DefaultTimezone)
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	now := time.Date(2026, 5, 25, 7, 1, 0, 0, location)
+	store := &fakeStore{
+		settings: schedule.Settings{
+			Enabled:         true,
+			Mode:            schedule.ModeDailyTimes,
+			IntervalMinutes: 15,
+			Runs: []schedule.Run{
+				{Time: "07:00", Profile: schedule.ProfileDefault},
+			},
+			Timezone: schedule.DefaultTimezone,
+		},
+		state: schedule.State{
+			NextRunAt: time.Date(2026, 5, 25, 7, 0, 0, 0, location),
+		},
+	}
+	job := &fakeJob{}
+	service := NewService(store, job, func() time.Time { return now })
+
+	didRun, err := service.RunDue(context.Background())
+	if err != nil {
+		t.Fatalf("run due: %v", err)
+	}
+	if !didRun {
+		t.Fatal("expected due run")
+	}
+	if job.calls != 1 || job.contentCalls != 0 {
+		t.Fatalf("expected default profile to use global print, got calls=%d contentCalls=%d", job.calls, job.contentCalls)
+	}
+
+	store.settings = schedule.Settings{
+		Enabled:         true,
+		Mode:            schedule.ModeInterval,
+		IntervalMinutes: 15,
+		Timezone:        schedule.DefaultTimezone,
+	}
+	store.state = schedule.State{NextRunAt: now.Add(-time.Minute)}
+	didRun, err = service.RunDue(context.Background())
+	if err != nil {
+		t.Fatalf("interval run due: %v", err)
+	}
+	if !didRun {
+		t.Fatal("expected interval due run")
+	}
+	if job.calls != 2 || job.contentCalls != 0 {
+		t.Fatalf("expected interval to use global print, got calls=%d contentCalls=%d", job.calls, job.contentCalls)
 	}
 }
 
@@ -162,10 +305,12 @@ func (s *fakeStore) SaveScheduleState(state schedule.State) error {
 }
 
 type fakeJob struct {
-	calls   int
-	err     error
-	started chan struct{}
-	release chan struct{}
+	calls          int
+	contentCalls   int
+	printedContent receipt.ContentSettings
+	err            error
+	started        chan struct{}
+	release        chan struct{}
 }
 
 func (j *fakeJob) PrintDailyReceipt(context.Context) error {
@@ -174,5 +319,11 @@ func (j *fakeJob) PrintDailyReceipt(context.Context) error {
 		close(j.started)
 		<-j.release
 	}
+	return j.err
+}
+
+func (j *fakeJob) PrintDailyReceiptWithContent(_ context.Context, content receipt.ContentSettings) error {
+	j.contentCalls++
+	j.printedContent = content
 	return j.err
 }

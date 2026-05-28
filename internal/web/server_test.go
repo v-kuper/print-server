@@ -129,6 +129,8 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`id="weather-location-results"`,
 		`id="news-source-list"`,
 		`id="schedule-time-list"`,
+		`id="schedule-run-header"`,
+		`Точное время и состав`,
 		`id="image-editor-file"`,
 		`id="image-editor-canvas-height"`,
 		`id="image-editor-result"`,
@@ -155,6 +157,11 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`{{`,
 		`value="192.168.0.118"`,
 		`id="content-calendar" type="checkbox" checked`,
+		`data-schedule-run-profile`,
+		`scheduleProfiles`,
+		`Утро`,
+		`День`,
+		`Вечер`,
 	} {
 		if bytes.Contains([]byte(body), []byte(unwanted)) {
 			t.Fatalf("expected static client shell not to contain template data %q", unwanted)
@@ -169,6 +176,7 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 		path        string
 		contentType string
 		contains    []string
+		unwanted    []string
 	}{
 		{
 			path:        "/static/app.css",
@@ -194,10 +202,18 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`/api/image-editor/save`,
 				`/api/image-editor/print`,
 				`/api/print/text`,
+				`data-schedule-content-key`,
 				`function applyImageEditorProcessing`,
 				`function createBlankImageEditorCanvas`,
 				`function applyImageEditorShape`,
 				`assetVersion`,
+			},
+			unwanted: []string{
+				`data-schedule-run-profile`,
+				`scheduleProfiles`,
+				`Утро`,
+				`День`,
+				`Вечер`,
 			},
 		},
 	} {
@@ -219,6 +235,11 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 		for _, want := range asset.contains {
 			if !bytes.Contains([]byte(body), []byte(want)) {
 				t.Fatalf("expected %s to contain %q", asset.path, want)
+			}
+		}
+		for _, unwanted := range asset.unwanted {
+			if bytes.Contains([]byte(body), []byte(unwanted)) {
+				t.Fatalf("expected %s not to contain %q", asset.path, unwanted)
 			}
 		}
 	}
@@ -379,6 +400,9 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	}
 	if payload.Data.Schedule.Mode != schedule.ModeDailyTimes || len(payload.Data.Schedule.Times) != 2 {
 		t.Fatalf("expected schedule in bootstrap, got %#v", payload.Data.Schedule)
+	}
+	if len(payload.Data.Schedule.Runs) != 2 || payload.Data.Schedule.Runs[0].Profile != schedule.ProfileDefault {
+		t.Fatalf("expected normalized default schedule runs in bootstrap, got %#v", payload.Data.Schedule.Runs)
 	}
 	if len(payload.Data.FontOptions) != 10 || payload.Data.FontOptions[9] != 9 {
 		t.Fatalf("expected font options 0..9, got %#v", payload.Data.FontOptions)
@@ -1260,8 +1284,66 @@ func TestSaveScheduleEndpointPersistsSettingsAndResetsScheduler(t *testing.T) {
 		IntervalMinutes: schedule.DefaultIntervalMinutes,
 		Times:           []string{"07:00", "09:00"},
 		Timezone:        schedule.DefaultTimezone,
+		Runs: []schedule.Run{
+			{Time: "07:00", Profile: schedule.ProfileDefault},
+			{Time: "09:00", Profile: schedule.ProfileDefault},
+		},
 	}) {
 		t.Fatalf("expected normalized schedule, got %#v", store.scheduleSettings)
+	}
+	if scheduler.resetCalls != 1 {
+		t.Fatalf("expected scheduler reset call, got %d", scheduler.resetCalls)
+	}
+}
+
+func TestSaveScheduleEndpointPersistsRunProfiles(t *testing.T) {
+	store := &fakeStore{}
+	scheduler := &fakeScheduler{}
+	server := NewServer(store, &fakePrinter{}, fixedClock, WithScheduler(scheduler))
+
+	body := bytes.NewBufferString(`{
+		"enabled": true,
+		"mode": "daily_times",
+		"intervalMinutes": 15,
+		"timezone": "Europe/Minsk",
+		"runs": [
+			{"time": "13:00", "profile": "day"},
+			{
+				"time": "21:00",
+				"profile": "custom",
+				"content": {
+					"configured": true,
+					"showWeather": true,
+					"showWeatherAdvice": false,
+					"showMotivationQuote": false,
+					"showTonPortfolio": false,
+					"showUsdBynRate": true,
+					"showBankRates": true,
+					"showMail": false,
+					"showCalendar": true,
+					"showNews": true
+				}
+			}
+		]
+	}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/settings/schedule", body)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if len(store.scheduleSettings.Runs) != 2 {
+		t.Fatalf("expected two schedule runs, got %#v", store.scheduleSettings.Runs)
+	}
+	if store.scheduleSettings.Runs[0].Time != "13:00" || store.scheduleSettings.Runs[0].Profile != schedule.ProfileDay {
+		t.Fatalf("expected day run first, got %#v", store.scheduleSettings.Runs)
+	}
+	custom := store.scheduleSettings.Runs[1]
+	if custom.Time != "21:00" || custom.Profile != schedule.ProfileCustom || custom.Content == nil ||
+		!custom.Content.ShowWeather || !custom.Content.ShowUsdBynRate || !custom.Content.ShowNews {
+		t.Fatalf("expected custom run content, got %#v", custom)
 	}
 	if scheduler.resetCalls != 1 {
 		t.Fatalf("expected scheduler reset call, got %d", scheduler.resetCalls)
@@ -1683,11 +1765,25 @@ func scheduleSettingsEqual(left schedule.Settings, right schedule.Settings) bool
 		left.Mode != right.Mode ||
 		left.IntervalMinutes != right.IntervalMinutes ||
 		left.Timezone != right.Timezone ||
-		len(left.Times) != len(right.Times) {
+		len(left.Times) != len(right.Times) ||
+		len(left.Runs) != len(right.Runs) {
 		return false
 	}
 	for index := range left.Times {
 		if left.Times[index] != right.Times[index] {
+			return false
+		}
+	}
+	for index := range left.Runs {
+		leftRun := left.Runs[index]
+		rightRun := right.Runs[index]
+		if leftRun.Time != rightRun.Time || leftRun.Profile != rightRun.Profile {
+			return false
+		}
+		if (leftRun.Content == nil) != (rightRun.Content == nil) {
+			return false
+		}
+		if leftRun.Content != nil && *leftRun.Content != *rightRun.Content {
 			return false
 		}
 	}

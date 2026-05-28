@@ -7,13 +7,23 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"atol-server/internal/receipt"
 )
 
 type Mode string
 
+type RunProfile string
+
 const (
 	ModeInterval   Mode = "interval"
 	ModeDailyTimes Mode = "daily_times"
+
+	ProfileDefault RunProfile = "default"
+	ProfileMorning RunProfile = "morning"
+	ProfileDay     RunProfile = "day"
+	ProfileEvening RunProfile = "evening"
+	ProfileCustom  RunProfile = "custom"
 
 	DefaultTimezone        = "Europe/Minsk"
 	DefaultIntervalMinutes = 15
@@ -37,6 +47,13 @@ type Settings struct {
 	IntervalMinutes int      `json:"intervalMinutes"`
 	Times           []string `json:"times"`
 	Timezone        string   `json:"timezone"`
+	Runs            []Run    `json:"runs,omitempty"`
+}
+
+type Run struct {
+	Time    string                   `json:"time"`
+	Profile RunProfile               `json:"profile"`
+	Content *receipt.ContentSettings `json:"content,omitempty"`
 }
 
 type State struct {
@@ -70,8 +87,15 @@ func (s Settings) Normalized() Settings {
 		normalized.Timezone = strings.TrimSpace(normalized.Timezone)
 	}
 	normalized.Times = normalizeTimes(normalized.Times)
+	normalized.Runs = normalizeRuns(normalized.Runs)
+	if len(normalized.Runs) > 0 {
+		normalized.Times = timesFromRuns(normalized.Runs)
+	} else {
+		normalized.Runs = runsFromTimes(normalized.Times)
+	}
 	if len(normalized.Times) == 0 {
 		normalized.Times = []string{"07:00"}
+		normalized.Runs = runsFromTimes(normalized.Times)
 	}
 	return normalized
 }
@@ -96,8 +120,61 @@ func (s Settings) Validate() error {
 				return err
 			}
 		}
+		for _, run := range normalized.Runs {
+			if _, _, err := parseHHMM(run.Time); err != nil {
+				return err
+			}
+			if err := run.Validate(); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+func (r Run) Validate() error {
+	switch r.Profile {
+	case ProfileDefault, ProfileMorning, ProfileDay, ProfileEvening:
+		return nil
+	case ProfileCustom:
+		if r.Content == nil {
+			return errors.New("custom schedule run requires content")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported schedule run profile %q", r.Profile)
+	}
+}
+
+func (r Run) ResolveContent(global receipt.ContentSettings) receipt.ContentSettings {
+	switch r.Profile {
+	case ProfileMorning:
+		return receipt.DefaultContentSettings()
+	case ProfileDay:
+		return receipt.ContentSettings{
+			Configured:        true,
+			ShowWeather:       true,
+			ShowWeatherAdvice: true,
+			ShowUsdBynRate:    true,
+			ShowBankRates:     true,
+			ShowCalendar:      true,
+		}
+	case ProfileEvening:
+		return receipt.ContentSettings{
+			Configured:        true,
+			ShowWeather:       true,
+			ShowWeatherAdvice: true,
+			ShowUsdBynRate:    true,
+			ShowBankRates:     true,
+			ShowCalendar:      true,
+			ShowNews:          true,
+		}
+	case ProfileCustom:
+		if r.Content != nil {
+			return r.Content.Normalized()
+		}
+	}
+	return global.Normalized()
 }
 
 func NextAfter(settings Settings, after time.Time) (time.Time, bool, error) {
@@ -147,6 +224,24 @@ func DueRun(settings Settings, state State, now time.Time) (time.Time, bool, err
 	return state.NextRunAt, true, nil
 }
 
+func RunForScheduledAt(settings Settings, scheduledAt time.Time) (Run, bool, error) {
+	normalized := settings.Normalized()
+	if normalized.Mode != ModeDailyTimes {
+		return Run{}, false, nil
+	}
+	location, err := time.LoadLocation(normalized.Timezone)
+	if err != nil {
+		return Run{}, false, err
+	}
+	timeKey := scheduledAt.In(location).Format("15:04")
+	for _, run := range normalized.Runs {
+		if run.Time == timeKey {
+			return run, true, nil
+		}
+	}
+	return Run{}, false, nil
+}
+
 func normalizeTimes(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	result := make([]string, 0, len(values))
@@ -162,6 +257,55 @@ func normalizeTimes(values []string) []string {
 		result = append(result, trimmed)
 	}
 	sort.Strings(result)
+	return result
+}
+
+func normalizeRuns(values []Run) []Run {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]Run, 0, len(values))
+	for _, value := range values {
+		run := value
+		run.Time = strings.TrimSpace(run.Time)
+		if run.Time == "" {
+			continue
+		}
+		if _, ok := seen[run.Time]; ok {
+			continue
+		}
+		seen[run.Time] = struct{}{}
+		if run.Profile == "" {
+			run.Profile = ProfileDefault
+		}
+		if run.Profile != ProfileCustom {
+			run.Content = nil
+		} else if run.Content != nil {
+			normalized := run.Content.Normalized()
+			run.Content = &normalized
+		}
+		result = append(result, run)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Time < result[j].Time
+	})
+	return result
+}
+
+func timesFromRuns(values []Run) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = append(result, value.Time)
+	}
+	return result
+}
+
+func runsFromTimes(values []string) []Run {
+	result := make([]Run, 0, len(values))
+	for _, value := range values {
+		result = append(result, Run{
+			Time:    value,
+			Profile: ProfileDefault,
+		})
+	}
 	return result
 }
 

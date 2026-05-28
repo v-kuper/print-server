@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"atol-server/internal/receipt"
 )
 
 func TestSettingsNormalizeSortsAndDeduplicatesDailyTimes(t *testing.T) {
@@ -24,6 +26,37 @@ func TestSettingsNormalizeSortsAndDeduplicatesDailyTimes(t *testing.T) {
 	}
 	if !reflect.DeepEqual(normalized.Times, []string{"07:00", "09:00"}) {
 		t.Fatalf("expected sorted unique times, got %#v", normalized.Times)
+	}
+	if !reflect.DeepEqual(normalized.Runs, []Run{
+		{Time: "07:00", Profile: ProfileDefault},
+		{Time: "09:00", Profile: ProfileDefault},
+	}) {
+		t.Fatalf("expected default runs from legacy times, got %#v", normalized.Runs)
+	}
+}
+
+func TestSettingsNormalizeSortsAndDeduplicatesRuns(t *testing.T) {
+	settings := Settings{
+		Enabled: true,
+		Mode:    ModeDailyTimes,
+		Runs: []Run{
+			{Time: " 09:00 ", Profile: ProfileEvening},
+			{Time: "07:00", Profile: ProfileMorning},
+			{Time: "09:00", Profile: ProfileDay},
+		},
+		Timezone: DefaultTimezone,
+	}
+
+	normalized := settings.Normalized()
+
+	if !reflect.DeepEqual(normalized.Times, []string{"07:00", "09:00"}) {
+		t.Fatalf("expected times from runs, got %#v", normalized.Times)
+	}
+	if !reflect.DeepEqual(normalized.Runs, []Run{
+		{Time: "07:00", Profile: ProfileMorning},
+		{Time: "09:00", Profile: ProfileEvening},
+	}) {
+		t.Fatalf("expected sorted unique runs, got %#v", normalized.Runs)
 	}
 }
 
@@ -46,6 +79,54 @@ func TestSettingsValidateRejectsInvalidDailyTime(t *testing.T) {
 
 	if err := settings.Validate(); err == nil {
 		t.Fatal("expected invalid time error")
+	}
+}
+
+func TestSettingsValidateRejectsUnknownRunProfile(t *testing.T) {
+	settings := DefaultSettings()
+	settings.Enabled = true
+	settings.Mode = ModeDailyTimes
+	settings.Runs = []Run{{Time: "07:00", Profile: "weekend"}}
+
+	if err := settings.Validate(); err == nil {
+		t.Fatal("expected unknown profile error")
+	}
+}
+
+func TestSettingsValidateRejectsCustomRunWithoutContent(t *testing.T) {
+	settings := DefaultSettings()
+	settings.Enabled = true
+	settings.Mode = ModeDailyTimes
+	settings.Runs = []Run{{Time: "07:00", Profile: ProfileCustom}}
+
+	if err := settings.Validate(); err == nil {
+		t.Fatal("expected missing custom content error")
+	}
+}
+
+func TestRunResolvesPresetContent(t *testing.T) {
+	global := Run{Profile: ProfileDefault}.ResolveContent(receiptContent(false, false, true, false, false, false, false, false, false))
+	if global.ShowWeather || !global.ShowMotivationQuote {
+		t.Fatalf("expected default profile to use global content, got %#v", global)
+	}
+
+	morning := Run{Profile: ProfileMorning}.ResolveContent(receiptContent(false, false, false, false, false, false, true, false, false))
+	if !morning.ShowWeather || !morning.ShowWeatherAdvice || !morning.ShowMotivationQuote ||
+		!morning.ShowTonPortfolio || !morning.ShowUsdBynRate || !morning.ShowBankRates ||
+		!morning.ShowCalendar || !morning.ShowNews || morning.ShowMail {
+		t.Fatalf("expected morning preset to enable all daily sections except mail, got %#v", morning)
+	}
+
+	day := Run{Profile: ProfileDay}.ResolveContent(receiptContent(false, false, false, false, false, false, false, false, false))
+	if !day.ShowWeather || !day.ShowWeatherAdvice || !day.ShowUsdBynRate || !day.ShowBankRates || !day.ShowCalendar ||
+		day.ShowMotivationQuote || day.ShowTonPortfolio || day.ShowMail || day.ShowNews {
+		t.Fatalf("expected day preset to include weather, rates, calendar only, got %#v", day)
+	}
+
+	evening := Run{Profile: ProfileEvening}.ResolveContent(receiptContent(false, false, false, false, false, false, false, false, false))
+	if !evening.ShowWeather || !evening.ShowWeatherAdvice || !evening.ShowUsdBynRate || !evening.ShowBankRates ||
+		!evening.ShowCalendar || !evening.ShowNews || evening.ShowMotivationQuote || evening.ShowTonPortfolio || evening.ShowMail {
+		t.Fatalf("expected evening preset to include day sections plus news, got %#v", evening)
 	}
 }
 
@@ -136,5 +217,20 @@ func TestNextAfterForIntervalCountsFromReferenceTime(t *testing.T) {
 	}
 	if want := now.Add(15 * time.Minute); !next.Equal(want) {
 		t.Fatalf("expected %s, got %s", want, next)
+	}
+}
+
+func receiptContent(weather, weatherAdvice, motivation, ton, usdByn, bankRates, mail, calendar, news bool) receipt.ContentSettings {
+	return receipt.ContentSettings{
+		Configured:          true,
+		ShowWeather:         weather,
+		ShowWeatherAdvice:   weatherAdvice,
+		ShowMotivationQuote: motivation,
+		ShowTonPortfolio:    ton,
+		ShowUsdBynRate:      usdByn,
+		ShowBankRates:       bankRates,
+		ShowMail:            mail,
+		ShowCalendar:        calendar,
+		ShowNews:            news,
 	}
 }
