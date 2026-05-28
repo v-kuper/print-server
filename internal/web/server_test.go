@@ -129,6 +129,7 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`id="weather-location-results"`,
 		`id="news-source-list"`,
 		`id="schedule-time-list"`,
+		`id="schedule-interval-content"`,
 		`id="schedule-run-header"`,
 		`Точное время и состав`,
 		`id="image-editor-file"`,
@@ -188,6 +189,7 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`[hidden]`,
 				`display: none !important`,
 				`overflow-wrap: anywhere`,
+				`font-size: 16px;`,
 				`.primary-print {`,
 			},
 		},
@@ -202,7 +204,11 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`/api/image-editor/save`,
 				`/api/image-editor/print`,
 				`/api/print/text`,
+				`function wrapTextPrintLine`,
+				`function effectiveTextPrintLineLength`,
+				`wrapTextPrintLine(lineText, effectiveTextPrintLineLength(block.font, block.doubleWidth))`,
 				`data-schedule-content-key`,
+				`data-interval-content-key`,
 				`function applyImageEditorProcessing`,
 				`function createBlankImageEditorCanvas`,
 				`function applyImageEditorShape`,
@@ -271,6 +277,13 @@ func TestRuntimeAssetsServedWithoutCache(t *testing.T) {
 
 func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	translateTitles := false
+	intervalContent := receipt.ContentSettings{
+		Configured:     true,
+		ShowWeather:    true,
+		ShowUsdBynRate: true,
+		ShowBankRates:  true,
+		ShowNews:       true,
+	}
 	store := &fakeStore{
 		config:   printer.Config{Host: "192.168.0.118", Port: 5555},
 		location: weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
@@ -319,6 +332,7 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 			IntervalMinutes: 30,
 			Times:           []string{"07:00", "09:00"},
 			Timezone:        schedule.DefaultTimezone,
+			IntervalContent: &intervalContent,
 		},
 	}
 	googleClient := &fakeGoogleClient{status: googleintegration.Status{
@@ -403,6 +417,9 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	}
 	if len(payload.Data.Schedule.Runs) != 2 || payload.Data.Schedule.Runs[0].Profile != schedule.ProfileDefault {
 		t.Fatalf("expected normalized default schedule runs in bootstrap, got %#v", payload.Data.Schedule.Runs)
+	}
+	if payload.Data.Schedule.IntervalContent == nil || *payload.Data.Schedule.IntervalContent != intervalContent {
+		t.Fatalf("expected interval content in bootstrap, got %#v", payload.Data.Schedule.IntervalContent)
 	}
 	if len(payload.Data.FontOptions) != 10 || payload.Data.FontOptions[9] != 9 {
 		t.Fatalf("expected font options 0..9, got %#v", payload.Data.FontOptions)
@@ -1275,6 +1292,52 @@ func TestSaveScheduleEndpointPersistsSettingsAndResetsScheduler(t *testing.T) {
 	}
 }
 
+func TestSaveScheduleEndpointPersistsIntervalContent(t *testing.T) {
+	store := &fakeStore{}
+	scheduler := &fakeScheduler{}
+	server := NewServer(store, &fakePrinter{}, fixedClock, WithScheduler(scheduler))
+
+	body := bytes.NewBufferString(`{
+		"enabled": true,
+		"mode": "interval",
+		"intervalMinutes": 30,
+		"timezone": "Europe/Minsk",
+		"intervalContent": {
+			"configured": true,
+			"showWeather": true,
+			"showWeatherAdvice": false,
+			"showMotivationQuote": false,
+			"showTonPortfolio": false,
+			"showUsdBynRate": true,
+			"showBankRates": true,
+			"showMail": false,
+			"showCalendar": false,
+			"showNews": true
+		}
+	}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/settings/schedule", body)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if store.scheduleSettings.IntervalContent == nil {
+		t.Fatal("expected interval content to be saved")
+	}
+	if !store.scheduleSettings.IntervalContent.ShowWeather ||
+		!store.scheduleSettings.IntervalContent.ShowUsdBynRate ||
+		!store.scheduleSettings.IntervalContent.ShowBankRates ||
+		!store.scheduleSettings.IntervalContent.ShowNews ||
+		store.scheduleSettings.IntervalContent.ShowCalendar {
+		t.Fatalf("expected saved interval content toggles, got %#v", store.scheduleSettings.IntervalContent)
+	}
+	if scheduler.resetCalls != 1 {
+		t.Fatalf("expected scheduler reset call, got %d", scheduler.resetCalls)
+	}
+}
+
 func TestSaveScheduleEndpointPersistsRunProfiles(t *testing.T) {
 	store := &fakeStore{}
 	scheduler := &fakeScheduler{}
@@ -1746,6 +1809,12 @@ func scheduleSettingsEqual(left schedule.Settings, right schedule.Settings) bool
 		left.Timezone != right.Timezone ||
 		len(left.Times) != len(right.Times) ||
 		len(left.Runs) != len(right.Runs) {
+		return false
+	}
+	if (left.IntervalContent == nil) != (right.IntervalContent == nil) {
+		return false
+	}
+	if left.IntervalContent != nil && *left.IntervalContent != *right.IntervalContent {
 		return false
 	}
 	for index := range left.Times {

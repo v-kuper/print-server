@@ -60,6 +60,26 @@ func TestSettingsNormalizeSortsAndDeduplicatesRuns(t *testing.T) {
 	}
 }
 
+func TestSettingsNormalizePreservesIntervalContent(t *testing.T) {
+	content := receiptContent(true, false, false, false, true, true, false, false, true)
+	settings := Settings{
+		Enabled:         true,
+		Mode:            ModeInterval,
+		IntervalMinutes: 15,
+		Timezone:        DefaultTimezone,
+		IntervalContent: &content,
+	}
+
+	normalized := settings.Normalized()
+
+	if normalized.IntervalContent == nil {
+		t.Fatal("expected interval content to be preserved")
+	}
+	if *normalized.IntervalContent != content {
+		t.Fatalf("expected interval content %#v, got %#v", content, *normalized.IntervalContent)
+	}
+}
+
 func TestSettingsValidateRejectsInvalidInterval(t *testing.T) {
 	settings := DefaultSettings()
 	settings.Enabled = true

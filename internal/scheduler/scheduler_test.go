@@ -219,6 +219,43 @@ func TestRunDueUsesGlobalPrintForDefaultProfileAndInterval(t *testing.T) {
 	}
 }
 
+func TestRunDueUsesIntervalContentWhenConfigured(t *testing.T) {
+	now := time.Date(2026, 5, 25, 9, 7, 0, 0, time.UTC)
+	content := receipt.ContentSettings{
+		Configured:     true,
+		ShowWeather:    true,
+		ShowUsdBynRate: true,
+		ShowBankRates:  true,
+		ShowNews:       true,
+	}
+	store := &fakeStore{
+		settings: schedule.Settings{
+			Enabled:         true,
+			Mode:            schedule.ModeInterval,
+			IntervalMinutes: 15,
+			Timezone:        schedule.DefaultTimezone,
+			IntervalContent: &content,
+		},
+		state: schedule.State{NextRunAt: now.Add(-time.Minute)},
+	}
+	job := &fakeJob{}
+	service := NewService(store, job, func() time.Time { return now })
+
+	didRun, err := service.RunDue(context.Background())
+	if err != nil {
+		t.Fatalf("run due: %v", err)
+	}
+	if !didRun {
+		t.Fatal("expected interval due run")
+	}
+	if job.calls != 0 || job.contentCalls != 1 {
+		t.Fatalf("expected interval content print, got calls=%d contentCalls=%d", job.calls, job.contentCalls)
+	}
+	if job.printedContent != content {
+		t.Fatalf("expected interval content %#v, got %#v", content, job.printedContent)
+	}
+}
+
 func TestRunDueRecordsPrintErrorAndAdvancesNextRun(t *testing.T) {
 	now := time.Date(2026, 5, 25, 9, 7, 0, 0, time.UTC)
 	store := &fakeStore{

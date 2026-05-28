@@ -42,12 +42,13 @@ var allowedIntervals = map[int]struct{}{
 }
 
 type Settings struct {
-	Enabled         bool     `json:"enabled"`
-	Mode            Mode     `json:"mode"`
-	IntervalMinutes int      `json:"intervalMinutes"`
-	Times           []string `json:"times"`
-	Timezone        string   `json:"timezone"`
-	Runs            []Run    `json:"runs,omitempty"`
+	Enabled         bool                     `json:"enabled"`
+	Mode            Mode                     `json:"mode"`
+	IntervalMinutes int                      `json:"intervalMinutes"`
+	Times           []string                 `json:"times"`
+	Timezone        string                   `json:"timezone"`
+	IntervalContent *receipt.ContentSettings `json:"intervalContent,omitempty"`
+	Runs            []Run                    `json:"runs,omitempty"`
 }
 
 type Run struct {
@@ -87,6 +88,10 @@ func (s Settings) Normalized() Settings {
 		normalized.Timezone = strings.TrimSpace(normalized.Timezone)
 	}
 	normalized.Times = normalizeTimes(normalized.Times)
+	if normalized.IntervalContent != nil {
+		content := normalized.IntervalContent.Normalized()
+		normalized.IntervalContent = &content
+	}
 	normalized.Runs = normalizeRuns(normalized.Runs)
 	if len(normalized.Runs) > 0 {
 		normalized.Times = timesFromRuns(normalized.Runs)

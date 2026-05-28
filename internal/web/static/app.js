@@ -152,6 +152,46 @@ function renderScheduleTimes(times, runs) {
   values.forEach(run => addScheduleTime(run));
 }
 
+function renderScheduleContentGroups(container, content, keyAttribute) {
+  if (!container) {
+    return;
+  }
+  const customContent = scheduleContentFromSettings(content);
+  const groups = {};
+  const groupOrder = [];
+  for (const option of scheduleContentOptions) {
+    if (!groups[option.group]) {
+      groups[option.group] = [];
+      groupOrder.push(option.group);
+    }
+    groups[option.group].push(option);
+  }
+  container.replaceChildren();
+  for (const groupName of groupOrder) {
+    const col = document.createElement("div");
+    col.className = "content-group";
+    const title = document.createElement("div");
+    title.className = "content-group-title";
+    title.textContent = groupName;
+    col.appendChild(title);
+    for (const option of groups[groupName]) {
+      const label = document.createElement("label");
+      label.className = "toggle-label";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.dataset[keyAttribute] = option.key;
+      checkbox.checked = Boolean(customContent[option.key]);
+      label.append(checkbox, document.createTextNode(option.label));
+      col.appendChild(label);
+    }
+    container.appendChild(col);
+  }
+}
+
+function renderIntervalContent(content) {
+  renderScheduleContentGroups(document.querySelector("#schedule-interval-content"), content, "intervalContentKey");
+}
+
 function renderNewsSources(newsSettings, presets) {
   if (!newsSourceListEl) {
     return;
@@ -276,6 +316,7 @@ function applyBootstrap(data) {
   const schedule = data.schedule || {};
   setScheduleMode(schedule.mode);
   renderScheduleIntervals(data.scheduleIntervals || [], schedule.intervalMinutes);
+  renderIntervalContent(schedule.intervalContent || content);
   renderScheduleTimes(schedule.times || [], schedule.runs || []);
 
   renderGoogleStatus(data.googleStatus || {});
@@ -816,6 +857,14 @@ function scheduleRowContent(row) {
   return scheduleContentFromSettings(content);
 }
 
+function readIntervalContentSettings() {
+  const content = { configured: true };
+  document.querySelectorAll("[data-interval-content-key]").forEach(input => {
+    content[input.dataset.intervalContentKey] = input.checked;
+  });
+  return scheduleContentFromSettings(content);
+}
+
 function updateScheduleRowSummary(row) {
   const summary = row.querySelector("[data-schedule-run-summary]");
   if (!summary) {
@@ -852,34 +901,9 @@ function addScheduleTime(value = "07:00") {
   remove.dataset.action = "remove-schedule-time";
   remove.textContent = "Удалить";
 
-  const groups = {};
-  const groupOrder = [];
-  for (const opt of scheduleContentOptions) {
-    if (!groups[opt.group]) { groups[opt.group] = []; groupOrder.push(opt.group); }
-    groups[opt.group].push(opt);
-  }
-
   const custom = document.createElement("div");
   custom.className = "schedule-custom-content";
-  for (const groupName of groupOrder) {
-    const col = document.createElement("div");
-    col.className = "content-group";
-    const title = document.createElement("div");
-    title.className = "content-group-title";
-    title.textContent = groupName;
-    col.appendChild(title);
-    for (const option of groups[groupName]) {
-      const label = document.createElement("label");
-      label.className = "toggle-label";
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.dataset.scheduleContentKey = option.key;
-      checkbox.checked = Boolean(customContent[option.key]);
-      label.append(checkbox, document.createTextNode(option.label));
-      col.appendChild(label);
-    }
-    custom.appendChild(col);
-  }
+  renderScheduleContentGroups(custom, customContent, "scheduleContentKey");
 
   row.append(timeField, remove, custom);
   document.querySelector("#schedule-time-list").appendChild(row);
@@ -905,6 +929,7 @@ function readScheduleSettings(enabled) {
     enabled,
     mode: scheduleMode(),
     intervalMinutes: Number.isFinite(interval) ? interval : 15,
+    intervalContent: readIntervalContentSettings(),
     times,
     runs,
     timezone: "Europe/Minsk"
@@ -1820,20 +1845,66 @@ function textPrintPayload() {
   return { blocks };
 }
 
+function textPrintRuneLength(value) {
+  return Array.from(String(value || "")).length;
+}
+
+function textPrintRuneSlice(value, start, end) {
+  return Array.from(String(value || "")).slice(start, end).join("");
+}
+
+function effectiveTextPrintLineLength(font, doubleWidth) {
+  const metric = metricForFont(font);
+  const lineLength = metric.lineLength || fallbackFontMetrics[0].lineLength || 32;
+  const scale = doubleWidth ? 2 : 1;
+  return Math.max(1, Math.floor(lineLength / scale));
+}
+
+function wrapTextPrintLine(lineText, limit) {
+  const text = String(lineText || "");
+  if (text === "" || textPrintRuneLength(text) <= limit) {
+    return [text];
+  }
+
+  const result = [];
+  let current = "";
+  for (const word of text.trim().split(/\s+/)) {
+    if (current === "") {
+      current = word;
+    } else if (textPrintRuneLength(current) + 1 + textPrintRuneLength(word) <= limit) {
+      current += " " + word;
+    } else {
+      result.push(current);
+      current = word;
+    }
+
+    while (textPrintRuneLength(current) > limit) {
+      result.push(textPrintRuneSlice(current, 0, limit));
+      current = textPrintRuneSlice(current, limit);
+    }
+  }
+  if (current !== "") {
+    result.push(current);
+  }
+  return result.length > 0 ? result : [text];
+}
+
 function textPrintPreviewLines(payload = textPrintPayload()) {
   const lines = [];
   for (const block of payload.blocks) {
     const font = metricForFont(block.font);
     const text = (block.text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     for (const lineText of text.split("\n")) {
-      lines.push({
-        Text: lineText,
-        Alignment: block.alignment || "left",
-        Role: "normal",
-        Font: font,
-        DoubleWidth: block.doubleWidth,
-        DoubleHeight: block.doubleHeight,
-      });
+      for (const wrappedLineText of wrapTextPrintLine(lineText, effectiveTextPrintLineLength(block.font, block.doubleWidth))) {
+        lines.push({
+          Text: wrappedLineText,
+          Alignment: block.alignment || "left",
+          Role: "normal",
+          Font: font,
+          DoubleWidth: block.doubleWidth,
+          DoubleHeight: block.doubleHeight,
+        });
+      }
     }
   }
   return lines;

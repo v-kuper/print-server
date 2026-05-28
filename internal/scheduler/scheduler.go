@@ -177,6 +177,16 @@ func (s *Service) RunDue(ctx context.Context) (bool, error) {
 
 func (s *Service) printScheduledReceipt(ctx context.Context, settings schedule.Settings, scheduledAt time.Time) error {
 	normalized := settings.Normalized()
+	if normalized.Mode == schedule.ModeInterval {
+		if normalized.IntervalContent == nil {
+			return s.job.PrintDailyReceipt(ctx)
+		}
+		contentJob, ok := s.job.(ContentJob)
+		if !ok {
+			return fmt.Errorf("scheduled content printing is not supported")
+		}
+		return contentJob.PrintDailyReceiptWithContent(ctx, *normalized.IntervalContent)
+	}
 	if normalized.Mode != schedule.ModeDailyTimes {
 		return s.job.PrintDailyReceipt(ctx)
 	}

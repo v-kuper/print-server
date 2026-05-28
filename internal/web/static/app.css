@@ -698,6 +698,10 @@ button:disabled {
   gap: 8px;
 }
 
+.schedule-interval-content {
+  margin-top: 4px;
+}
+
 .schedule-run-header {
   display: grid;
   grid-template-columns: minmax(120px, 160px) minmax(0, 1fr);
@@ -954,7 +958,7 @@ button:disabled {
   margin: 0 auto;
   color: #111;
   font-family: "Courier New", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.22;
   letter-spacing: 0;
   white-space: pre-wrap;
