@@ -26,13 +26,28 @@ type NewsItem struct {
 	Link          string `json:"link,omitempty"`
 }
 
+type ReceiptLine struct {
+	Text         string `json:"text"`
+	Alignment    string `json:"alignment,omitempty"`
+	Role         string `json:"role,omitempty"`
+	Font         int    `json:"font,omitempty"`
+	DoubleWidth  bool   `json:"doubleWidth,omitempty"`
+	DoubleHeight bool   `json:"doubleHeight,omitempty"`
+}
+
+type CreateInput struct {
+	NewsItems    []NewsItem
+	ReceiptLines []ReceiptLine
+}
+
 type Snapshot struct {
-	ID          string
-	WorkspaceID string
-	Status      Status
-	NewsItems   []NewsItem
-	Error       string
-	CreatedAt   time.Time
-	PublishedAt *time.Time
-	FailedAt    *time.Time
+	ID           string
+	WorkspaceID  string
+	Status       Status
+	NewsItems    []NewsItem
+	ReceiptLines []ReceiptLine
+	Error        string
+	CreatedAt    time.Time
+	PublishedAt  *time.Time
+	FailedAt     *time.Time
 }

@@ -41,7 +41,7 @@ type Printer interface {
 }
 
 type ReceiptSnapshotStore interface {
-	Create(context.Context, []receiptsnapshot.NewsItem) (receiptsnapshot.Snapshot, error)
+	Create(context.Context, receiptsnapshot.CreateInput) (receiptsnapshot.Snapshot, error)
 	Publish(context.Context, string) error
 	Fail(context.Context, string, error) error
 }
@@ -122,6 +122,7 @@ type dailyReceiptBuild struct {
 }
 
 const defaultGeneratedAssetsPath = "/opt/atol-server/assets"
+const defaultReceiptSnapshotBaseURL = "http://localhost:8080"
 
 type BuildError struct {
 	Status int
@@ -458,12 +459,15 @@ func (s *ReceiptService) appendNewsSnapshotQRCode(ctx context.Context, lines []r
 	}
 	settings = settings.Normalized()
 	if settings.BaseURL == "" {
-		return lines, "", []string{"QR-ссылка на онлайн-слепок не настроена."}
+		settings.BaseURL = defaultReceiptSnapshotBaseURL
 	}
 	if err := settings.Validate(); err != nil {
 		return lines, "", []string{"QR-ссылка на онлайн-слепок некорректна: " + err.Error()}
 	}
-	snapshot, err := s.snapshotStore.Create(ctx, newsSnapshotItems(items))
+	snapshot, err := s.snapshotStore.Create(ctx, receiptsnapshot.CreateInput{
+		NewsItems:    newsSnapshotItems(items),
+		ReceiptLines: receiptSnapshotLines(lines),
+	})
 	if err != nil {
 		return lines, "", []string{"Онлайн-слепок новостей не создан: " + err.Error()}
 	}
@@ -490,6 +494,21 @@ func newsSnapshotItems(items []news.Item) []receiptsnapshot.NewsItem {
 			OriginalTitle: strings.TrimSpace(item.OriginalTitle),
 			SourceName:    strings.TrimSpace(item.SourceName),
 			Link:          strings.TrimSpace(item.Link),
+		})
+	}
+	return result
+}
+
+func receiptSnapshotLines(lines []receipt.Line) []receiptsnapshot.ReceiptLine {
+	result := make([]receiptsnapshot.ReceiptLine, 0, len(lines))
+	for _, line := range lines {
+		result = append(result, receiptsnapshot.ReceiptLine{
+			Text:         line.Text,
+			Alignment:    string(line.Alignment),
+			Role:         string(line.Role),
+			Font:         line.Font,
+			DoubleWidth:  line.DoubleWidth,
+			DoubleHeight: line.DoubleHeight,
 		})
 	}
 	return result

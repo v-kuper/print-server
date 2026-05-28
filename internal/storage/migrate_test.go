@@ -29,7 +29,7 @@ func TestEmbeddedMigrationDefinesPersistenceTables(t *testing.T) {
 			t.Fatalf("expected migration to create %s table", table)
 		}
 	}
-	if !strings.Contains(sql, "value JSONB") || !strings.Contains(sql, "preview_png BYTEA") {
+	if !strings.Contains(sql, "value JSONB") || !strings.Contains(sql, "preview_png BYTEA") || !strings.Contains(sql, "receipt_lines JSONB") {
 		t.Fatalf("expected migration to include JSONB settings and BYTEA image data:\n%s", sql)
 	}
 }

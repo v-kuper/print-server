@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS receipt_snapshots (
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     status TEXT NOT NULL CHECK (status IN ('pending', 'published', 'failed')),
     news_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+    receipt_lines JSONB NOT NULL DEFAULT '[]'::jsonb,
     error TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     published_at TIMESTAMPTZ,

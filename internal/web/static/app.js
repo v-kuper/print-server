@@ -317,7 +317,7 @@ function applyBootstrap(data) {
   renderNewsSources(news, data.newsPresets || []);
 
   const receiptSnapshot = data.receiptSnapshot || {};
-  setValue("#receipt-snapshot-base-url", receiptSnapshot.baseUrl);
+  setValue("#receipt-snapshot-base-url", receiptSnapshot.baseUrl || defaultReceiptSnapshotBaseURL());
 
   const schedule = data.schedule || {};
   setScheduleMode(schedule.mode);
@@ -723,11 +723,15 @@ async function saveNewsSettings() {
 }
 
 async function saveReceiptSnapshotSettings() {
+  const baseUrlInput = document.querySelector("#receipt-snapshot-base-url");
+  if (baseUrlInput && !baseUrlInput.value.trim()) {
+    baseUrlInput.value = defaultReceiptSnapshotBaseURL();
+  }
   const response = await fetch("/api/settings/receipt-snapshot", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      baseUrl: document.querySelector("#receipt-snapshot-base-url").value
+      baseUrl: baseUrlInput ? baseUrlInput.value : defaultReceiptSnapshotBaseURL()
     })
   });
   const payload = await response.json();
@@ -735,6 +739,10 @@ async function saveReceiptSnapshotSettings() {
     throw new Error(payload.error || "Не удалось сохранить настройки онлайн-слепка.");
   }
   return payload;
+}
+
+function defaultReceiptSnapshotBaseURL() {
+  return window.location.origin.replace(/\/+$/, "");
 }
 
 function readFont(selector) {
@@ -1713,6 +1721,26 @@ function renderLinesPreview(target, lines, baseFontSelector) {
   paper.style.setProperty("--paper-chars", normalMetric.lineLength || 32);
   for (const line of lines) {
     const node = document.createElement("div");
+    const qrValue = typeof line.QRCode === "string" ? line.QRCode.trim() : "";
+    if (qrValue) {
+      node.className = [
+        "receipt-line",
+        "receipt-qr-line",
+        "align-" + (line.Alignment || "center"),
+        line.Role ? "role-" + line.Role : ""
+      ].filter(Boolean).join(" ");
+      try {
+        node.appendChild(renderQRCodeSVG(qrValue));
+      } catch (error) {
+        const text = document.createElement("span");
+        text.className = "receipt-line-text";
+        text.textContent = qrValue;
+        node.title = error.message;
+        node.appendChild(text);
+      }
+      paper.appendChild(node);
+      continue;
+    }
     const imageURL = line.ImageURL || (line.ImageKey ? withAssetVersion("/assets/weather-icons/print/" + encodeURIComponent(line.ImageKey) + ".png") : "");
     if (imageURL) {
       node.className = [
@@ -1758,6 +1786,316 @@ function renderLinesPreview(target, lines, baseFontSelector) {
     paper.appendChild(node);
   }
   target.replaceChildren(paper);
+}
+
+function renderQRCodeSVG(value) {
+  const matrix = qrMatrix(value);
+  const quietZone = 4;
+  const moduleCount = matrix.length;
+  const viewSize = moduleCount + quietZone * 2;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("receipt-qr");
+  svg.setAttribute("viewBox", "0 0 " + viewSize + " " + viewSize);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "QR");
+  svg.setAttribute("data-value", value);
+
+  const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  background.setAttribute("width", String(viewSize));
+  background.setAttribute("height", String(viewSize));
+  background.setAttribute("fill", "#fff");
+  svg.appendChild(background);
+
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  let data = "";
+  for (let row = 0; row < moduleCount; row += 1) {
+    for (let col = 0; col < moduleCount; col += 1) {
+      if (matrix[row][col]) {
+        data += "M" + (col + quietZone) + " " + (row + quietZone) + "h1v1h-1z";
+      }
+    }
+  }
+  path.setAttribute("d", data);
+  path.setAttribute("fill", "#000");
+  svg.appendChild(path);
+  return svg;
+}
+
+function qrMatrix(value) {
+  const version = 2;
+  const size = version * 4 + 17;
+  const dataCodewordCount = 34;
+  const errorCodewordCount = 10;
+  const mask = 0;
+  const bytes = qrBytes(value);
+  if (bytes.length > 32) {
+    throw new Error("QR preview supports up to 32 bytes in diagnostic mode.");
+  }
+
+  const dataCodewords = qrDataCodewords(bytes, dataCodewordCount);
+  const codewords = dataCodewords.concat(qrReedSolomonRemainder(dataCodewords, errorCodewordCount));
+  const bits = [];
+  for (const codeword of codewords) {
+    qrAppendBits(bits, codeword, 8);
+  }
+
+  const matrix = Array.from({ length: size }, () => Array(size).fill(false));
+  const reserved = Array.from({ length: size }, () => Array(size).fill(false));
+  qrAddFunctionPatterns(matrix, reserved, version);
+  qrPlaceDataBits(matrix, reserved, bits, mask);
+  qrAddFormatBits(matrix, mask);
+  return matrix;
+}
+
+function qrBytes(value) {
+  if (window.TextEncoder) {
+    return Array.from(new TextEncoder().encode(value));
+  }
+  return Array.from(value, char => char.charCodeAt(0) & 0xff);
+}
+
+function qrDataCodewords(bytes, codewordCount) {
+  const bits = [];
+  qrAppendBits(bits, 0x4, 4);
+  qrAppendBits(bits, bytes.length, 8);
+  for (const byte of bytes) {
+    qrAppendBits(bits, byte, 8);
+  }
+  const capacity = codewordCount * 8;
+  qrAppendBits(bits, 0, Math.min(4, capacity - bits.length));
+  while (bits.length % 8 !== 0) {
+    bits.push(false);
+  }
+  for (let padIndex = 0; bits.length < capacity; padIndex += 1) {
+    qrAppendBits(bits, padIndex % 2 === 0 ? 0xec : 0x11, 8);
+  }
+
+  const codewords = [];
+  for (let index = 0; index < bits.length; index += 8) {
+    let value = 0;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = (value << 1) | (bits[index + bit] ? 1 : 0);
+    }
+    codewords.push(value);
+  }
+  return codewords;
+}
+
+function qrAppendBits(target, value, width) {
+  for (let bit = width - 1; bit >= 0; bit -= 1) {
+    target.push(((value >>> bit) & 1) !== 0);
+  }
+}
+
+function qrAddFunctionPatterns(matrix, reserved, version) {
+  const size = matrix.length;
+  qrAddFinderPattern(matrix, reserved, 0, 0);
+  qrAddFinderPattern(matrix, reserved, 0, size - 7);
+  qrAddFinderPattern(matrix, reserved, size - 7, 0);
+  for (let index = 8; index < size - 8; index += 1) {
+    qrSetFunctionModule(matrix, reserved, 6, index, index % 2 === 0);
+    qrSetFunctionModule(matrix, reserved, index, 6, index % 2 === 0);
+  }
+  if (version >= 2) {
+    qrAddAlignmentPattern(matrix, reserved, size - 7, size - 7);
+  }
+  qrSetFunctionModule(matrix, reserved, version * 4 + 9, 8, true);
+  qrReserveFormatBits(reserved);
+}
+
+function qrAddFinderPattern(matrix, reserved, top, left) {
+  for (let row = -1; row <= 7; row += 1) {
+    for (let col = -1; col <= 7; col += 1) {
+      const targetRow = top + row;
+      const targetCol = left + col;
+      if (!qrInBounds(matrix, targetRow, targetCol)) {
+        continue;
+      }
+      const dark = row >= 0 && row <= 6 && col >= 0 && col <= 6 &&
+        (row === 0 || row === 6 || col === 0 || col === 6 || (row >= 2 && row <= 4 && col >= 2 && col <= 4));
+      qrSetFunctionModule(matrix, reserved, targetRow, targetCol, dark);
+    }
+  }
+}
+
+function qrAddAlignmentPattern(matrix, reserved, centerRow, centerCol) {
+  for (let row = -2; row <= 2; row += 1) {
+    for (let col = -2; col <= 2; col += 1) {
+      const dark = Math.max(Math.abs(row), Math.abs(col)) === 2 || (row === 0 && col === 0);
+      qrSetFunctionModule(matrix, reserved, centerRow + row, centerCol + col, dark);
+    }
+  }
+}
+
+function qrReserveFormatBits(reserved) {
+  const size = reserved.length;
+  const reserve = (row, col) => {
+    if (row >= 0 && row < size && col >= 0 && col < size) {
+      reserved[row][col] = true;
+    }
+  };
+  for (let index = 0; index <= 5; index += 1) {
+    reserve(index, 8);
+    reserve(8, index);
+  }
+  reserve(7, 8);
+  reserve(8, 8);
+  reserve(8, 7);
+  for (let index = 0; index < 8; index += 1) {
+    reserve(8, size - 1 - index);
+  }
+  for (let index = 8; index < 15; index += 1) {
+    reserve(size - 15 + index, 8);
+  }
+}
+
+function qrSetFunctionModule(matrix, reserved, row, col, dark) {
+  if (!qrInBounds(matrix, row, col)) {
+    return;
+  }
+  matrix[row][col] = dark;
+  reserved[row][col] = true;
+}
+
+function qrInBounds(matrix, row, col) {
+  return row >= 0 && row < matrix.length && col >= 0 && col < matrix.length;
+}
+
+function qrPlaceDataBits(matrix, reserved, bits, mask) {
+  const size = matrix.length;
+  let bitIndex = 0;
+  let upward = true;
+  for (let rightCol = size - 1; rightCol > 0; rightCol -= 2) {
+    if (rightCol === 6) {
+      rightCol -= 1;
+    }
+    for (let rowOffset = 0; rowOffset < size; rowOffset += 1) {
+      const row = upward ? size - 1 - rowOffset : rowOffset;
+      for (let colOffset = 0; colOffset < 2; colOffset += 1) {
+        const col = rightCol - colOffset;
+        if (reserved[row][col]) {
+          continue;
+        }
+        let dark = bitIndex < bits.length ? bits[bitIndex] : false;
+        if (qrMaskApplies(mask, row, col)) {
+          dark = !dark;
+        }
+        matrix[row][col] = dark;
+        bitIndex += 1;
+      }
+    }
+    upward = !upward;
+  }
+}
+
+function qrMaskApplies(mask, row, col) {
+  switch (mask) {
+    case 0:
+      return (row + col) % 2 === 0;
+    case 1:
+      return row % 2 === 0;
+    case 2:
+      return col % 3 === 0;
+    case 3:
+      return (row + col) % 3 === 0;
+    case 4:
+      return (Math.floor(row / 2) + Math.floor(col / 3)) % 2 === 0;
+    case 5:
+      return ((row * col) % 2) + ((row * col) % 3) === 0;
+    case 6:
+      return (((row * col) % 2) + ((row * col) % 3)) % 2 === 0;
+    case 7:
+      return (((row + col) % 2) + ((row * col) % 3)) % 2 === 0;
+    default:
+      return false;
+  }
+}
+
+function qrAddFormatBits(matrix, mask) {
+  const size = matrix.length;
+  const bits = qrFormatBits(mask);
+  const bit = index => ((bits >>> index) & 1) !== 0;
+  for (let index = 0; index <= 5; index += 1) {
+    matrix[index][8] = bit(index);
+    matrix[8][index] = bit(index);
+  }
+  matrix[7][8] = bit(6);
+  matrix[8][8] = bit(7);
+  matrix[8][7] = bit(8);
+  for (let index = 9; index < 15; index += 1) {
+    matrix[8][14 - index] = bit(index);
+  }
+  for (let index = 0; index < 8; index += 1) {
+    matrix[8][size - 1 - index] = bit(index);
+  }
+  for (let index = 8; index < 15; index += 1) {
+    matrix[size - 15 + index][8] = bit(index);
+  }
+  matrix[size - 8][8] = true;
+}
+
+function qrFormatBits(mask) {
+  const errorCorrectionLevelBits = 1;
+  const data = (errorCorrectionLevelBits << 3) | mask;
+  let remainder = data << 10;
+  for (let bit = 14; bit >= 10; bit -= 1) {
+    if (((remainder >>> bit) & 1) !== 0) {
+      remainder ^= 0x537 << (bit - 10);
+    }
+  }
+  return ((data << 10) | remainder) ^ 0x5412;
+}
+
+function qrReedSolomonRemainder(data, degree) {
+  const generator = qrReedSolomonGenerator(degree);
+  const result = Array(degree).fill(0);
+  for (const byte of data) {
+    const factor = byte ^ result.shift();
+    result.push(0);
+    for (let index = 0; index < generator.length; index += 1) {
+      result[index] ^= qrGaloisMultiply(generator[index], factor);
+    }
+  }
+  return result;
+}
+
+function qrReedSolomonGenerator(degree) {
+  let result = [1];
+  for (let degreeIndex = 0; degreeIndex < degree; degreeIndex += 1) {
+    const next = Array(result.length + 1).fill(0);
+    const root = qrGaloisPow(degreeIndex);
+    for (let index = 0; index < result.length; index += 1) {
+      next[index] ^= result[index];
+      next[index + 1] ^= qrGaloisMultiply(result[index], root);
+    }
+    result = next;
+  }
+  return result.slice(1);
+}
+
+function qrGaloisPow(power) {
+  let value = 1;
+  for (let index = 0; index < power; index += 1) {
+    value = qrGaloisMultiply(value, 2);
+  }
+  return value;
+}
+
+function qrGaloisMultiply(left, right) {
+  let result = 0;
+  let value = left;
+  let multiplier = right;
+  while (multiplier > 0) {
+    if ((multiplier & 1) !== 0) {
+      result ^= value;
+    }
+    value <<= 1;
+    if ((value & 0x100) !== 0) {
+      value ^= 0x11d;
+    }
+    multiplier >>>= 1;
+  }
+  return result & 0xff;
 }
 
 function withAssetVersion(url) {

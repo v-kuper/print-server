@@ -20,7 +20,11 @@ func TestPostgresStoreCreatesPublishesFailsAndLoadsSnapshot(t *testing.T) {
 	items := []NewsItem{
 		{SourceName: "BBC Russian", Title: "Заголовок", OriginalTitle: "Title", Link: "https://example.com/1"},
 	}
-	created, err := store.Create(ctx, items)
+	lines := []ReceiptLine{
+		{Text: "25 Мая", Alignment: "center", Role: "calendar"},
+		{Text: "Коротко о мире:", Alignment: "center"},
+	}
+	created, err := store.Create(ctx, CreateInput{NewsItems: items, ReceiptLines: lines})
 	if err != nil {
 		t.Fatalf("create snapshot: %v", err)
 	}
@@ -29,6 +33,9 @@ func TestPostgresStoreCreatesPublishesFailsAndLoadsSnapshot(t *testing.T) {
 	}
 	if !reflect.DeepEqual(created.NewsItems, items) {
 		t.Fatalf("expected saved news items %#v, got %#v", items, created.NewsItems)
+	}
+	if !reflect.DeepEqual(created.ReceiptLines, lines) {
+		t.Fatalf("expected saved receipt lines %#v, got %#v", lines, created.ReceiptLines)
 	}
 
 	if err := store.Publish(ctx, created.ID); err != nil {
@@ -42,7 +49,7 @@ func TestPostgresStoreCreatesPublishesFailsAndLoadsSnapshot(t *testing.T) {
 		t.Fatalf("expected published snapshot, got %#v", published)
 	}
 
-	failed, err := store.Create(ctx, items)
+	failed, err := store.Create(ctx, CreateInput{NewsItems: items, ReceiptLines: lines})
 	if err != nil {
 		t.Fatalf("create failed snapshot: %v", err)
 	}

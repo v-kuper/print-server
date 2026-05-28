@@ -11,6 +11,12 @@ func TestRenderSnapshotHTMLGroupsNewsAndEscapesContent(t *testing.T) {
 		ID:        "snapshot-1",
 		Status:    StatusPublished,
 		CreatedAt: time.Date(2026, 5, 28, 9, 10, 0, 0, time.UTC),
+		ReceiptLines: []ReceiptLine{
+			{Text: "25 Мая", Alignment: "center", Role: "calendar"},
+			{Text: "Погода", Alignment: "center"},
+			{Text: "Коротко о мире:", Alignment: "center"},
+			{Text: "- Первый <script>alert(\"x\")</script>", Alignment: "center"},
+		},
 		NewsItems: []NewsItem{
 			{
 				SourceName:    "BBC <Russian>",
@@ -38,6 +44,8 @@ func TestRenderSnapshotHTMLGroupsNewsAndEscapesContent(t *testing.T) {
 	body := string(html)
 
 	for _, want := range []string{
+		"25 Мая",
+		"Погода",
 		"Коротко о мире",
 		"BBC &lt;Russian&gt;",
 		"Первый &lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;",

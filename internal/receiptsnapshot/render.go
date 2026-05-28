@@ -15,6 +15,7 @@ type NewsGroup struct {
 type snapshotPageData struct {
 	ID            string
 	PendingNotice bool
+	ReceiptLines  []ReceiptLine
 	Groups        []NewsGroup
 }
 
@@ -22,6 +23,7 @@ func RenderSnapshotHTML(snapshot Snapshot) ([]byte, error) {
 	data := snapshotPageData{
 		ID:            snapshot.ID,
 		PendingNotice: snapshot.Status == StatusPending,
+		ReceiptLines:  receiptLinesBeforeNews(snapshot.ReceiptLines),
 		Groups:        GroupNews(snapshot.NewsItems),
 	}
 	var buffer bytes.Buffer
@@ -29,6 +31,30 @@ func RenderSnapshotHTML(snapshot Snapshot) ([]byte, error) {
 		return nil, err
 	}
 	return buffer.Bytes(), nil
+}
+
+func receiptLinesBeforeNews(lines []ReceiptLine) []ReceiptLine {
+	if len(lines) == 0 {
+		return nil
+	}
+	result := make([]ReceiptLine, 0, len(lines))
+	for _, line := range lines {
+		line.Text = strings.TrimRight(line.Text, "\r\n")
+		if strings.TrimSpace(line.Text) == "Коротко о мире:" {
+			break
+		}
+		result = append(result, normalizeReceiptLine(line))
+	}
+	return result
+}
+
+func normalizeReceiptLine(line ReceiptLine) ReceiptLine {
+	switch line.Alignment {
+	case "left", "center", "right":
+	default:
+		line.Alignment = "center"
+	}
+	return line
 }
 
 func GroupNews(items []NewsItem) []NewsGroup {
@@ -123,6 +149,29 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
     .source:first-of-type {
       margin-top: 0;
     }
+    .line {
+      min-height: 1.22em;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .align-left { text-align: left; }
+    .align-center { text-align: center; }
+    .align-right { text-align: right; }
+    .role-calendar {
+      font-weight: 700;
+      font-size: 18px;
+    }
+    .role-temperature {
+      font-weight: 700;
+      font-size: 20px;
+    }
+    .news-title {
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px dashed #b5ad9d;
+      text-align: center;
+      font-weight: 700;
+    }
     h2 {
       margin: 0 0 10px;
       font-size: 16px;
@@ -152,7 +201,14 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
 <body>
   <main>
     <article class="receipt">
-      <h1>Коротко о мире</h1>
+      {{if .ReceiptLines}}
+        {{range .ReceiptLines}}
+          <div class="line align-{{.Alignment}} role-{{.Role}}">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</div>
+        {{end}}
+        <div class="news-title">Коротко о мире</div>
+      {{else}}
+        <h1>Коротко о мире</h1>
+      {{end}}
       {{if .PendingNotice}}<p class="notice">Этот слепок создан, но печать еще не подтверждена.</p>{{end}}
       {{range .Groups}}
       <section class="source">

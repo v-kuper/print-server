@@ -120,12 +120,15 @@ func TestReceiptServiceCreatesNewsSnapshotAndPrintsQRCode(t *testing.T) {
 	if !reflect.DeepEqual(snapshotStore.createdItems, wantItems) {
 		t.Fatalf("expected snapshot items %#v, got %#v", wantItems, snapshotStore.createdItems)
 	}
+	if !snapshotReceiptLinesContain(snapshotStore.createdLines, "Коротко о мире:") {
+		t.Fatalf("expected snapshot receipt lines to include printed receipt, got %#v", snapshotStore.createdLines)
+	}
 	if snapshotStore.publishedID != "snapshot-1" {
 		t.Fatalf("expected snapshot to be published, got %q", snapshotStore.publishedID)
 	}
 }
 
-func TestReceiptServicePrintsNewsWithoutQRCodeWhenSnapshotBaseURLIsEmpty(t *testing.T) {
+func TestReceiptServicePrintsNewsWithDefaultQRCodeWhenSnapshotBaseURLIsEmpty(t *testing.T) {
 	translateTitles := false
 	store := &fakeStore{
 		config: printer.Config{Host: "192.168.0.118", Port: 5555},
@@ -153,14 +156,14 @@ func TestReceiptServicePrintsNewsWithoutQRCodeWhenSnapshotBaseURLIsEmpty(t *test
 	if err != nil {
 		t.Fatalf("print receipt: %v", err)
 	}
-	if receiptLinesContainQRCode(gateway.printedLines, "") {
-		t.Fatalf("expected receipt without QR, got %#v", gateway.printedLines)
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
 	}
-	if len(snapshotStore.createdItems) != 0 {
-		t.Fatalf("snapshot must not be created without base URL, got %#v", snapshotStore.createdItems)
+	if !receiptLinesContainQRCode(gateway.printedLines, "http://localhost:8080/snapshots/snapshot-1") {
+		t.Fatalf("expected default QR line, got %#v", gateway.printedLines)
 	}
-	if !containsWarning(warnings, "QR-ссылка") {
-		t.Fatalf("expected QR warning, got %#v", warnings)
+	if len(snapshotStore.createdItems) == 0 {
+		t.Fatalf("expected snapshot items to be created")
 	}
 }
 
@@ -1491,21 +1494,23 @@ type fakeReceiptSnapshotStore struct {
 	id           string
 	err          error
 	createdItems []receiptsnapshot.NewsItem
+	createdLines []receiptsnapshot.ReceiptLine
 	publishedID  string
 	failedID     string
 	failedErr    error
 }
 
-func (s *fakeReceiptSnapshotStore) Create(_ context.Context, items []receiptsnapshot.NewsItem) (receiptsnapshot.Snapshot, error) {
+func (s *fakeReceiptSnapshotStore) Create(_ context.Context, input receiptsnapshot.CreateInput) (receiptsnapshot.Snapshot, error) {
 	if s.err != nil {
 		return receiptsnapshot.Snapshot{}, s.err
 	}
-	s.createdItems = append([]receiptsnapshot.NewsItem(nil), items...)
+	s.createdItems = append([]receiptsnapshot.NewsItem(nil), input.NewsItems...)
+	s.createdLines = append([]receiptsnapshot.ReceiptLine(nil), input.ReceiptLines...)
 	id := s.id
 	if id == "" {
 		id = "snapshot-1"
 	}
-	return receiptsnapshot.Snapshot{ID: id, Status: receiptsnapshot.StatusPending, NewsItems: items}, nil
+	return receiptsnapshot.Snapshot{ID: id, Status: receiptsnapshot.StatusPending, NewsItems: input.NewsItems, ReceiptLines: input.ReceiptLines}, nil
 }
 
 func (s *fakeReceiptSnapshotStore) Publish(_ context.Context, id string) error {
@@ -1749,6 +1754,15 @@ func receiptLinesContainQRCode(lines []receipt.Line, value string) bool {
 			continue
 		}
 		if line.QRCode == value {
+			return true
+		}
+	}
+	return false
+}
+
+func snapshotReceiptLinesContain(lines []receiptsnapshot.ReceiptLine, want string) bool {
+	for _, line := range lines {
+		if line.Text == want {
 			return true
 		}
 	}

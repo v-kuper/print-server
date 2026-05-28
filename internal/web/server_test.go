@@ -1170,6 +1170,9 @@ func TestReceiptPreviewEndpointReturnsStyledLinesWithoutPrinting(t *testing.T) {
 	if len(payload.Lines) == 0 {
 		t.Fatal("expected preview lines")
 	}
+	if payload.Lines[len(payload.Lines)-1].QRCode != previewTestQRCode {
+		t.Fatalf("expected preview test QR code line, got %#v", payload.Lines[len(payload.Lines)-1])
+	}
 	if payload.Lines[1].Text != "25 Мая" || payload.Lines[1].Role != receipt.RoleCalendar {
 		t.Fatalf("expected styled calendar line, got %#v", payload.Lines[1])
 	}
@@ -1822,8 +1825,8 @@ type fakeReceiptSnapshotStore struct {
 	snapshots map[string]receiptsnapshot.Snapshot
 }
 
-func (s *fakeReceiptSnapshotStore) Create(_ context.Context, items []receiptsnapshot.NewsItem) (receiptsnapshot.Snapshot, error) {
-	return receiptsnapshot.Snapshot{ID: "snapshot-1", Status: receiptsnapshot.StatusPending, NewsItems: items}, nil
+func (s *fakeReceiptSnapshotStore) Create(_ context.Context, input receiptsnapshot.CreateInput) (receiptsnapshot.Snapshot, error) {
+	return receiptsnapshot.Snapshot{ID: "snapshot-1", Status: receiptsnapshot.StatusPending, NewsItems: input.NewsItems, ReceiptLines: input.ReceiptLines}, nil
 }
 
 func (s *fakeReceiptSnapshotStore) Publish(_ context.Context, _ string) error {

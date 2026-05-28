@@ -101,7 +101,7 @@ type DailyReceiptService interface {
 }
 
 type ReceiptSnapshotStore interface {
-	Create(context.Context, []receiptsnapshot.NewsItem) (receiptsnapshot.Snapshot, error)
+	Create(context.Context, receiptsnapshot.CreateInput) (receiptsnapshot.Snapshot, error)
 	Publish(context.Context, string) error
 	Fail(context.Context, string, error) error
 	Load(context.Context, string) (receiptsnapshot.Snapshot, error)
@@ -158,6 +158,7 @@ const defaultAssetsPath = "/opt/atol-server/assets"
 const defaultImageEditorPath = "/data/image-editor"
 const maxImageEditorHeight = 2048
 const maxTextPrintFont = 9
+const previewTestQRCode = "https://example.com"
 
 type statusResponse struct {
 	OK       bool            `json:"ok"`
@@ -1167,6 +1168,10 @@ func (s *Server) handleReceiptPreview(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	lines = append(lines, receipt.Line{
+		QRCode:    previewTestQRCode,
+		Alignment: receipt.AlignmentCenter,
+	})
 
 	message := "Превью собрано."
 	if len(warnings) > 0 {

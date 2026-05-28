@@ -1088,6 +1088,20 @@ button:disabled {
   image-rendering: auto;
 }
 
+.receipt-qr-line {
+  width: 100%;
+  min-height: 168px;
+  padding: 8px 0 10px;
+}
+
+.receipt-qr {
+  display: block;
+  width: 156px;
+  height: 156px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+
 /* ─── Responsive ─── */
 
 @media (max-width: 960px) {
