@@ -110,6 +110,36 @@ func TestRenderSnapshotHTMLShowsOneLeadingSummaryButtonPerLinkedBlock(t *testing
 	}
 }
 
+func TestRenderSnapshotHTMLDoesNotClipLongReceiptText(t *testing.T) {
+	html, err := RenderSnapshotHTML(Snapshot{
+		ID:     "snapshot-1",
+		Status: StatusPublished,
+		ReceiptLines: []ReceiptLine{{
+			Text:      "Рейсы в аэропорту Мюнхена временно приостановлены из-за возможного появления дрона",
+			Link:      "https://example.com/munich",
+			Alignment: "center",
+			LineSize:  15,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("render snapshot: %v", err)
+	}
+	body := string(html)
+
+	if !strings.Contains(body, "Рейсы в аэропорту Мюнхена временно приостановлены") {
+		t.Fatalf("expected full long text in snapshot HTML:\n%s", body)
+	}
+	lineTextCSS := cssRuleBody(t, body, ".receipt-line-text")
+	for _, clippedRule := range []string{"white-space: nowrap", "overflow: hidden"} {
+		if strings.Contains(lineTextCSS, clippedRule) {
+			t.Fatalf("snapshot receipt text must not be clipped by %q:\n%s", clippedRule, lineTextCSS)
+		}
+	}
+	if !strings.Contains(lineTextCSS, "overflow-wrap: anywhere") {
+		t.Fatalf("expected snapshot receipt text to allow wrapping long content:\n%s", lineTextCSS)
+	}
+}
+
 func TestRenderSnapshotHTMLShowsPendingNotice(t *testing.T) {
 	html, err := RenderSnapshotHTML(Snapshot{
 		ID:        "snapshot-1",
@@ -141,6 +171,24 @@ func linkedRowForSummaryIndex(t *testing.T, body string, lineIndex string) strin
 		t.Fatalf("linked row end not found after %q:\n%s", marker, body)
 	}
 	return body[rowStart : rowStart+rowEnd+len(`</span>`)]
+}
+
+func cssRuleBody(t *testing.T, body string, selector string) string {
+	t.Helper()
+	start := strings.Index(body, selector+" {")
+	if start < 0 {
+		t.Fatalf("CSS selector %q not found:\n%s", selector, body)
+	}
+	open := strings.Index(body[start:], "{")
+	if open < 0 {
+		t.Fatalf("CSS selector %q has no body:\n%s", selector, body[start:])
+	}
+	bodyStart := start + open + 1
+	end := strings.Index(body[bodyStart:], "}")
+	if end < 0 {
+		t.Fatalf("CSS selector %q has no closing brace:\n%s", selector, body[bodyStart:])
+	}
+	return body[bodyStart : bodyStart+end]
 }
 
 func assertReceiptPaperHasNoWhitespaceNodes(t *testing.T, body string) {
