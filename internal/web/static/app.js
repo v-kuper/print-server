@@ -55,6 +55,7 @@ const scheduleContentOptions = [
   { key: "showWeather",         label: "Погода",          group: "Основное" },
   { key: "showWeatherAdvice",   label: "AI-совет",        group: "Основное" },
   { key: "showMotivationQuote", label: "Цитата",          group: "Основное" },
+  { key: "showDailyQuests",     label: "Квест на день",   group: "Основное" },
   { key: "showTonPortfolio",    label: "TON",             group: "Финансы"  },
   { key: "showUsdBynRate",      label: "USD/BYN",         group: "Финансы"  },
   { key: "showBankRates",       label: "Банки",           group: "Финансы"  },
@@ -514,6 +515,7 @@ function applyBootstrap(data) {
   setChecked("#content-weather", content.showWeather);
   setChecked("#content-weather-advice", content.showWeatherAdvice);
   setChecked("#content-motivation-quote", content.showMotivationQuote);
+  setChecked("#content-daily-quests", content.showDailyQuests);
   setChecked("#content-ton-portfolio", content.showTonPortfolio);
   setChecked("#content-usd-byn-rate", content.showUsdBynRate);
   setChecked("#content-bank-rates", content.showBankRates);
@@ -1213,6 +1215,7 @@ function readReceiptContentSettings() {
     showWeather: checked("#content-weather"),
     showWeatherAdvice: checked("#content-weather-advice"),
     showMotivationQuote: checked("#content-motivation-quote"),
+    showDailyQuests: checked("#content-daily-quests"),
     showTonPortfolio: checked("#content-ton-portfolio"),
     showUsdBynRate: checked("#content-usd-byn-rate"),
     showBankRates: checked("#content-bank-rates"),
@@ -1269,6 +1272,7 @@ function scheduleContentFromSettings(settings) {
     showWeather: Boolean(content.showWeather),
     showWeatherAdvice: Boolean(content.showWeatherAdvice),
     showMotivationQuote: Boolean(content.showMotivationQuote),
+    showDailyQuests: Boolean(content.showDailyQuests),
     showTonPortfolio: Boolean(content.showTonPortfolio),
     showUsdBynRate: Boolean(content.showUsdBynRate),
     showBankRates: Boolean(content.showBankRates),
@@ -2501,13 +2505,11 @@ function styledPreviewLines(lines) {
         next.Font = readFont("#calendar-font");
         next.DoubleWidth = document.querySelector("#calendar-double-width").checked;
         next.DoubleHeight = document.querySelector("#calendar-double-height").checked;
-        next.Alignment = readFontRowAlign("calendar");
         break;
       case "temperature":
         next.Font = readFont("#temperature-font");
         next.DoubleWidth = document.querySelector("#temperature-double-width").checked;
         next.DoubleHeight = document.querySelector("#temperature-double-height").checked;
-        next.Alignment = readFontRowAlign("temperature");
         break;
       case "original":
         next.Font = 1;
@@ -2518,7 +2520,6 @@ function styledPreviewLines(lines) {
         next.Font = readFont("#normal-font");
         next.DoubleWidth = false;
         next.DoubleHeight = false;
-        next.Alignment = readFontRowAlign("normal");
         break;
     }
     return next;

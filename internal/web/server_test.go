@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"atol-server/internal/articlesummary"
+	"atol-server/internal/dailyquest"
 	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
@@ -172,6 +173,7 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`data-action="add-separator-block"`,
 		`data-action="print-text"`,
 		`id="content-history"`,
+		`id="content-daily-quests"`,
 		`value="rectangle"`,
 		`value="ellipse"`,
 		`id="calendar-font"`,
@@ -256,6 +258,7 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`function effectiveTextPrintLineLength`,
 				`wrapTextPrintLine(lineText, effectiveTextPrintLineLength(block.font, block.doubleWidth))`,
 				`showHistory`,
+				`showDailyQuests`,
 				`data-schedule-content-key`,
 				`data-interval-content-key`,
 				`function renderScheduleTranslationSettings`,
@@ -337,11 +340,12 @@ func TestRuntimeAssetsServedWithoutCache(t *testing.T) {
 func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	translateTitles := false
 	intervalContent := receipt.ContentSettings{
-		Configured:     true,
-		ShowWeather:    true,
-		ShowUsdBynRate: true,
-		ShowBankRates:  true,
-		ShowNews:       true,
+		Configured:      true,
+		ShowWeather:     true,
+		ShowDailyQuests: true,
+		ShowUsdBynRate:  true,
+		ShowBankRates:   true,
+		ShowNews:        true,
 	}
 	store := &fakeStore{
 		config:   printer.Config{Host: "192.168.0.118", Port: 5555},
@@ -378,6 +382,7 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 			ShowWeather:         true,
 			ShowWeatherAdvice:   false,
 			ShowMotivationQuote: true,
+			ShowDailyQuests:     true,
 			ShowTonPortfolio:    false,
 			ShowUsdBynRate:      true,
 			ShowBankRates:       false,
@@ -474,6 +479,9 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	if !payload.Data.ReceiptContent.ShowMail || !payload.Data.ReceiptContent.ShowHistory || payload.Data.ReceiptContent.ShowBankRates {
 		t.Fatalf("expected receipt content in bootstrap, got %#v", payload.Data.ReceiptContent)
 	}
+	if !payload.Data.ReceiptContent.ShowDailyQuests {
+		t.Fatalf("expected daily quests content in bootstrap, got %#v", payload.Data.ReceiptContent)
+	}
 	if payload.Data.ReceiptSnapshot.BaseURL != "http://192.168.0.25:8080" {
 		t.Fatalf("expected receipt snapshot settings in bootstrap, got %#v", payload.Data.ReceiptSnapshot)
 	}
@@ -493,6 +501,7 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 		t.Fatalf("expected seeded schedule news settings to copy current tab settings, got %#v", payload.Data.Schedule.IntervalContent.NewsSettings)
 	}
 	if payload.Data.Schedule.IntervalContent.ShowWeather != intervalContent.ShowWeather ||
+		payload.Data.Schedule.IntervalContent.ShowDailyQuests != intervalContent.ShowDailyQuests ||
 		payload.Data.Schedule.IntervalContent.ShowUsdBynRate != intervalContent.ShowUsdBynRate ||
 		payload.Data.Schedule.IntervalContent.ShowBankRates != intervalContent.ShowBankRates {
 		t.Fatalf("expected interval content in bootstrap, got %#v", payload.Data.Schedule.IntervalContent)
@@ -742,7 +751,7 @@ func TestSaveReceiptContentEndpointPersistsContent(t *testing.T) {
 	store := &fakeStore{}
 	server := NewServer(store, &fakePrinter{}, fixedClock)
 
-	body := bytes.NewBufferString(`{"configured":true,"showWeather":false,"showWeatherAdvice":false,"showMotivationQuote":true,"showTonPortfolio":false,"showUsdBynRate":true,"showBankRates":false,"showMail":true,"showCalendar":false,"showHistory":true,"showNews":true,"showDenisTrends":true,"denisTrendsMode":"now"}`)
+	body := bytes.NewBufferString(`{"configured":true,"showWeather":false,"showWeatherAdvice":false,"showMotivationQuote":true,"showDailyQuests":true,"showTonPortfolio":false,"showUsdBynRate":true,"showBankRates":false,"showMail":true,"showCalendar":false,"showHistory":true,"showNews":true,"showDenisTrends":true,"denisTrendsMode":"now"}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/settings/receipt-content", body)
 	response := httptest.NewRecorder()
 
@@ -757,6 +766,7 @@ func TestSaveReceiptContentEndpointPersistsContent(t *testing.T) {
 		store.receiptContent.ShowBankRates ||
 		store.receiptContent.ShowCalendar ||
 		!store.receiptContent.ShowMotivationQuote ||
+		!store.receiptContent.ShowDailyQuests ||
 		!store.receiptContent.ShowUsdBynRate ||
 		!store.receiptContent.ShowMail ||
 		!store.receiptContent.ShowHistory ||
@@ -1621,6 +1631,7 @@ func TestSaveScheduleEndpointPersistsIntervalContent(t *testing.T) {
 			"showWeather": true,
 			"showWeatherAdvice": false,
 			"showMotivationQuote": false,
+			"showDailyQuests": true,
 			"showTonPortfolio": false,
 			"showUsdBynRate": true,
 			"showBankRates": true,
@@ -1659,6 +1670,7 @@ func TestSaveScheduleEndpointPersistsIntervalContent(t *testing.T) {
 	if !store.scheduleSettings.IntervalContent.ShowWeather ||
 		!store.scheduleSettings.IntervalContent.ShowUsdBynRate ||
 		!store.scheduleSettings.IntervalContent.ShowBankRates ||
+		!store.scheduleSettings.IntervalContent.ShowDailyQuests ||
 		!store.scheduleSettings.IntervalContent.ShowNews ||
 		!store.scheduleSettings.IntervalContent.ShowDenisTrends ||
 		store.scheduleSettings.IntervalContent.ShowCalendar {
@@ -1699,6 +1711,7 @@ func TestSaveScheduleEndpointPersistsRunProfiles(t *testing.T) {
 					"showWeather": true,
 					"showWeatherAdvice": false,
 					"showMotivationQuote": false,
+					"showDailyQuests": true,
 					"showTonPortfolio": false,
 					"showUsdBynRate": true,
 					"showBankRates": true,
@@ -1725,7 +1738,7 @@ func TestSaveScheduleEndpointPersistsRunProfiles(t *testing.T) {
 	}
 	custom := store.scheduleSettings.Runs[1]
 	if custom.Time != "21:00" || custom.Profile != schedule.ProfileCustom || custom.Content == nil ||
-		!custom.Content.ShowWeather || !custom.Content.ShowUsdBynRate || !custom.Content.ShowNews {
+		!custom.Content.ShowWeather || !custom.Content.ShowDailyQuests || !custom.Content.ShowUsdBynRate || !custom.Content.ShowNews {
 		t.Fatalf("expected custom run content, got %#v", custom)
 	}
 	if scheduler.resetCalls != 1 {
@@ -1909,7 +1922,7 @@ func (s *fakeStore) SaveDenisTrends(settings denistrends.Settings) error {
 }
 
 func (s *fakeStore) LoadMotivation() (motivation.Settings, error) {
-	if s.motivationSettings == (motivation.Settings{}) {
+	if reflect.DeepEqual(s.motivationSettings, motivation.Settings{}) {
 		return motivation.DefaultSettings(), nil
 	}
 	return s.motivationSettings.Normalized(), nil
@@ -2281,6 +2294,10 @@ func (p *fakeMotivationProvider) GenerateCalendarAdvice(context.Context, motivat
 
 func (p *fakeMotivationProvider) GenerateHistoryFacts(context.Context, motivation.Settings, []motivation.HistoryEvent) ([]motivation.HistoryFact, error) {
 	return nil, p.err
+}
+
+func (p *fakeMotivationProvider) GenerateDailyQuests(_ context.Context, _ motivation.Settings, quests []dailyquest.Quest) ([]dailyquest.DailyQuest, error) {
+	return dailyquest.Fallback(quests), p.err
 }
 
 func (p *fakeMotivationProvider) TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error) {

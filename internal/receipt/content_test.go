@@ -8,6 +8,14 @@ import (
 	"atol-server/internal/news"
 )
 
+func TestDefaultContentSettingsIncludeDailyQuests(t *testing.T) {
+	content := DefaultContentSettings()
+
+	if !content.ShowDailyQuests {
+		t.Fatalf("expected daily quests to be enabled by default, got %#v", content)
+	}
+}
+
 func TestContentSettingsNormalizePreservesEmbeddedScheduleSettings(t *testing.T) {
 	translateTitles := false
 	newsSettings := news.Settings{

@@ -10,6 +10,7 @@ type ContentSettings struct {
 	ShowWeather         bool                  `json:"showWeather"`
 	ShowWeatherAdvice   bool                  `json:"showWeatherAdvice"`
 	ShowMotivationQuote bool                  `json:"showMotivationQuote"`
+	ShowDailyQuests     bool                  `json:"showDailyQuests"`
 	ShowTonPortfolio    bool                  `json:"showTonPortfolio"`
 	ShowUsdBynRate      bool                  `json:"showUsdBynRate"`
 	ShowBankRates       bool                  `json:"showBankRates"`
@@ -28,6 +29,7 @@ func DefaultContentSettings() ContentSettings {
 		ShowWeather:         true,
 		ShowWeatherAdvice:   true,
 		ShowMotivationQuote: true,
+		ShowDailyQuests:     true,
 		ShowTonPortfolio:    true,
 		ShowUsdBynRate:      true,
 		ShowBankRates:       true,

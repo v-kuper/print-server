@@ -3,9 +3,11 @@ package settings
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
+	"atol-server/internal/dailyquest"
 	"atol-server/internal/finance"
 	"atol-server/internal/motivation"
 	"atol-server/internal/news"
@@ -186,7 +188,7 @@ func TestStoreLoadReturnsDefaultMotivationWhenFileDoesNotExist(t *testing.T) {
 		t.Fatalf("load default motivation settings: %v", err)
 	}
 
-	if settings != motivation.DefaultSettings() {
+	if !reflect.DeepEqual(settings, motivation.DefaultSettings()) {
 		t.Fatalf("expected default motivation settings %#v, got %#v", motivation.DefaultSettings(), settings)
 	}
 }
@@ -424,12 +426,18 @@ func TestStoreSavesAndLoadsScheduleState(t *testing.T) {
 func TestStoreSavesAndLoadsMotivationSettings(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "settings.json"))
 	want := motivation.Settings{
-		Enabled:     true,
-		BaseURL:     " http://localhost:11434 ",
-		Model:       " gemma4:31b-cloud ",
-		CacheDate:   "2026-05-25",
-		CachedQuote: "Делай важное спокойно.",
-		LastError:   "old error",
+		Enabled:        true,
+		BaseURL:        " http://localhost:11434 ",
+		Model:          " gemma4:31b-cloud ",
+		CacheDate:      "2026-05-25",
+		CachedQuote:    "Делай важное спокойно.",
+		QuestCacheDate: "2026-05-25",
+		CachedDailyQuests: []dailyquest.DailyQuest{
+			{ID: 7, Text: "Составь карту района."},
+			{ID: 23, Text: "Почини одну вещь дома."},
+			{ID: 48, Text: "Проживи день без жалоб."},
+		},
+		LastError: "old error",
 	}
 
 	if err := store.SaveMotivation(want); err != nil {
@@ -440,7 +448,7 @@ func TestStoreSavesAndLoadsMotivationSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load motivation settings: %v", err)
 	}
-	if got != want.Normalized() {
+	if !reflect.DeepEqual(got, want.Normalized()) {
 		t.Fatalf("expected motivation settings %#v, got %#v", want.Normalized(), got)
 	}
 }

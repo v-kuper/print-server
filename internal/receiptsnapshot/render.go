@@ -289,38 +289,41 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       padding: 16px 14px;
     }
     .receipt-paper {
-      width: min(100%, calc(var(--paper-chars, 32) * 1ch));
-      margin: 0 auto;
+      width: 100%;
+      margin: 0;
       color: #111;
       font-family: "Courier New", ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 16px;
-      line-height: 1.22;
+      font-size: 15px;
+      line-height: 1.5;
       letter-spacing: 0;
-      white-space: pre-wrap;
     }
+    /* Text lines: render inline so 32-char printer-split lines flow together */
     .receipt-line {
-      --line-size: 15px;
-      --line-scale-x: 1;
-      --line-scale-y: 1;
+      display: inline;
+    }
+    /* After each text line add a space so joined words don't merge */
+    .receipt-line::after {
+      content: " ";
+    }
+    /* Image and QR lines: keep as blocks with centering */
+    .receipt-image-line,
+    .receipt-qr-line {
       display: flex;
       align-items: center;
-      justify-content: flex-start;
-      width: calc(100% / var(--line-scale-x));
-      margin: 0 auto;
-      min-height: calc(var(--line-size) * 1.22 * var(--line-scale-y));
-      line-height: 1.22;
-      overflow: visible;
+      justify-content: center;
+      width: 100%;
+    }
+    .receipt-image-line::after,
+    .receipt-qr-line::after {
+      content: none;
     }
     .receipt-line-text {
-      display: inline-block;
-      max-width: calc(100% / var(--line-scale-x));
+      display: inline;
       font-size: var(--line-size);
-      line-height: 1.22;
-      white-space: pre-wrap;
+      line-height: 1.5;
+      white-space: normal;
       overflow-wrap: break-word;
-      overflow: visible;
-      transform: scale(var(--line-scale-x), var(--line-scale-y));
-      transform-origin: left center;
+      word-break: break-word;
     }
     a.receipt-line-text {
       color: inherit;
@@ -332,16 +335,10 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       text-underline-offset: 2px;
     }
     .receipt-link-row {
-      display: inline-flex;
-      align-items: flex-start;
-      justify-content: flex-start;
-      gap: 5px;
-      max-width: 100%;
-      min-width: 0;
+      display: inline;
     }
     .receipt-link-row .receipt-line-text {
-      min-width: 0;
-      max-width: calc(100% - 28px);
+      display: inline;
     }
     .summary-button {
       appearance: none;

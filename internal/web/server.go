@@ -16,6 +16,7 @@ import (
 
 	"atol-server/internal/app"
 	"atol-server/internal/articlesummary"
+	"atol-server/internal/dailyquest"
 	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
@@ -88,6 +89,7 @@ type MotivationProvider interface {
 	GenerateWeatherAdvice(context.Context, motivation.Settings, motivation.WeatherContext) (motivation.WeatherAdvice, error)
 	GenerateCalendarAdvice(context.Context, motivation.Settings, motivation.CalendarContext) (motivation.CalendarAdvice, error)
 	GenerateHistoryFacts(context.Context, motivation.Settings, []motivation.HistoryEvent) ([]motivation.HistoryFact, error)
+	GenerateDailyQuests(context.Context, motivation.Settings, []dailyquest.Quest) ([]dailyquest.DailyQuest, error)
 	TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error)
 }
 

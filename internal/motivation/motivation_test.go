@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"atol-server/internal/dailyquest"
 )
 
 func TestOllamaProviderParsesChatResponse(t *testing.T) {
@@ -64,6 +66,59 @@ func TestNewOllamaProviderUsesCloudFriendlyTimeout(t *testing.T) {
 
 	if provider.Client.Timeout < 45*time.Second {
 		t.Fatalf("expected Ollama timeout to allow slower cloud translation responses, got %s", provider.Client.Timeout)
+	}
+}
+
+func TestOllamaProviderGeneratesDailyQuestsFromSelectedIDs(t *testing.T) {
+	var requestPayload ollamaChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestPayload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"[{\"id\":7,\"text\":\"Нарисуй карту любимых мест района.\"},{\"id\":21,\"text\":\"Найди бесплатное доброе дело без поста.\"},{\"id\":48,\"text\":\"Проживи день без жалоб и отметь три момента.\"}]"}}`))
+	}))
+	defer server.Close()
+
+	provider := NewOllamaProvider(server.Client())
+	quests, err := provider.GenerateDailyQuests(context.Background(), Settings{
+		Enabled: true,
+		BaseURL: server.URL,
+		Model:   "gemma4:31b-cloud",
+	}, []dailyquest.Quest{
+		{ID: 7, Text: "Составить карту любимых мест в своём районе.", Category: dailyquest.CategoryMovementOutdoor},
+		{ID: 21, Text: "Стать волонтёром один раз и не выкладывать это в соцсети.", Category: dailyquest.CategorySocialConnection},
+		{ID: 48, Text: "Прожить 24 часа без жалоб.", Category: dailyquest.CategoryReflectionReset},
+	})
+	if err != nil {
+		t.Fatalf("generate daily quests: %v", err)
+	}
+
+	prompt := requestPayload.Messages[0].Content
+	for _, want := range []string{"Квест на день", `"id":7`, `"id":21`, `"id":48`, "free", "solo-friendly", "safe/respectful"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected daily quest prompt to contain %q, got %s", want, prompt)
+		}
+	}
+	if len(quests) != 3 || quests[0].ID != 7 || !strings.Contains(quests[0].Text, "карту") {
+		t.Fatalf("unexpected daily quests: %#v", quests)
+	}
+}
+
+func TestOllamaProviderRejectsInvalidDailyQuestResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"не json"}}`))
+	}))
+	defer server.Close()
+
+	provider := NewOllamaProvider(server.Client())
+	if _, err := provider.GenerateDailyQuests(context.Background(), Settings{
+		Enabled: true,
+		BaseURL: server.URL,
+		Model:   "gemma4:31b-cloud",
+	}, []dailyquest.Quest{{ID: 7, Text: "Составить карту любимых мест.", Category: dailyquest.CategoryMovementOutdoor}}); err == nil {
+		t.Fatal("expected invalid daily quest response to fail")
 	}
 }
 
@@ -417,6 +472,7 @@ type fakeProvider struct {
 	quote          Quote
 	advice         WeatherAdvice
 	calendarAdvice CalendarAdvice
+	dailyQuests    []dailyquest.DailyQuest
 	err            error
 	calls          int
 }
@@ -439,6 +495,11 @@ func (p *fakeProvider) GenerateCalendarAdvice(context.Context, Settings, Calenda
 func (p *fakeProvider) GenerateHistoryFacts(context.Context, Settings, []HistoryEvent) ([]HistoryFact, error) {
 	p.calls++
 	return nil, p.err
+}
+
+func (p *fakeProvider) GenerateDailyQuests(context.Context, Settings, []dailyquest.Quest) ([]dailyquest.DailyQuest, error) {
+	p.calls++
+	return append([]dailyquest.DailyQuest(nil), p.dailyQuests...), p.err
 }
 
 func (p *fakeProvider) TranslateNewsTitles(context.Context, Settings, []NewsTitle) ([]NewsTranslation, error) {

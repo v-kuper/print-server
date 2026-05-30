@@ -13,6 +13,7 @@ import (
 
 	"atol-server/internal/bankrates"
 	"atol-server/internal/chart"
+	"atol-server/internal/dailyquest"
 	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
@@ -98,6 +99,7 @@ type MotivationProvider interface {
 	GenerateWeatherAdvice(context.Context, motivation.Settings, motivation.WeatherContext) (motivation.WeatherAdvice, error)
 	GenerateCalendarAdvice(context.Context, motivation.Settings, motivation.CalendarContext) (motivation.CalendarAdvice, error)
 	GenerateHistoryFacts(context.Context, motivation.Settings, []motivation.HistoryEvent) ([]motivation.HistoryFact, error)
+	GenerateDailyQuests(context.Context, motivation.Settings, []dailyquest.Quest) ([]dailyquest.DailyQuest, error)
 	TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error)
 }
 
@@ -346,11 +348,13 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		}
 	}
 
-	weatherAdvice, motivationQuote, motivationWarning, err := s.resolveMotivationContent(
+	weatherAdvice, motivationQuote, dailyQuests, motivationWarning, err := s.resolveMotivationContent(
 		ctx,
 		snapshot,
 		content.ShowWeatherAdvice,
 		content.ShowMotivationQuote,
+		content.ShowDailyQuests,
+		effectiveTime,
 	)
 	if err != nil {
 		return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
@@ -477,6 +481,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		Weather:            snapshot,
 		WeatherAdvice:      weatherAdvice,
 		MotivationQuote:    motivationQuote,
+		DailyQuests:        dailyQuests,
 		TonPortfolio:       tonSummary,
 		TonChartImage:      tonChartImage,
 		USDBYNRate:         usdBynRate,
@@ -731,13 +736,13 @@ func receiptSnapshotMetricForFont(font int) receiptSnapshotFontMetric {
 	return receiptSnapshotFontMetrics[0]
 }
 
-func (s *ReceiptService) resolveMotivationContent(ctx context.Context, snapshot weather.Snapshot, includeAdvice bool, includeQuote bool) (*motivation.WeatherAdvice, *motivation.Quote, string, error) {
-	if !includeAdvice && !includeQuote {
-		return nil, nil, "", nil
+func (s *ReceiptService) resolveMotivationContent(ctx context.Context, snapshot weather.Snapshot, includeAdvice bool, includeQuote bool, includeDailyQuests bool, effectiveTime time.Time) (*motivation.WeatherAdvice, *motivation.Quote, []dailyquest.DailyQuest, string, error) {
+	if !includeAdvice && !includeQuote && !includeDailyQuests {
+		return nil, nil, nil, "", nil
 	}
 	settings, err := s.store.LoadMotivation()
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, "", err
 	}
 	settings = settings.Normalized()
 
@@ -761,15 +766,66 @@ func (s *ReceiptService) resolveMotivationContent(ctx context.Context, snapshot 
 			warnings = append(warnings, "AI-цитата недоступна: "+err.Error())
 		}
 	}
+
+	var dailyQuests []dailyquest.DailyQuest
+	if includeDailyQuests {
+		if effectiveTime.IsZero() {
+			effectiveTime = s.clock()
+		}
+		var questWarning string
+		updated, dailyQuests, questWarning = s.resolveDailyQuests(ctx, updated, effectiveTime)
+		if questWarning != "" {
+			warnings = append(warnings, questWarning)
+		}
+	}
 	if len(warnings) > 0 {
 		updated.LastError = strings.Join(warnings, "; ")
 	} else {
 		updated.LastError = ""
 	}
 	if saveErr := s.store.SaveMotivation(updated); saveErr != nil {
-		return nil, nil, "", saveErr
+		return nil, nil, nil, "", saveErr
 	}
-	return weatherAdvice, quote, strings.Join(warnings, "\n"), nil
+	return weatherAdvice, quote, dailyQuests, strings.Join(warnings, "\n"), nil
+}
+
+func (s *ReceiptService) resolveDailyQuests(ctx context.Context, settings motivation.Settings, effectiveTime time.Time) (motivation.Settings, []dailyquest.DailyQuest, string) {
+	cacheDate := motivation.CacheDate(effectiveTime)
+	if settings.QuestCacheDate == cacheDate && validCachedDailyQuests(settings.CachedDailyQuests) {
+		return settings, append([]dailyquest.DailyQuest(nil), settings.CachedDailyQuests...), ""
+	}
+
+	selected := dailyquest.Select(effectiveTime)
+	if len(selected) == 0 {
+		return settings, nil, ""
+	}
+
+	quests, err := s.motivationProvider.GenerateDailyQuests(ctx, settings, selected)
+	warning := ""
+	if err != nil || !dailyquest.IsValidGenerated(selected, quests) {
+		if err != nil {
+			warning = "AI-квесты дня недоступны: " + err.Error()
+		} else {
+			warning = "AI-квесты дня недоступны: пустой или некорректный ответ"
+		}
+		quests = dailyquest.Fallback(selected)
+	}
+
+	settings.QuestCacheDate = cacheDate
+	settings.CachedDailyQuests = append([]dailyquest.DailyQuest(nil), quests...)
+	return settings, quests, warning
+}
+
+func validCachedDailyQuests(quests []dailyquest.DailyQuest) bool {
+	if len(quests) != 3 {
+		return false
+	}
+	for _, quest := range quests {
+		if quest.ID == 0 || strings.TrimSpace(quest.Text) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *ReceiptService) resolveGoogleSummary(ctx context.Context, includeMail bool, includeCalendar bool) (googleintegration.Summary, string) {
