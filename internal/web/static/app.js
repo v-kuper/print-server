@@ -353,7 +353,7 @@ function renderScheduleDenisTrendsSettings(settings) {
 
   const hint = document.createElement("p");
   hint.className = "helper-text";
-  hint.textContent = "Авто: до 12:00 Top now, после 12:00 Top day; воскресенье и конец месяца добавляют week/month. Forced mode печатает только выбранный период.";
+  hint.textContent = "Авто: до 12:00 Top now, после 12:00 Top day; воскресенье и конец месяца добавляют Top week/month. Ручной режим печатает только выбранный период.";
   panel.appendChild(hint);
 
   for (const period of denisTrendPeriods) {
@@ -456,7 +456,7 @@ function renderDenisTrendsSettings(settings) {
 
   const hint = document.createElement("p");
   hint.className = "helper-text";
-  hint.textContent = "Denis Trends: режим Top now / Top day выбирается в составе чека и расписании. Авто оставляет правило до 12:00 Top now, после 12:00 Top day.";
+  hint.textContent = "Denis Trends: режим Top now / Top day / Top week / Top month выбирается в составе чека и расписании. Авто оставляет правило до 12:00 Top now, после 12:00 Top day.";
   denisTrendsSettingsEl.appendChild(hint);
 
   denisTrendPeriods.forEach(period => {

@@ -172,6 +172,8 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`data-action="add-separator-block"`,
 		`data-action="print-text"`,
 		`id="content-history"`,
+		`<option value="week">Top week</option>`,
+		`<option value="month">Top month</option>`,
 		`value="rectangle"`,
 		`value="ellipse"`,
 		`id="calendar-font"`,
