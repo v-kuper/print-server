@@ -266,7 +266,6 @@ func TestStoreSavesAndLoadsNewsSettings(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "settings.json"))
 	want := news.Settings{
 		Sources: []news.SourceSettings{
-			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/bbc.xml", MaxItems: 3},
 			{Preset: news.PresetReuters, Enabled: false, FeedURL: "https://example.com/reuters.xml", MaxItems: 200},
 			{Preset: news.PresetEconomist, Enabled: false, FeedURL: "https://example.com/economist.xml", MaxItems: 0},
 			{Preset: news.PresetHackerNews, Enabled: true, FeedURL: "https://example.com/hn.xml", MaxItems: 1},
@@ -286,11 +285,11 @@ func TestStoreSavesAndLoadsNewsSettings(t *testing.T) {
 	if len(got.Sources) != len(normalized.Sources) {
 		t.Fatalf("expected %d news sources, got %d", len(normalized.Sources), len(got.Sources))
 	}
-	if got.Sources[1].MaxItems != news.MaxItems {
-		t.Fatalf("expected max items to be clamped to %d, got %d", news.MaxItems, got.Sources[1].MaxItems)
+	if got.Sources[0].MaxItems != news.MaxItems {
+		t.Fatalf("expected max items to be clamped to %d, got %d", news.MaxItems, got.Sources[0].MaxItems)
 	}
-	if got.Sources[2].MaxItems != news.MinItems {
-		t.Fatalf("expected min items to be clamped to %d, got %d", news.MinItems, got.Sources[2].MaxItems)
+	if got.Sources[1].MaxItems != news.MinItems {
+		t.Fatalf("expected min items to be clamped to %d, got %d", news.MinItems, got.Sources[1].MaxItems)
 	}
 }
 
@@ -298,7 +297,7 @@ func TestStoreRejectsEnabledNewsSourceWithoutCount(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "settings.json"))
 	settings := news.Settings{
 		Sources: []news.SourceSettings{
-			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 0},
+			{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 0},
 		},
 	}
 

@@ -78,7 +78,7 @@ type NewsProvider interface {
 }
 
 type DenisTrendsProvider interface {
-	CurrentForMode(context.Context, denistrends.Settings, time.Time, denistrends.Mode) ([]denistrends.Section, error)
+	Current(context.Context, denistrends.Settings, time.Time) ([]denistrends.Section, error)
 }
 
 type HistoryProvider interface {
@@ -456,7 +456,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		if err != nil {
 			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 		}
-		denisTrendSections, err = s.denisTrendsProvider.CurrentForMode(ctx, trendsSettings, effectiveTime, denisTrendsMode(content.DenisTrendsMode))
+		denisTrendSections, err = s.denisTrendsProvider.Current(ctx, trendsSettings, effectiveTime)
 		if err != nil {
 			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
 		}
@@ -603,7 +603,9 @@ func (s *ReceiptService) appendNewsSnapshotQRCode(ctx context.Context, lines []r
 	if !ok {
 		return lines, "", []string{"QR-ссылка на онлайн-слепок не настроена."}
 	}
-	finalLines := append(append([]receipt.Line(nil), lines...), receipt.Line{
+	finalLines := append([]receipt.Line(nil), lines...)
+	finalLines = append(finalLines, qrCodeSectionSpacing(paperChars)...)
+	finalLines = append(finalLines, receipt.Line{
 		QRCode:            snapshotURL,
 		Alignment:         receipt.AlignmentCenter,
 		ImageScalePercent: 100,
@@ -612,6 +614,18 @@ func (s *ReceiptService) appendNewsSnapshotQRCode(ctx context.Context, lines []r
 		return lines, "", []string{"Онлайн-слепок создан, но финальный чек не сохранен: " + err.Error()}
 	}
 	return finalLines, snapshot.ID, nil
+}
+
+func qrCodeSectionSpacing(paperChars int) []receipt.Line {
+	separatorLength := paperChars / 2
+	if separatorLength <= 0 {
+		separatorLength = 16
+	}
+	return []receipt.Line{
+		{Text: " ", Alignment: receipt.AlignmentCenter, Role: receipt.RoleNormal},
+		{Text: strings.Repeat("-", separatorLength), Alignment: receipt.AlignmentCenter, Role: receipt.RoleNormal},
+		{Text: " ", Alignment: receipt.AlignmentCenter, Role: receipt.RoleNormal},
+	}
 }
 
 func receiptLinesHaveLinks(lines []receipt.Line) bool {
@@ -1214,21 +1228,6 @@ func (s *ReceiptService) translateDenisTrendSections(ctx context.Context, newsSe
 		item.Title = translation
 	}
 	return translatedSections, ""
-}
-
-func denisTrendsMode(value string) denistrends.Mode {
-	switch value {
-	case receipt.DenisTrendsModeNow:
-		return denistrends.ModeNow
-	case receipt.DenisTrendsModeDay:
-		return denistrends.ModeDay
-	case receipt.DenisTrendsModeWeek:
-		return denistrends.ModeWeek
-	case receipt.DenisTrendsModeMonth:
-		return denistrends.ModeMonth
-	default:
-		return denistrends.ModeAuto
-	}
 }
 
 func containsCyrillic(value string) bool {

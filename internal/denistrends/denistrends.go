@@ -30,16 +30,6 @@ const (
 	PeriodMonth Period = "month"
 )
 
-type Mode string
-
-const (
-	ModeAuto  Mode = "auto"
-	ModeNow   Mode = "now"
-	ModeDay   Mode = "day"
-	ModeWeek  Mode = "week"
-	ModeMonth Mode = "month"
-)
-
 type Source string
 
 const (
@@ -125,52 +115,14 @@ func (s Settings) Validate() error {
 }
 
 func (s Settings) ActivePeriods(now time.Time) []Period {
-	return s.ActivePeriodsForMode(now, ModeAuto)
-}
-
-func (s Settings) ActivePeriodsForMode(now time.Time, mode Mode) []Period {
 	normalized := s.Normalized()
-	location, err := time.LoadLocation(DefaultTimezone)
-	if err != nil {
-		location = time.FixedZone(DefaultTimezone, 3*60*60)
-	}
-	local := now.In(location)
-	switch mode {
-	case ModeNow:
-		return forcedPeriod(normalized, PeriodNow)
-	case ModeDay:
-		return forcedPeriod(normalized, PeriodDay)
-	case ModeWeek:
-		return forcedPeriod(normalized, PeriodWeek)
-	case ModeMonth:
-		return forcedPeriod(normalized, PeriodMonth)
-	default:
-		if local.Hour() < 12 {
-			if normalized.Periods[PeriodNow].Enabled {
-				return []Period{PeriodNow}
-			}
-			return nil
+	var result []Period
+	for _, period := range knownPeriods() {
+		if normalized.Periods[period].Enabled {
+			result = append(result, period)
 		}
 	}
-	isMonthEnd := local.AddDate(0, 0, 1).Day() == 1
-	var result []Period
-	if normalized.Periods[PeriodDay].Enabled {
-		result = append(result, PeriodDay)
-	}
-	if normalized.Periods[PeriodWeek].Enabled && local.Weekday() == time.Sunday {
-		result = append(result, PeriodWeek)
-	}
-	if normalized.Periods[PeriodMonth].Enabled && isMonthEnd {
-		result = append(result, PeriodMonth)
-	}
 	return result
-}
-
-func forcedPeriod(settings Settings, period Period) []Period {
-	if settings.Periods[period].Enabled {
-		return []Period{period}
-	}
-	return nil
 }
 
 func (p Period) DisplayName() string {
@@ -215,10 +167,6 @@ func NewProvider(client *http.Client) *Provider {
 }
 
 func (p *Provider) Current(ctx context.Context, settings Settings, now time.Time) ([]Section, error) {
-	return p.CurrentForMode(ctx, settings, now, ModeAuto)
-}
-
-func (p *Provider) CurrentForMode(ctx context.Context, settings Settings, now time.Time, mode Mode) ([]Section, error) {
 	normalized := settings.Normalized()
 	if err := settings.Validate(); err != nil {
 		return nil, err
@@ -226,7 +174,7 @@ func (p *Provider) CurrentForMode(ctx context.Context, settings Settings, now ti
 
 	var result []Section
 	var failures []error
-	for _, period := range normalized.ActivePeriodsForMode(now, mode) {
+	for _, period := range normalized.ActivePeriods(now) {
 		items, err := p.fetch(ctx, normalized, period)
 		if err != nil {
 			failures = append(failures, err)

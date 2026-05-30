@@ -19,7 +19,7 @@ func TestPostgresStoreCreatesPublishesFailsAndLoadsSnapshot(t *testing.T) {
 	store := NewPostgresStore(pool, workspaceID)
 
 	items := []NewsItem{
-		{SourceName: "BBC Russian", Title: "Заголовок", OriginalTitle: "Title", Link: "https://example.com/1"},
+		{SourceName: "Reuters", Title: "Заголовок", OriginalTitle: "Title", Link: "https://example.com/1"},
 	}
 	lines := []ReceiptLine{
 		{Text: "25 Мая", Alignment: "center", Role: "calendar"},

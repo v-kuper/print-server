@@ -29,65 +29,25 @@ func TestSettingsNormalizeDefaultsAndValidateCounts(t *testing.T) {
 	}
 }
 
-func TestActivePeriodsUseEuropeMinskCalendarRules(t *testing.T) {
+func TestActivePeriodsReturnsEnabledPeriodsInFixedOrder(t *testing.T) {
 	settings := DefaultSettings()
 	location := time.FixedZone("Europe/Minsk", 3*60*60)
 
 	morning := time.Date(2026, 5, 29, 9, 0, 0, 0, location)
-	if got := settings.ActivePeriods(morning); len(got) != 1 || got[0] != PeriodNow {
-		t.Fatalf("expected weekday morning to include now only, got %#v", got)
+	if got := settings.ActivePeriods(morning); len(got) != 4 || got[0] != PeriodNow || got[1] != PeriodDay || got[2] != PeriodWeek || got[3] != PeriodMonth {
+		t.Fatalf("expected all enabled periods in fixed order, got %#v", got)
 	}
 
 	weekdayEvening := time.Date(2026, 5, 29, 18, 0, 0, 0, location)
-	if got := settings.ActivePeriods(weekdayEvening); len(got) != 1 || got[0] != PeriodDay {
-		t.Fatalf("expected weekday evening to include day only, got %#v", got)
-	}
-
-	noon := time.Date(2026, 5, 29, 12, 0, 0, 0, location)
-	if got := settings.ActivePeriods(noon); len(got) != 1 || got[0] != PeriodDay {
-		t.Fatalf("expected 12:00 to include day, got %#v", got)
-	}
-
-	sunday := time.Date(2026, 5, 31, 18, 0, 0, 0, location)
-	if got := settings.ActivePeriods(sunday); len(got) != 3 || got[0] != PeriodDay || got[1] != PeriodWeek || got[2] != PeriodMonth {
-		t.Fatalf("expected last Sunday to include day/week/month, got %#v", got)
-	}
-
-	mondayMonthEnd := time.Date(2026, 8, 31, 18, 0, 0, 0, location)
-	if got := settings.ActivePeriods(mondayMonthEnd); len(got) != 2 || got[0] != PeriodDay || got[1] != PeriodMonth {
-		t.Fatalf("expected month-end Monday evening to include day/month, got %#v", got)
+	if got := settings.ActivePeriods(weekdayEvening); len(got) != 4 || got[0] != PeriodNow || got[1] != PeriodDay || got[2] != PeriodWeek || got[3] != PeriodMonth {
+		t.Fatalf("expected time of day not to affect enabled periods, got %#v", got)
 	}
 
 	disabled := DefaultSettings()
 	disabled.Periods[PeriodNow] = PeriodSettings{Enabled: false, MaxItems: 20}
-	if got := disabled.ActivePeriods(morning); len(got) != 0 {
-		t.Fatalf("expected disabled now period to be skipped, got %#v", got)
-	}
-}
-
-func TestActivePeriodsCanBeForcedToSinglePeriod(t *testing.T) {
-	settings := DefaultSettings()
-	location := time.FixedZone("Europe/Minsk", 3*60*60)
-	sundayMonthEndMorning := time.Date(2026, 5, 31, 9, 0, 0, 0, location)
-	weekdayEvening := time.Date(2026, 5, 29, 18, 0, 0, 0, location)
-
-	if got := settings.ActivePeriodsForMode(weekdayEvening, ModeNow); len(got) != 1 || got[0] != PeriodNow {
-		t.Fatalf("expected forced now to include now only, got %#v", got)
-	}
-	if got := settings.ActivePeriodsForMode(sundayMonthEndMorning, ModeDay); len(got) != 1 || got[0] != PeriodDay {
-		t.Fatalf("expected forced day to include day only, got %#v", got)
-	}
-	if got := settings.ActivePeriodsForMode(weekdayEvening, ModeWeek); len(got) != 1 || got[0] != PeriodWeek {
-		t.Fatalf("expected forced week to include week only, got %#v", got)
-	}
-	if got := settings.ActivePeriodsForMode(weekdayEvening, ModeMonth); len(got) != 1 || got[0] != PeriodMonth {
-		t.Fatalf("expected forced month to include month only, got %#v", got)
-	}
-
-	disabled := DefaultSettings()
-	disabled.Periods[PeriodDay] = PeriodSettings{Enabled: false, MaxItems: 20}
-	if got := disabled.ActivePeriodsForMode(sundayMonthEndMorning, ModeDay); len(got) != 0 {
-		t.Fatalf("expected forced disabled day to be skipped, got %#v", got)
+	disabled.Periods[PeriodWeek] = PeriodSettings{Enabled: false, MaxItems: 20}
+	if got := disabled.ActivePeriods(morning); len(got) != 2 || got[0] != PeriodDay || got[1] != PeriodMonth {
+		t.Fatalf("expected disabled periods to be skipped, got %#v", got)
 	}
 }
 
@@ -125,6 +85,9 @@ func TestProviderParsesRSSItemsInRankOrderAndUsesPeriodEndpoints(t *testing.T) {
 	})}
 
 	settings := DefaultSettings()
+	settings.Periods[PeriodDay] = PeriodSettings{Enabled: false, MaxItems: 20}
+	settings.Periods[PeriodWeek] = PeriodSettings{Enabled: false, MaxItems: 20}
+	settings.Periods[PeriodMonth] = PeriodSettings{Enabled: false, MaxItems: 20}
 	settings.Periods[PeriodNow] = PeriodSettings{Enabled: true, MaxItems: 2}
 	sections, err := NewProvider(client).Current(context.Background(), settings, time.Date(2026, 5, 29, 9, 0, 0, 0, time.FixedZone("Europe/Minsk", 3*60*60)))
 	if err != nil {
@@ -164,6 +127,7 @@ func TestProviderUsesSortQueryForDayWeekMonthRSS(t *testing.T) {
 	}
 
 	want := []string{
+		"https://shir-man.com/api/rss",
 		"https://shir-man.com/api/rss?sort=day",
 		"https://shir-man.com/api/rss?sort=week",
 		"https://shir-man.com/api/rss?sort=month",

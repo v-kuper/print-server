@@ -5,7 +5,13 @@
       "name": "atol-server",
       "runtimeExecutable": "go",
       "runtimeArgs": ["run", "./cmd/atol-server"],
-      "port": 8080
+      "port": 8080,
+      "env": {
+        "DATABASE_URL": "postgres://atol:atol@localhost:5432/atol?sslmode=disable",
+        "SETTINGS_PATH": "/tmp/atol-dev-settings.json",
+        "IMAGE_EDITOR_PATH": "/tmp/atol-dev-images",
+        "ATOL_LIBRARY_PATH": ""
+      }
     }
   ]
 }
