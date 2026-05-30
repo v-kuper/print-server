@@ -13,7 +13,7 @@ func TestContentSettingsNormalizePreservesEmbeddedScheduleSettings(t *testing.T)
 	newsSettings := news.Settings{
 		TranslateTitles: &translateTitles,
 		Sources: []news.SourceSettings{
-			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 7},
+			{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 7},
 		},
 	}
 	trendsSettings := denistrends.Settings{
@@ -28,7 +28,6 @@ func TestContentSettingsNormalizePreservesEmbeddedScheduleSettings(t *testing.T)
 		Configured:          true,
 		ShowNews:            true,
 		ShowDenisTrends:     true,
-		DenisTrendsMode:     DenisTrendsModeMonth,
 		NewsSettings:        &newsSettings,
 		DenisTrendsSettings: &trendsSettings,
 	}
@@ -47,7 +46,10 @@ func TestContentSettingsNormalizePreservesEmbeddedScheduleSettings(t *testing.T)
 	if !reflect.DeepEqual(*normalized.DenisTrendsSettings, trendsSettings.Normalized()) {
 		t.Fatalf("expected normalized embedded Denis Trends settings %#v, got %#v", trendsSettings.Normalized(), *normalized.DenisTrendsSettings)
 	}
-	if normalized.DenisTrendsMode != DenisTrendsModeMonth {
-		t.Fatalf("expected month mode to be preserved, got %q", normalized.DenisTrendsMode)
+}
+
+func TestContentSettingsDoesNotExposeDenisTrendsMode(t *testing.T) {
+	if _, ok := reflect.TypeOf(ContentSettings{}).FieldByName("DenisTrendsMode"); ok {
+		t.Fatal("expected Denis Trends mode to be removed from active content settings")
 	}
 }

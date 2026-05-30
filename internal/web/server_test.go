@@ -172,8 +172,6 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`data-action="add-separator-block"`,
 		`data-action="print-text"`,
 		`id="content-history"`,
-		`<option value="week">Top week</option>`,
-		`<option value="month">Top month</option>`,
 		`value="rectangle"`,
 		`value="ellipse"`,
 		`id="calendar-font"`,
@@ -195,6 +193,8 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`id="content-calendar" type="checkbox" checked`,
 		`data-schedule-run-profile`,
 		`scheduleProfiles`,
+		`content-denis-trends-mode`,
+		`data-denis-trends-mode`,
 		`Утро`,
 		`День`,
 		`Вечер`,
@@ -258,6 +258,9 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`showHistory`,
 				`data-schedule-content-key`,
 				`data-interval-content-key`,
+				`function renderScheduleTranslationSettings`,
+				`dataset.scheduleTranslationSettings`,
+				`Переводить английские заголовки через AI для новостей и Denis Trends`,
 				`function renderScheduleNewsSettings`,
 				`function readScheduleNewsSettings`,
 				`data-schedule-news-source`,
@@ -270,6 +273,9 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 			unwanted: []string{
 				`data-schedule-run-profile`,
 				`scheduleProfiles`,
+				`renderDenisTrendsModeControl`,
+				`data-schedule-denis-trends-mode`,
+				`data-interval-denis-trends-mode`,
 				`Утро`,
 				`День`,
 				`Вечер`,
@@ -331,12 +337,11 @@ func TestRuntimeAssetsServedWithoutCache(t *testing.T) {
 func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	translateTitles := false
 	intervalContent := receipt.ContentSettings{
-		Configured:      true,
-		ShowWeather:     true,
-		ShowUsdBynRate:  true,
-		ShowBankRates:   true,
-		ShowNews:        true,
-		DenisTrendsMode: receipt.DenisTrendsModeAuto,
+		Configured:     true,
+		ShowWeather:    true,
+		ShowUsdBynRate: true,
+		ShowBankRates:  true,
+		ShowNews:       true,
 	}
 	store := &fakeStore{
 		config:   printer.Config{Host: "192.168.0.118", Port: 5555},
@@ -355,7 +360,7 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 		newsSettings: news.Settings{
 			TranslateTitles: &translateTitles,
 			Sources: []news.SourceSettings{
-				{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 3},
+				{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 3},
 			},
 		},
 		receiptStyle: receipt.StyleSettings{
@@ -756,8 +761,7 @@ func TestSaveReceiptContentEndpointPersistsContent(t *testing.T) {
 		!store.receiptContent.ShowMail ||
 		!store.receiptContent.ShowHistory ||
 		!store.receiptContent.ShowNews ||
-		!store.receiptContent.ShowDenisTrends ||
-		store.receiptContent.DenisTrendsMode != receipt.DenisTrendsModeNow {
+		!store.receiptContent.ShowDenisTrends {
 		t.Fatalf("expected saved receipt content toggles, got %#v", store.receiptContent)
 	}
 }
@@ -1041,7 +1045,7 @@ func TestPrintWeatherEndpointLoadsWeatherAndPrintsReceipt(t *testing.T) {
 		location:  weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
 		portfolio: finance.DefaultTonPortfolio(),
 		newsSettings: news.Settings{Sources: []news.SourceSettings{
-			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+			{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
 		}},
 	}
 	gateway := &fakePrinter{}
@@ -1055,7 +1059,7 @@ func TestPrintWeatherEndpointLoadsWeatherAndPrintsReceipt(t *testing.T) {
 	}
 	tonProvider := &fakeTonProvider{price: finance.TonPrice{USD: 1.7435687405482407}}
 	fiatProvider := &fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}
-	newsProvider := &fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "BBC Russian"}}}
+	newsProvider := &fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "Reuters"}}}
 	server := NewServer(
 		store,
 		gateway,
@@ -1136,7 +1140,7 @@ func TestReceiptPreviewEndpointReturnsStyledLinesWithoutPrinting(t *testing.T) {
 		location:  weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
 		portfolio: finance.DefaultTonPortfolio(),
 		newsSettings: news.Settings{Sources: []news.SourceSettings{
-			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+			{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
 		}},
 		receiptStyle: receipt.StyleSettings{
 			Configured:              true,
@@ -1165,7 +1169,7 @@ func TestReceiptPreviewEndpointReturnsStyledLinesWithoutPrinting(t *testing.T) {
 		}),
 		WithTonPriceProvider(&fakeTonProvider{price: finance.TonPrice{USD: 1.7435687405482407}}),
 		WithFiatRateProvider(&fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}),
-		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "BBC Russian"}}}),
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "Reuters"}}}),
 		WithMotivationProvider(&fakeMotivationProvider{
 			quote:  motivation.Quote{Text: "Делай важное спокойно."},
 			advice: motivation.WeatherAdvice{Text: "Возьми зонт."},
@@ -1282,7 +1286,7 @@ func TestSaveNewsEndpointRejectsEnabledSourceWithoutCount(t *testing.T) {
 	store := &fakeStore{}
 	server := NewServer(store, &fakePrinter{}, fixedClock)
 
-	body := bytes.NewBufferString(`{"sources":[{"preset":"bbc_russian","enabled":true,"feedUrl":"https://example.com/rss","maxItems":0}]}`)
+	body := bytes.NewBufferString(`{"sources":[{"preset":"reuters","enabled":true,"feedUrl":"https://example.com/rss","maxItems":0}]}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/settings/news", body)
 	response := httptest.NewRecorder()
 
@@ -1297,7 +1301,7 @@ func TestSaveNewsEndpointPersistsTranslateTitlesToggle(t *testing.T) {
 	store := &fakeStore{}
 	server := NewServer(store, &fakePrinter{}, fixedClock)
 
-	body := bytes.NewBufferString(`{"translateTitles":false,"sources":[{"preset":"bbc_russian","enabled":true,"feedUrl":"https://example.com/rss","maxItems":1}]}`)
+	body := bytes.NewBufferString(`{"translateTitles":false,"sources":[{"preset":"reuters","enabled":true,"feedUrl":"https://example.com/rss","maxItems":1}]}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/settings/news", body)
 	response := httptest.NewRecorder()
 
@@ -1335,7 +1339,7 @@ func TestSnapshotPageRendersPublishedSnapshot(t *testing.T) {
 			ID:     "snapshot-1",
 			Status: receiptsnapshot.StatusPublished,
 			NewsItems: []receiptsnapshot.NewsItem{{
-				SourceName:    "BBC Russian",
+				SourceName:    "Reuters",
 				Title:         "Переведенный заголовок",
 				OriginalTitle: "Original title",
 				Link:          "https://example.com/news",
@@ -1357,7 +1361,7 @@ func TestSnapshotPageRendersPublishedSnapshot(t *testing.T) {
 	if got := response.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
 		t.Fatalf("expected HTML content type, got %q", got)
 	}
-	for _, want := range []string{"Коротко о мире", "BBC Russian", "Переведенный заголовок", `href="https://example.com/news"`} {
+	for _, want := range []string{"Коротко о мире", "Reuters", "Переведенный заголовок", `href="https://example.com/news"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected snapshot page to contain %q:\n%s", want, body)
 		}
@@ -1624,12 +1628,11 @@ func TestSaveScheduleEndpointPersistsIntervalContent(t *testing.T) {
 			"showCalendar": false,
 			"showNews": true,
 			"showDenisTrends": true,
-			"denisTrendsMode": "week",
 			"newsSettings": {
 				"translateTitles": false,
 				"sources": [
-					{"preset":"bbc_russian","enabled":true,"feedUrl":"https://example.com/rss","maxItems":7},
-					{"preset":"reuters","enabled":false,"feedUrl":"https://example.com/reuters","maxItems":2}
+					{"preset":"reuters","enabled":true,"feedUrl":"https://example.com/rss","maxItems":7},
+					{"preset":"economist","enabled":false,"feedUrl":"https://example.com/economist","maxItems":2}
 				]
 			},
 			"denisTrendsSettings": {
@@ -1660,9 +1663,6 @@ func TestSaveScheduleEndpointPersistsIntervalContent(t *testing.T) {
 		!store.scheduleSettings.IntervalContent.ShowDenisTrends ||
 		store.scheduleSettings.IntervalContent.ShowCalendar {
 		t.Fatalf("expected saved interval content toggles, got %#v", store.scheduleSettings.IntervalContent)
-	}
-	if store.scheduleSettings.IntervalContent.DenisTrendsMode != receipt.DenisTrendsModeWeek {
-		t.Fatalf("expected forced week mode, got %#v", store.scheduleSettings.IntervalContent)
 	}
 	if store.scheduleSettings.IntervalContent.NewsSettings == nil ||
 		store.scheduleSettings.IntervalContent.NewsSettings.Sources[0].MaxItems != 7 ||

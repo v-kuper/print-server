@@ -70,13 +70,6 @@ const denisTrendPeriods = [
   { key: "week", label: "Top week" },
   { key: "month", label: "Top month" }
 ];
-const denisTrendModeOptions = [
-  { key: "auto", label: "Авто" },
-  { key: "now", label: "Top now" },
-  { key: "day", label: "Top day" },
-  { key: "week", label: "Top week" },
-  { key: "month", label: "Top month" }
-];
 
 
 async function loadBootstrap() {
@@ -186,7 +179,23 @@ function renderScheduleContentGroups(container, content, keyAttribute) {
     }
     groups[option.group].push(option);
   }
-  container.replaceChildren();
+
+  // Checkboxes grid — stays stable, no expanding sub-panels inside
+  const grid = document.createElement("div");
+  grid.className = "content-options";
+
+  // Expansion panels live BELOW the grid, full width
+  const expansions = [];
+  const translationPanel = renderScheduleTranslationSettings(customContent.newsSettings);
+  let newsCheckbox = null;
+  let denisTrendsCheckbox = null;
+  const updateTranslationVisibility = () => {
+    translationPanel.hidden = !Boolean(
+      (newsCheckbox && newsCheckbox.checked) ||
+      (denisTrendsCheckbox && denisTrendsCheckbox.checked)
+    );
+  };
+
   for (const groupName of groupOrder) {
     const col = document.createElement("div");
     col.className = "content-group";
@@ -204,50 +213,33 @@ function renderScheduleContentGroups(container, content, keyAttribute) {
       label.append(checkbox, document.createTextNode(option.label));
       col.appendChild(label);
       if (option.key === "showNews") {
+        newsCheckbox = checkbox;
         const panel = renderScheduleNewsSettings(customContent.newsSettings);
         panel.hidden = !checkbox.checked;
         checkbox.addEventListener("change", () => {
           panel.hidden = !checkbox.checked;
+          updateTranslationVisibility();
         });
-        col.appendChild(panel);
+        expansions.push(panel);
       }
       if (option.key === "showDenisTrends") {
-        const modeControl = renderDenisTrendsModeControl(customContent.denisTrendsMode, keyAttribute);
+        denisTrendsCheckbox = checkbox;
         const panel = renderScheduleDenisTrendsSettings(customContent.denisTrendsSettings);
-        modeControl.hidden = !checkbox.checked;
-        panel.hidden = !checkbox.checked;
+        const wrapper = document.createElement("div");
+        wrapper.className = "schedule-expansion";
+        wrapper.hidden = !checkbox.checked;
+        wrapper.append(panel);
         checkbox.addEventListener("change", () => {
-          const hidden = !checkbox.checked;
-          modeControl.hidden = hidden;
-          panel.hidden = hidden;
+          wrapper.hidden = !checkbox.checked;
+          updateTranslationVisibility();
         });
-        col.append(modeControl, panel);
+        expansions.push(wrapper);
       }
     }
-    container.appendChild(col);
+    grid.appendChild(col);
   }
-}
-
-function renderDenisTrendsModeControl(value, keyAttribute) {
-  const label = document.createElement("label");
-  label.className = "content-mode-label";
-  label.textContent = "Режим";
-  const select = document.createElement("select");
-  select.dataset.denisTrendsMode = "";
-  if (keyAttribute === "intervalContentKey") {
-    select.dataset.intervalDenisTrendsMode = "";
-  } else {
-    select.dataset.scheduleDenisTrendsMode = "";
-  }
-  for (const option of denisTrendModeOptions) {
-    const item = document.createElement("option");
-    item.value = option.key;
-    item.textContent = option.label;
-    select.appendChild(item);
-  }
-  select.value = denisTrendsMode(value);
-  label.appendChild(select);
-  return label;
+  updateTranslationVisibility();
+  container.replaceChildren(grid, translationPanel, ...expansions);
 }
 
 function newsPresetLabel(preset) {
@@ -290,11 +282,11 @@ function cloneDenisTrendsSettings(settings) {
   return { periods: result };
 }
 
-function renderScheduleNewsSettings(settings) {
+function renderScheduleTranslationSettings(settings) {
   const normalized = cloneNewsSettings(settings || bootstrapNewsSettings);
   const panel = document.createElement("div");
-  panel.className = "schedule-source-settings";
-  panel.dataset.scheduleNewsSettings = "";
+  panel.className = "schedule-expansion schedule-translation-settings";
+  panel.dataset.scheduleTranslationSettings = "";
 
   const translateLabel = document.createElement("label");
   translateLabel.className = "toggle-label";
@@ -302,8 +294,16 @@ function renderScheduleNewsSettings(settings) {
   translate.type = "checkbox";
   translate.dataset.scheduleNewsTranslate = "";
   translate.checked = normalized.translateTitles;
-  translateLabel.append(translate, document.createTextNode("Переводить английские заголовки через AI"));
+  translateLabel.append(translate, document.createTextNode("Переводить английские заголовки через AI для новостей и Denis Trends"));
   panel.appendChild(translateLabel);
+  return panel;
+}
+
+function renderScheduleNewsSettings(settings) {
+  const normalized = cloneNewsSettings(settings || bootstrapNewsSettings);
+  const panel = document.createElement("div");
+  panel.className = "schedule-source-settings";
+  panel.dataset.scheduleNewsSettings = "";
 
   for (const source of normalized.sources) {
     const row = document.createElement("div");
@@ -353,7 +353,7 @@ function renderScheduleDenisTrendsSettings(settings) {
 
   const hint = document.createElement("p");
   hint.className = "helper-text";
-  hint.textContent = "Авто: до 12:00 Top now, после 12:00 Top day; воскресенье и конец месяца добавляют Top week/month. Ручной режим печатает только выбранный период.";
+  hint.textContent = "Denis Trends в этом запуске печатает выбранные периоды. Включи Top now, Top day, Top week или Top month и задай лимит для каждого.";
   panel.appendChild(hint);
 
   for (const period of denisTrendPeriods) {
@@ -456,7 +456,7 @@ function renderDenisTrendsSettings(settings) {
 
   const hint = document.createElement("p");
   hint.className = "helper-text";
-  hint.textContent = "Denis Trends: режим Top now / Top day / Top week / Top month выбирается в составе чека и расписании. Авто оставляет правило до 12:00 Top now, после 12:00 Top day.";
+  hint.textContent = "Denis Trends печатает выбранные периоды: Top now, Top day, Top week и Top month. Каждый период управляется своим чекбоксом и лимитом.";
   denisTrendsSettingsEl.appendChild(hint);
 
   denisTrendPeriods.forEach(period => {
@@ -522,7 +522,6 @@ function applyBootstrap(data) {
   setChecked("#content-history", content.showHistory);
   setChecked("#content-news", content.showNews);
   setChecked("#content-denis-trends", content.showDenisTrends);
-  setValue("#content-denis-trends-mode", denisTrendsMode(content.denisTrendsMode));
 
   const weather = data.weather || {};
   setValue("#weather-name", weather.name);
@@ -1221,8 +1220,7 @@ function readReceiptContentSettings() {
     showCalendar: checked("#content-calendar"),
     showHistory: checked("#content-history"),
     showNews: checked("#content-news"),
-    showDenisTrends: checked("#content-denis-trends"),
-    denisTrendsMode: denisTrendsMode(document.querySelector("#content-denis-trends-mode")?.value)
+    showDenisTrends: checked("#content-denis-trends")
   };
 }
 
@@ -1279,17 +1277,9 @@ function scheduleContentFromSettings(settings) {
     showHistory: Boolean(content.showHistory),
     showNews: Boolean(content.showNews),
     showDenisTrends: Boolean(content.showDenisTrends),
-    denisTrendsMode: denisTrendsMode(content.denisTrendsMode),
     newsSettings: cloneNewsSettings(content.newsSettings || bootstrapNewsSettings),
     denisTrendsSettings: cloneDenisTrendsSettings(content.denisTrendsSettings || bootstrapDenisTrendsSettings)
   };
-}
-
-function denisTrendsMode(value) {
-  if (value === "now" || value === "day" || value === "week" || value === "month") {
-    return value;
-  }
-  return "auto";
 }
 
 function scheduleRunFromValue(value) {
@@ -1310,7 +1300,6 @@ function scheduleRowContent(row) {
   row.querySelectorAll("[data-schedule-content-key]").forEach(input => {
     content[input.dataset.scheduleContentKey] = input.checked;
   });
-  content.denisTrendsMode = row.querySelector("[data-schedule-denis-trends-mode]")?.value || "auto";
   content.newsSettings = readScheduleNewsSettings(row);
   content.denisTrendsSettings = readScheduleDenisTrendsSettings(row);
   return scheduleContentFromSettings(content);
@@ -1321,7 +1310,6 @@ function readIntervalContentSettings() {
   document.querySelectorAll("[data-interval-content-key]").forEach(input => {
     content[input.dataset.intervalContentKey] = input.checked;
   });
-  content.denisTrendsMode = document.querySelector("[data-interval-denis-trends-mode]")?.value || "auto";
   const container = document.querySelector("#schedule-interval-content");
   content.newsSettings = readScheduleNewsSettings(container);
   content.denisTrendsSettings = readScheduleDenisTrendsSettings(container);
@@ -1330,8 +1318,13 @@ function readIntervalContentSettings() {
 
 function readScheduleNewsSettings(container) {
   const panel = container?.querySelector("[data-schedule-news-settings]");
+  const translateInput = container?.querySelector("[data-schedule-news-translate]");
   if (!panel) {
-    return cloneNewsSettings(bootstrapNewsSettings);
+    const fallback = cloneNewsSettings(bootstrapNewsSettings);
+    if (translateInput) {
+      fallback.translateTitles = Boolean(translateInput.checked);
+    }
+    return fallback;
   }
   const sources = Array.from(panel.querySelectorAll("[data-schedule-news-source]")).map(row => {
     const count = Number.parseInt(row.querySelector("[data-schedule-news-count]")?.value, 10);
@@ -1343,7 +1336,7 @@ function readScheduleNewsSettings(container) {
     };
   });
   return {
-    translateTitles: Boolean(panel.querySelector("[data-schedule-news-translate]")?.checked),
+    translateTitles: translateInput ? Boolean(translateInput.checked) : cloneNewsSettings(bootstrapNewsSettings).translateTitles,
     sources
   };
 }

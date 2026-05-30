@@ -5,14 +5,6 @@ import (
 	"atol-server/internal/news"
 )
 
-const (
-	DenisTrendsModeAuto  = "auto"
-	DenisTrendsModeNow   = "now"
-	DenisTrendsModeDay   = "day"
-	DenisTrendsModeWeek  = "week"
-	DenisTrendsModeMonth = "month"
-)
-
 type ContentSettings struct {
 	Configured          bool                  `json:"configured"`
 	ShowWeather         bool                  `json:"showWeather"`
@@ -26,7 +18,6 @@ type ContentSettings struct {
 	ShowHistory         bool                  `json:"showHistory"`
 	ShowNews            bool                  `json:"showNews"`
 	ShowDenisTrends     bool                  `json:"showDenisTrends"`
-	DenisTrendsMode     string                `json:"denisTrendsMode,omitempty"`
 	NewsSettings        *news.Settings        `json:"newsSettings,omitempty"`
 	DenisTrendsSettings *denistrends.Settings `json:"denisTrendsSettings,omitempty"`
 }
@@ -45,18 +36,12 @@ func DefaultContentSettings() ContentSettings {
 		ShowHistory:         true,
 		ShowNews:            true,
 		ShowDenisTrends:     false,
-		DenisTrendsMode:     DenisTrendsModeAuto,
 	}
 }
 
 func (s ContentSettings) Normalized() ContentSettings {
 	if !s.Configured {
 		return DefaultContentSettings()
-	}
-	switch s.DenisTrendsMode {
-	case DenisTrendsModeNow, DenisTrendsModeDay, DenisTrendsModeWeek, DenisTrendsModeMonth:
-	default:
-		s.DenisTrendsMode = DenisTrendsModeAuto
 	}
 	if s.NewsSettings != nil {
 		normalized := s.NewsSettings.Normalized()

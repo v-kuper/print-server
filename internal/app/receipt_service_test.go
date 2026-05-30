@@ -30,7 +30,7 @@ func TestReceiptServicePrintsDailyReceiptWithSavedPrinterConfig(t *testing.T) {
 		location:  weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
 		portfolio: finance.DefaultTonPortfolio(),
 		newsSettings: news.Settings{Sources: []news.SourceSettings{
-			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+			{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
 		}},
 	}
 	gateway := &fakePrinter{}
@@ -47,7 +47,7 @@ func TestReceiptServicePrintsDailyReceiptWithSavedPrinterConfig(t *testing.T) {
 		WithTonPriceProvider(&fakeTonProvider{price: finance.TonPrice{USD: 1.7435687405482407}}),
 		WithFiatRateProvider(&fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}),
 		WithBankRatesProvider(&fakeBankRatesProvider{}),
-		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "BBC Russian"}}}),
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "Reuters"}}}),
 		WithMotivationProvider(&fakeMotivationProvider{
 			quote:  motivation.Quote{Text: "Делай важное спокойно."},
 			advice: motivation.WeatherAdvice{Text: "Возьми зонт."},
@@ -79,7 +79,7 @@ func TestReceiptServiceCreatesNewsSnapshotAndPrintsQRCode(t *testing.T) {
 		newsSettings: news.Settings{
 			TranslateTitles: &translateTitles,
 			Sources: []news.SourceSettings{
-				{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+				{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
 			},
 		},
 		snapshotSettings: receiptsnapshot.Settings{BaseURL: "http://192.168.0.25:8080"},
@@ -93,7 +93,7 @@ func TestReceiptServiceCreatesNewsSnapshotAndPrintsQRCode(t *testing.T) {
 		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{
 			Title:         "Переведенный заголовок",
 			OriginalTitle: "Original title",
-			SourceName:    "BBC Russian",
+			SourceName:    "Reuters",
 			Link:          "https://example.com/news",
 		}}}),
 		WithReceiptSnapshotStore(snapshotStore),
@@ -112,10 +112,11 @@ func TestReceiptServiceCreatesNewsSnapshotAndPrintsQRCode(t *testing.T) {
 	if !receiptLinesContainQRCode(gateway.printedLines, "http://192.168.0.25:8080/snapshots/snapshot-1") {
 		t.Fatalf("expected printed QR line, got %#v", gateway.printedLines)
 	}
+	requireQRCodeSeparatedFromReceiptContent(t, gateway.printedLines, "http://192.168.0.25:8080/snapshots/snapshot-1")
 	wantItems := []receiptsnapshot.NewsItem{{
 		Title:         "Переведенный заголовок",
 		OriginalTitle: "Original title",
-		SourceName:    "BBC Russian",
+		SourceName:    "Reuters",
 		Link:          "https://example.com/news",
 	}}
 	if !reflect.DeepEqual(snapshotStore.createdItems, wantItems) {
@@ -130,6 +131,7 @@ func TestReceiptServiceCreatesNewsSnapshotAndPrintsQRCode(t *testing.T) {
 	if !snapshotReceiptLinesContainQRCode(snapshotStore.finalizedLines, "http://192.168.0.25:8080/snapshots/snapshot-1") {
 		t.Fatalf("expected finalized snapshot receipt lines to include QR, got %#v", snapshotStore.finalizedLines)
 	}
+	requireSnapshotQRCodeSeparatedFromReceiptContent(t, snapshotStore.finalizedLines, "http://192.168.0.25:8080/snapshots/snapshot-1")
 	if !snapshotReceiptLinesContainLinkedText(snapshotStore.finalizedLines, "Переведенный заголовок", "https://example.com/news") {
 		t.Fatalf("expected finalized snapshot receipt lines to include linked news title, got %#v", snapshotStore.finalizedLines)
 	}
@@ -145,7 +147,7 @@ func TestReceiptServicePrintsNewsWithDefaultQRCodeWhenSnapshotBaseURLIsEmpty(t *
 		newsSettings: news.Settings{
 			TranslateTitles: &translateTitles,
 			Sources: []news.SourceSettings{
-				{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+				{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
 			},
 		},
 	}
@@ -155,7 +157,7 @@ func TestReceiptServicePrintsNewsWithDefaultQRCodeWhenSnapshotBaseURLIsEmpty(t *
 		store,
 		gateway,
 		fixedClock,
-		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "BBC Russian"}}}),
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "Reuters"}}}),
 		WithReceiptSnapshotStore(snapshotStore),
 	)
 
@@ -184,7 +186,7 @@ func TestReceiptServiceSkipsQRCodeWhenSnapshotFinalizationFails(t *testing.T) {
 		newsSettings: news.Settings{
 			TranslateTitles: &translateTitles,
 			Sources: []news.SourceSettings{
-				{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+				{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
 			},
 		},
 		snapshotSettings: receiptsnapshot.Settings{BaseURL: "http://192.168.0.25:8080"},
@@ -195,7 +197,7 @@ func TestReceiptServiceSkipsQRCodeWhenSnapshotFinalizationFails(t *testing.T) {
 		store,
 		gateway,
 		fixedClock,
-		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "BBC Russian"}}}),
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "Reuters"}}}),
 		WithReceiptSnapshotStore(snapshotStore),
 	)
 
@@ -224,7 +226,7 @@ func TestReceiptServiceMarksNewsSnapshotFailedWhenPrinterFails(t *testing.T) {
 		newsSettings: news.Settings{
 			TranslateTitles: &translateTitles,
 			Sources: []news.SourceSettings{
-				{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+				{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
 			},
 		},
 		snapshotSettings: receiptsnapshot.Settings{BaseURL: "http://192.168.0.25:8080"},
@@ -234,7 +236,7 @@ func TestReceiptServiceMarksNewsSnapshotFailedWhenPrinterFails(t *testing.T) {
 		store,
 		&fakePrinter{printErr: errors.New("paper empty")},
 		fixedClock,
-		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "BBC Russian"}}}),
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "Reuters"}}}),
 		WithReceiptSnapshotStore(snapshotStore),
 	)
 
@@ -682,7 +684,7 @@ func TestReceiptServiceTranslatesEnglishNewsTitles(t *testing.T) {
 		location:  weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
 		portfolio: finance.DefaultTonPortfolio(),
 		newsSettings: news.Settings{Sources: []news.SourceSettings{
-			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/bbc.xml", MaxItems: 1},
+			{Preset: news.PresetEconomist, Enabled: true, FeedURL: "https://example.com/economist.xml", MaxItems: 1},
 			{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/reuters.xml", MaxItems: 1},
 			{Preset: news.PresetHackerNews, Enabled: true, FeedURL: "https://example.com/hn.xml", MaxItems: 1},
 		}},
@@ -715,7 +717,7 @@ func TestReceiptServiceTranslatesEnglishNewsTitles(t *testing.T) {
 		WithFiatRateProvider(&fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}),
 		WithBankRatesProvider(&fakeBankRatesProvider{}),
 		WithNewsProvider(&fakeNewsProvider{items: []news.Item{
-			{Title: "Русский заголовок", SourceName: "BBC Russian"},
+			{Title: "Русский заголовок", SourceName: "Reuters"},
 			{Title: "Reuters prepares a new market wrap", SourceName: "Reuters"},
 			{Title: "Founder mode and startup growth", SourceName: "Hacker News"},
 		}}),
@@ -750,7 +752,7 @@ func TestReceiptServiceTranslatesEnglishNewsTitles(t *testing.T) {
 		t.Fatalf("expected Hacker News title with original item index, got %#v", provider.translatedTitles)
 	}
 	if lineTextsContainSubstring(lines, "- Русский заголовок") && lineTextsContainSubstring(lines, "Русский заголовок Русский заголовок") {
-		t.Fatalf("expected BBC Russian title not to get duplicated as original, got %#v", lines)
+		t.Fatalf("expected Reuters title not to get duplicated as original, got %#v", lines)
 	}
 }
 
@@ -823,7 +825,7 @@ func TestReceiptServiceIncludesGoogleMailAndCalendar(t *testing.T) {
 func TestReceiptServicePrintsHistoryBeforeNews(t *testing.T) {
 	store := &fakeStore{
 		newsSettings: news.Settings{Sources: []news.SourceSettings{
-			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+			{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
 		}},
 		receiptContent: receipt.ContentSettings{
 			Configured:          true,
@@ -854,7 +856,7 @@ func TestReceiptServicePrintsHistoryBeforeNews(t *testing.T) {
 		fixedClock,
 		WithHistoryProvider(historyProvider),
 		WithMotivationProvider(motivationProvider),
-		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Новость", SourceName: "BBC Russian"}}}),
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Новость", SourceName: "Reuters"}}}),
 	)
 
 	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
@@ -1342,9 +1344,6 @@ func TestReceiptServiceBuildsDenisTrendsBlockWhenEnabled(t *testing.T) {
 	if !provider.now.Equal(fixedClock()) {
 		t.Fatalf("expected provider to receive service clock, got %v", provider.now)
 	}
-	if provider.mode != denistrends.ModeAuto {
-		t.Fatalf("expected default Denis Trends mode auto, got %q", provider.mode)
-	}
 	if !lineTextsContain(lines, "Denis Trends") || !lineTextsContain(lines, "Hacker News: HN title") {
 		t.Fatalf("expected Denis Trends receipt lines, got %#v", lines)
 	}
@@ -1353,53 +1352,18 @@ func TestReceiptServiceBuildsDenisTrendsBlockWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestReceiptServicePassesConfiguredDenisTrendsMode(t *testing.T) {
-	store := &fakeStore{
-		denisTrends: denistrends.DefaultSettings(),
-	}
-	provider := &fakeDenisTrendsProvider{
-		sections: []denistrends.Section{
-			{
-				Period: denistrends.PeriodNow,
-				Title:  "Top now",
-				Items:  []denistrends.Item{{Title: "Now title", SourceName: "GitHub", Link: "https://example.com/now"}},
-			},
-		},
-	}
-	service := NewReceiptService(
-		store,
-		&fakePrinter{},
-		fixedClock,
-		WithDenisTrendsProvider(provider),
-		WithMotivationProvider(&fakeMotivationProvider{}),
-	)
-
-	_, err := service.BuildDailyReceiptWithContent(context.Background(), receipt.ContentSettings{
-		Configured:      true,
-		ShowDenisTrends: true,
-		DenisTrendsMode: receipt.DenisTrendsModeNow,
-	})
-	if err != nil {
-		t.Fatalf("build receipt: %v", err)
-	}
-
-	if provider.mode != denistrends.ModeNow {
-		t.Fatalf("expected provider to receive forced now mode, got %q", provider.mode)
-	}
-}
-
 func TestReceiptServiceUsesEmbeddedNewsSettingsForScheduledContent(t *testing.T) {
 	translateTitles := false
 	embedded := news.Settings{
 		TranslateTitles: &translateTitles,
 		Sources: []news.SourceSettings{
-			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/schedule.xml", MaxItems: 7},
-			{Preset: news.PresetReuters, Enabled: false, FeedURL: "https://example.com/reuters.xml", MaxItems: 2},
+			{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/schedule.xml", MaxItems: 7},
+			{Preset: news.PresetEconomist, Enabled: false, FeedURL: "https://example.com/economist.xml", MaxItems: 2},
 		},
 	}
 	global := news.DefaultSettings()
 	global.Sources[0].MaxItems = 1
-	provider := &fakeNewsProvider{items: []news.Item{{Title: "Scheduled title", SourceName: "BBC Russian"}}}
+	provider := &fakeNewsProvider{items: []news.Item{{Title: "Scheduled title", SourceName: "Reuters"}}}
 	service := NewReceiptService(
 		&fakeStore{newsSettings: global},
 		&fakePrinter{},
@@ -1424,8 +1388,11 @@ func TestReceiptServiceUsesEmbeddedNewsSettingsForScheduledContent(t *testing.T)
 	}
 }
 
-func TestReceiptServiceUsesEmbeddedDenisTrendsSettingsAndForcedMonthMode(t *testing.T) {
+func TestReceiptServiceUsesEmbeddedDenisTrendsSettingsWithoutMode(t *testing.T) {
 	embedded := denistrends.DefaultSettings()
+	embedded.Periods[denistrends.PeriodNow] = denistrends.PeriodSettings{Enabled: false, MaxItems: 20}
+	embedded.Periods[denistrends.PeriodDay] = denistrends.PeriodSettings{Enabled: false, MaxItems: 20}
+	embedded.Periods[denistrends.PeriodWeek] = denistrends.PeriodSettings{Enabled: true, MaxItems: 2}
 	embedded.Periods[denistrends.PeriodMonth] = denistrends.PeriodSettings{Enabled: true, MaxItems: 3}
 	global := denistrends.DefaultSettings()
 	global.Periods[denistrends.PeriodMonth] = denistrends.PeriodSettings{Enabled: true, MaxItems: 99}
@@ -1449,16 +1416,12 @@ func TestReceiptServiceUsesEmbeddedDenisTrendsSettingsAndForcedMonthMode(t *test
 	_, err := service.BuildDailyReceiptWithContent(context.Background(), receipt.ContentSettings{
 		Configured:          true,
 		ShowDenisTrends:     true,
-		DenisTrendsMode:     receipt.DenisTrendsModeMonth,
 		DenisTrendsSettings: &embedded,
 	})
 	if err != nil {
 		t.Fatalf("build receipt: %v", err)
 	}
 
-	if provider.mode != denistrends.ModeMonth {
-		t.Fatalf("expected forced month mode, got %q", provider.mode)
-	}
 	got := provider.settings.Normalized()
 	want := embedded.Normalized()
 	if !reflect.DeepEqual(got, want) {
@@ -1530,6 +1493,110 @@ func TestReceiptServiceTranslatesEnglishDenisTrendTitles(t *testing.T) {
 	}
 	if got := motivationProvider.translatedTitles[0]; got.Index != 0 || got.SourceName != "Hacker News" || got.Title != "Founder mode and startup growth" {
 		t.Fatalf("unexpected Denis Trends translation request: %#v", got)
+	}
+}
+
+func TestReceiptServiceUsesEmbeddedNewsTranslationToggleForDenisTrends(t *testing.T) {
+	globalTranslateTitles := false
+	embeddedTranslateTitles := true
+	embeddedNewsSettings := news.Settings{TranslateTitles: &embeddedTranslateTitles}
+	store := &fakeStore{
+		denisTrends:  denistrends.DefaultSettings(),
+		newsSettings: news.Settings{TranslateTitles: &globalTranslateTitles},
+	}
+	trendsProvider := &fakeDenisTrendsProvider{
+		sections: []denistrends.Section{
+			{
+				Period: denistrends.PeriodDay,
+				Title:  "Top day",
+				Items: []denistrends.Item{
+					{Title: "New database engine reaches beta", SourceName: "GitHub", Link: "https://example.com/db"},
+				},
+			},
+		},
+	}
+	motivationProvider := &fakeMotivationProvider{
+		translations: []motivation.NewsTranslation{
+			{Index: 0, Title: "Новый движок базы данных вышел в бета-версию"},
+		},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithDenisTrendsProvider(trendsProvider),
+		WithMotivationProvider(motivationProvider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured:      true,
+		ShowNews:        false,
+		ShowDenisTrends: true,
+		NewsSettings:    &embeddedNewsSettings,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if !lineTextsContainSubstring(lines, "GitHub: Новый движок базы данных") || !lineTextsContain(lines, "вышел в бета-версию") {
+		t.Fatalf("expected embedded translation toggle to translate Denis Trends, got %#v", lines)
+	}
+	if len(motivationProvider.translatedTitles) != 1 {
+		t.Fatalf("expected Denis Trends title to be sent for translation, got %#v", motivationProvider.translatedTitles)
+	}
+}
+
+func TestReceiptServiceDisablesDenisTrendsTranslationFromEmbeddedNewsSettings(t *testing.T) {
+	globalTranslateTitles := true
+	embeddedTranslateTitles := false
+	embeddedNewsSettings := news.Settings{TranslateTitles: &embeddedTranslateTitles}
+	store := &fakeStore{
+		denisTrends:  denistrends.DefaultSettings(),
+		newsSettings: news.Settings{TranslateTitles: &globalTranslateTitles},
+	}
+	trendsProvider := &fakeDenisTrendsProvider{
+		sections: []denistrends.Section{
+			{
+				Period: denistrends.PeriodDay,
+				Title:  "Top day",
+				Items: []denistrends.Item{
+					{Title: "New database engine reaches beta", SourceName: "GitHub", Link: "https://example.com/db"},
+				},
+			},
+		},
+	}
+	motivationProvider := &fakeMotivationProvider{
+		translations: []motivation.NewsTranslation{
+			{Index: 0, Title: "Новый движок базы данных вышел в бета-версию"},
+		},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithDenisTrendsProvider(trendsProvider),
+		WithMotivationProvider(motivationProvider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured:      true,
+		ShowNews:        false,
+		ShowDenisTrends: true,
+		NewsSettings:    &embeddedNewsSettings,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if !lineTextsContainSubstring(lines, "GitHub: New database engine") || !lineTextsContain(lines, "reaches beta") {
+		t.Fatalf("expected original Denis Trends title when embedded translation is off, got %#v", lines)
+	}
+	if len(motivationProvider.translatedTitles) != 0 {
+		t.Fatalf("expected translation provider not to be called, got %#v", motivationProvider.translatedTitles)
 	}
 }
 
@@ -1981,14 +2048,12 @@ func (p *fakeNewsProvider) Current(_ context.Context, settings news.Settings) ([
 type fakeDenisTrendsProvider struct {
 	sections []denistrends.Section
 	now      time.Time
-	mode     denistrends.Mode
 	settings denistrends.Settings
 }
 
-func (p *fakeDenisTrendsProvider) CurrentForMode(_ context.Context, settings denistrends.Settings, now time.Time, mode denistrends.Mode) ([]denistrends.Section, error) {
+func (p *fakeDenisTrendsProvider) Current(_ context.Context, settings denistrends.Settings, now time.Time) ([]denistrends.Section, error) {
 	p.settings = settings
 	p.now = now
-	p.mode = mode
 	return p.sections, nil
 }
 
@@ -2168,6 +2233,32 @@ func receiptLinesContainQRCode(lines []receipt.Line, value string) bool {
 	return false
 }
 
+func requireQRCodeSeparatedFromReceiptContent(t *testing.T, lines []receipt.Line, value string) {
+	t.Helper()
+	index := receiptQRCodeIndex(lines, value)
+	if index < 3 {
+		t.Fatalf("expected QR code to have blank line, separator, and blank line before it, got %#v", lines)
+	}
+	if strings.TrimSpace(lines[index-3].Text) != "" {
+		t.Fatalf("expected blank line before QR separator, got %#v in %#v", lines[index-3], lines)
+	}
+	if lines[index-2].Text != strings.Repeat("-", 16) || lines[index-2].Alignment != receipt.AlignmentCenter {
+		t.Fatalf("expected centered separator before QR, got %#v in %#v", lines[index-2], lines)
+	}
+	if strings.TrimSpace(lines[index-1].Text) != "" {
+		t.Fatalf("expected blank line after QR separator, got %#v in %#v", lines[index-1], lines)
+	}
+}
+
+func receiptQRCodeIndex(lines []receipt.Line, value string) int {
+	for index, line := range lines {
+		if line.QRCode == value {
+			return index
+		}
+	}
+	return -1
+}
+
 func receiptLinesContainAnyQRCode(lines []receipt.Line) bool {
 	for _, line := range lines {
 		if strings.TrimSpace(line.QRCode) != "" {
@@ -2193,6 +2284,32 @@ func snapshotReceiptLinesContainQRCode(lines []receiptsnapshot.ReceiptLine, valu
 		}
 	}
 	return false
+}
+
+func requireSnapshotQRCodeSeparatedFromReceiptContent(t *testing.T, lines []receiptsnapshot.ReceiptLine, value string) {
+	t.Helper()
+	index := snapshotReceiptQRCodeIndex(lines, value)
+	if index < 3 {
+		t.Fatalf("expected snapshot QR code to have blank line, separator, and blank line before it, got %#v", lines)
+	}
+	if strings.TrimSpace(lines[index-3].Text) != "" {
+		t.Fatalf("expected blank snapshot line before QR separator, got %#v in %#v", lines[index-3], lines)
+	}
+	if lines[index-2].Text != strings.Repeat("-", 16) || lines[index-2].Alignment != string(receipt.AlignmentCenter) {
+		t.Fatalf("expected centered snapshot separator before QR, got %#v in %#v", lines[index-2], lines)
+	}
+	if strings.TrimSpace(lines[index-1].Text) != "" {
+		t.Fatalf("expected blank snapshot line after QR separator, got %#v in %#v", lines[index-1], lines)
+	}
+}
+
+func snapshotReceiptQRCodeIndex(lines []receiptsnapshot.ReceiptLine, value string) int {
+	for index, line := range lines {
+		if line.QRCode == value {
+			return index
+		}
+	}
+	return -1
 }
 
 func snapshotReceiptLinesContainLinkedText(lines []receiptsnapshot.ReceiptLine, textPart string, link string) bool {

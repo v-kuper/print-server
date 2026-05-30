@@ -23,7 +23,6 @@ const deprecatedEconomistWorldThisWeekFeed = "https://www.economist.com/the-worl
 type Preset string
 
 const (
-	PresetBBCRussian Preset = "bbc_russian"
 	PresetReuters    Preset = "reuters"
 	PresetEconomist  Preset = "economist"
 	PresetHackerNews Preset = "hacker_news"
@@ -60,11 +59,6 @@ type Provider struct {
 
 func Presets() []PresetInfo {
 	return []PresetInfo{
-		{
-			Preset:      PresetBBCRussian,
-			DisplayName: "BBC Russian",
-			FeedURL:     "https://feeds.bbci.co.uk/russian/rss.xml",
-		},
 		{
 			Preset:      PresetReuters,
 			DisplayName: "Reuters",

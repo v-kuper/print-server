@@ -150,8 +150,8 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 		WeatherAdvice:   &motivation.WeatherAdvice{Text: "Возьми зонт."},
 		MotivationQuote: &motivation.Quote{Text: "Сегодня достаточно одного честного шага."},
 		NewsItems: []news.Item{
-			{Title: "Первый заголовок", SourceName: "BBC Russian"},
-			{Title: "Второй заголовок", SourceName: "BBC Russian"},
+			{Title: "Первый заголовок", SourceName: "Reuters"},
+			{Title: "Второй заголовок", SourceName: "Reuters"},
 			{Title: "Atom заголовок", SourceName: "Hacker News"},
 		},
 	})
@@ -170,7 +170,7 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 	requireContains(t, got, "Купить $ 3.2790")
 	requireContains(t, got, "Банк Д")
 	requireContains(t, got, "Коротко о мире:")
-	requireContains(t, got, "BBC Russian")
+	requireContains(t, got, "Reuters")
 	requireContains(t, got, "- Первый заголовок")
 	requireContains(t, got, "Hacker News")
 
@@ -212,7 +212,7 @@ func TestDailyReceiptPrintsCalendarBeforeFinanceAndHistoryBeforeNews(t *testing.
 		HistoryFacts: []motivation.HistoryFact{
 			{Year: 1961, Text: "запущена первая автоматическая станция к Венере."},
 		},
-		NewsItems: []news.Item{{Title: "Новость", SourceName: "BBC Russian"}},
+		NewsItems: []news.Item{{Title: "Новость", SourceName: "Reuters"}},
 	})
 
 	got := texts(lines)
@@ -360,7 +360,7 @@ func TestDailyReceiptPrintsHistoryBeforeNews(t *testing.T) {
 			{Year: 1961, Text: "запущена первая автоматическая станция к Венере."},
 			{Year: -585, Text: "солнечное затмение остановило битву на Галисе."},
 		},
-		NewsItems: []news.Item{{Title: "Новость", SourceName: "BBC Russian"}},
+		NewsItems: []news.Item{{Title: "Новость", SourceName: "Reuters"}},
 	})
 
 	got := texts(lines)
@@ -394,7 +394,7 @@ func TestDailyReceiptAppendsCalendarAndMailBeforeNews(t *testing.T) {
 			{TimeLabel: "18:30", Title: "Ветеринар"},
 			{TimeLabel: "Весь день", Title: "День без встреч"},
 		},
-		NewsItems: []news.Item{{Title: "Новость", SourceName: "BBC Russian"}},
+		NewsItems: []news.Item{{Title: "Новость", SourceName: "Reuters"}},
 	})
 
 	got := texts(lines)
@@ -510,7 +510,7 @@ func TestDailyReceiptSeparatesMajorSectionsWithBlankLines(t *testing.T) {
 		CalendarEvents: []googleintegration.CalendarEvent{
 			{TimeLabel: "18:30", Title: "Ветеринар"},
 		},
-		NewsItems: []news.Item{{Title: "Новость", SourceName: "BBC Russian"}},
+		NewsItems: []news.Item{{Title: "Новость", SourceName: "Reuters"}},
 	})
 
 	got := texts(lines)

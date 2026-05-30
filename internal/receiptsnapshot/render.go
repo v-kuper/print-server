@@ -131,22 +131,22 @@ func fallbackNewsReceiptLines(items []NewsItem) []ReceiptLine {
 	}
 	var lines []ReceiptLine
 	lines = append(lines,
-		ReceiptLine{Text: "Коротко о мире:", Alignment: "center", Role: "normal", LineSize: 15},
-		ReceiptLine{Text: " ", Alignment: "center", Role: "normal", LineSize: 15},
+		ReceiptLine{Text: "Коротко о мире:", Alignment: "left", Role: "normal", LineSize: 15},
+		ReceiptLine{Text: " ", Alignment: "left", Role: "normal", LineSize: 15},
 	)
 	for sourceIndex, group := range groups {
-		lines = append(lines, ReceiptLine{Text: group.SourceName, Alignment: "center", Role: "normal", LineSize: 15})
+		lines = append(lines, ReceiptLine{Text: group.SourceName, Alignment: "left", Role: "normal", LineSize: 15})
 		for itemIndex, item := range group.Items {
-			lines = append(lines, ReceiptLine{Text: "- " + item.Title, Link: item.Link, Alignment: "center", Role: "normal", LineSize: 15})
+			lines = append(lines, ReceiptLine{Text: "- " + item.Title, Link: item.Link, Alignment: "left", Role: "normal", LineSize: 15})
 			if strings.TrimSpace(item.OriginalTitle) != "" {
 				lines = append(lines, ReceiptLine{Text: item.OriginalTitle, Alignment: "left", Role: "original", LineSize: 13})
 			}
 			if itemIndex < len(group.Items)-1 {
-				lines = append(lines, ReceiptLine{Text: " ", Alignment: "center", Role: "normal", LineSize: 15})
+				lines = append(lines, ReceiptLine{Text: " ", Alignment: "left", Role: "normal", LineSize: 15})
 			}
 		}
 		if sourceIndex < len(groups)-1 {
-			lines = append(lines, ReceiptLine{Text: " ", Alignment: "center", Role: "normal", LineSize: 15})
+			lines = append(lines, ReceiptLine{Text: " ", Alignment: "left", Role: "normal", LineSize: 15})
 		}
 	}
 	return lines
@@ -317,10 +317,10 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       font-size: var(--line-size);
       line-height: 1.22;
       white-space: pre-wrap;
-      overflow-wrap: anywhere;
+      overflow-wrap: break-word;
       overflow: visible;
       transform: scale(var(--line-scale-x), var(--line-scale-y));
-      transform-origin: center center;
+      transform-origin: left center;
     }
     a.receipt-line-text {
       color: inherit;
@@ -333,8 +333,8 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
     }
     .receipt-link-row {
       display: inline-flex;
-      align-items: center;
-      justify-content: center;
+      align-items: flex-start;
+      justify-content: flex-start;
       gap: 5px;
       max-width: 100%;
       min-width: 0;
@@ -354,12 +354,14 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      flex: 0 0 auto;
+      flex: 0 0 22px;
+      margin-top: 1px;
       padding: 0;
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 12px;
       line-height: 1;
       cursor: pointer;
+      align-self: flex-start;
     }
     .summary-button:hover,
     .summary-button:focus {
@@ -457,8 +459,8 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
     .align-left   { text-align: left;   justify-content: flex-start; }
     .align-center { text-align: center; justify-content: center;     }
     .align-right  { text-align: right;  justify-content: flex-end;   }
-    .align-left  .receipt-line-text { transform-origin: left center;  }
-    .align-right .receipt-line-text { transform-origin: right center; }
+    .align-center .receipt-line-text { transform-origin: center center; }
+    .align-right  .receipt-line-text { transform-origin: right center;  }
     .receipt-image-line {
       width: 100%;
       min-height: var(--image-line-height, 84px);

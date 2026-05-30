@@ -79,12 +79,12 @@ func TestStaticClientRendersDenisTrendsPeriodsWithoutSources(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
 	}
 	body := response.Body.String()
-	for _, want := range []string{`{ key: "now", label: "Top now" }`, `dataset.denisTrendsMode`, `content-denis-trends-mode`, `Top now`, `Top day`} {
+	for _, want := range []string{`{ key: "now", label: "Top now" }`, `Top now`, `Top day`, `Top week`, `Top month`} {
 		if !bytes.Contains([]byte(body), []byte(want)) {
 			t.Fatalf("expected app.js to contain %q", want)
 		}
 	}
-	for _, unwanted := range []string{`denisTrendSources`, `data-denis-trend-source`, `Источники`} {
+	for _, unwanted := range []string{`denisTrendSources`, `data-denis-trend-source`, `dataset.denisTrendsMode`, `content-denis-trends-mode`, `Источники`} {
 		if bytes.Contains([]byte(body), []byte(unwanted)) {
 			t.Fatalf("expected app.js not to contain source UI %q", unwanted)
 		}

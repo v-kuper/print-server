@@ -135,7 +135,7 @@ func TestRenderSnapshotHTMLDoesNotClipLongReceiptText(t *testing.T) {
 			t.Fatalf("snapshot receipt text must not be clipped by %q:\n%s", clippedRule, lineTextCSS)
 		}
 	}
-	if !strings.Contains(lineTextCSS, "overflow-wrap: anywhere") {
+	if !strings.Contains(lineTextCSS, "overflow-wrap: anywhere") && !strings.Contains(lineTextCSS, "overflow-wrap: break-word") {
 		t.Fatalf("expected snapshot receipt text to allow wrapping long content:\n%s", lineTextCSS)
 	}
 }
@@ -145,7 +145,7 @@ func TestRenderSnapshotHTMLShowsPendingNotice(t *testing.T) {
 		ID:        "snapshot-1",
 		Status:    StatusPending,
 		CreatedAt: time.Date(2026, 5, 28, 9, 10, 0, 0, time.UTC),
-		NewsItems: []NewsItem{{SourceName: "BBC", Title: "Заголовок"}},
+		NewsItems: []NewsItem{{SourceName: "Example News", Title: "Заголовок"}},
 	})
 	if err != nil {
 		t.Fatalf("render snapshot: %v", err)

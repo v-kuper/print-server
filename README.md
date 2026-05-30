@@ -63,7 +63,6 @@ Google `credentials.json` по-прежнему нужно положить в `
 - USD/BYN берется из API НБРБ.
 
 RSS по умолчанию:
-- BBC Russian;
 - Reuters;
 - Economist;
 - Hacker News.

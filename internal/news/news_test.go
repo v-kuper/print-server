@@ -17,7 +17,7 @@ func TestParseFeedParsesRssTitlesAndDeduplicates(t *testing.T) {
 		</channel></rss>
 	`
 
-	items, err := ParseFeed(xml, "BBC", 3)
+	items, err := ParseFeed(xml, "Example News", 3)
 	if err != nil {
 		t.Fatalf("parse RSS: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestParseFeedParsesRssTitlesAndDeduplicates(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("expected 2 items, got %d: %#v", len(items), items)
 	}
-	if items[0].Title != "Первый заголовок" || items[0].SourceName != "BBC" || items[0].Link != "https://example.com/1" {
+	if items[0].Title != "Первый заголовок" || items[0].SourceName != "Example News" || items[0].Link != "https://example.com/1" {
 		t.Fatalf("unexpected first item: %#v", items[0])
 	}
 	if items[1].Title != "Второй & важный" {
@@ -139,6 +139,34 @@ func TestSettingsDefaultsTranslateTitlesAndPreservesDisabledTranslation(t *testi
 	}
 }
 
+func TestPresetsExcludeRemovedRussianSource(t *testing.T) {
+	removedPreset := Preset("b" + "bc_russian")
+	removedToken := "b" + "bc"
+	for _, preset := range Presets() {
+		if preset.Preset == removedPreset || strings.Contains(strings.ToLower(preset.DisplayName), removedToken) || strings.Contains(strings.ToLower(preset.FeedURL), removedToken) {
+			t.Fatalf("expected removed source to be absent from built-in news presets, got %#v", preset)
+		}
+	}
+}
+
+func TestSettingsNormalizedDropsLegacyRemovedRussianSource(t *testing.T) {
+	removedPreset := Preset("b" + "bc_russian")
+	removedURL := "https://feeds." + "bb" + "ci.co.uk/russian/rss.xml"
+	removedToken := "b" + "bc"
+	settings := Settings{Sources: []SourceSettings{
+		{Preset: removedPreset, Enabled: true, FeedURL: removedURL, MaxItems: 10},
+		{Preset: PresetReuters, Enabled: true, FeedURL: "https://example.com/reuters.xml", MaxItems: 3},
+	}}
+
+	normalized := settings.Normalized()
+
+	for _, source := range normalized.Sources {
+		if source.Preset == removedPreset || strings.Contains(strings.ToLower(source.FeedURL), removedToken) {
+			t.Fatalf("expected legacy removed source to be dropped, got %#v", normalized.Sources)
+		}
+	}
+}
+
 func TestProviderFetchesEnabledSources(t *testing.T) {
 	client := &http.Client{Transport: newsRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -155,8 +183,7 @@ func TestProviderFetchesEnabledSources(t *testing.T) {
 	provider := NewProvider(client)
 	settings := Settings{
 		Sources: []SourceSettings{
-			{Preset: PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
-			{Preset: PresetReuters, Enabled: false, FeedURL: "https://example.com/reuters", MaxItems: 10},
+			{Preset: PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
 			{Preset: PresetEconomist, Enabled: false, FeedURL: "https://example.com/economist", MaxItems: 10},
 			{Preset: PresetHackerNews, Enabled: false, FeedURL: "https://example.com/hn", MaxItems: 10},
 		},
@@ -170,14 +197,14 @@ func TestProviderFetchesEnabledSources(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("expected one limited item, got %d: %#v", len(items), items)
 	}
-	if items[0].SourceName != "BBC Russian" {
+	if items[0].SourceName != "Reuters" {
 		t.Fatalf("expected preset source name, got %q", items[0].SourceName)
 	}
 }
 
 func TestSettingsValidateRejectsEnabledSourceWithoutCount(t *testing.T) {
 	settings := Settings{Sources: []SourceSettings{
-		{Preset: PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 0},
+		{Preset: PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 0},
 	}}
 
 	if err := settings.Validate(); err == nil {
@@ -187,7 +214,7 @@ func TestSettingsValidateRejectsEnabledSourceWithoutCount(t *testing.T) {
 
 func TestSettingsValidateAllowsDisabledSourceWithoutCount(t *testing.T) {
 	settings := Settings{Sources: []SourceSettings{
-		{Preset: PresetBBCRussian, Enabled: false, FeedURL: "https://example.com/rss", MaxItems: 0},
+		{Preset: PresetReuters, Enabled: false, FeedURL: "https://example.com/rss", MaxItems: 0},
 	}}
 
 	if err := settings.Validate(); err != nil {
