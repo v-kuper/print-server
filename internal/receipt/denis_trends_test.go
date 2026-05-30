@@ -44,6 +44,58 @@ func TestDailyReceiptRendersDenisTrendsAsSeparateSection(t *testing.T) {
 	}
 }
 
+func TestDailyReceiptRendersTranslatedDenisTrendWithOriginalPlain(t *testing.T) {
+	lines := DailyReceiptWithStyle(DailyReceiptData{
+		HideWeather: true,
+		Weather: weather.Snapshot{
+			ObservedAt: time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+		},
+		DenisTrendSections: []denistrends.Section{
+			{
+				Period: denistrends.PeriodDay,
+				Title:  "Top day",
+				Items: []denistrends.Item{
+					{
+						Title:         "Рост стартапа",
+						OriginalTitle: "Founder mode and startup growth",
+						SourceName:    "Hacker News",
+						Link:          "https://example.com/founder",
+					},
+				},
+			},
+		},
+	}, StyleSettings{
+		Configured: true,
+		NormalFont: 0,
+	})
+
+	translatedIndex := -1
+	originalIndex := -1
+	for index, line := range lines {
+		switch line.Text {
+		case "Hacker News: Рост стартапа":
+			translatedIndex = index
+		case "Founder mode and startup growth":
+			originalIndex = index
+		}
+	}
+	if translatedIndex < 0 || originalIndex < 0 || originalIndex <= translatedIndex {
+		t.Fatalf("expected translated title before original title, got %#v", lines)
+	}
+	if lines[translatedIndex].Link != "https://example.com/founder" {
+		t.Fatalf("expected link on translated trend title, got %#v", lines[translatedIndex])
+	}
+	if lines[originalIndex].Link != "" {
+		t.Fatalf("expected original trend title to be plain, got %#v", lines[originalIndex])
+	}
+	if lines[originalIndex].Role != RoleOriginal {
+		t.Fatalf("expected original trend title role, got %#v", lines[originalIndex])
+	}
+	if lines[originalIndex].Font <= lines[translatedIndex].Font {
+		t.Fatalf("expected original trend title to use smaller font, got translated=%#v original=%#v", lines[translatedIndex], lines[originalIndex])
+	}
+}
+
 func linkForText(lines []Line, text string) string {
 	for _, line := range lines {
 		if line.Text == text {

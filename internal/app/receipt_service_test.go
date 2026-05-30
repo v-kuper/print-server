@@ -1350,6 +1350,117 @@ func TestReceiptServiceBuildsDenisTrendsBlockWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestReceiptServiceTranslatesEnglishDenisTrendTitles(t *testing.T) {
+	translateTitles := true
+	store := &fakeStore{
+		denisTrends:  denistrends.DefaultSettings(),
+		newsSettings: news.Settings{TranslateTitles: &translateTitles},
+		motivationSettings: motivation.Settings{
+			Configured: true,
+			Enabled:    false,
+			BaseURL:    motivation.DefaultBaseURL,
+			Model:      motivation.DefaultModel,
+		},
+	}
+	trendsProvider := &fakeDenisTrendsProvider{
+		sections: []denistrends.Section{
+			{
+				Period: denistrends.PeriodDay,
+				Title:  "Top day",
+				Items: []denistrends.Item{
+					{Title: "Founder mode and startup growth", SourceName: "Hacker News", Link: "https://example.com/founder"},
+					{Title: "Русский заголовок", SourceName: "GitHub", Link: "https://example.com/ru"},
+				},
+			},
+		},
+	}
+	motivationProvider := &fakeMotivationProvider{
+		translations: []motivation.NewsTranslation{
+			{Index: 0, Title: "Рост стартапа"},
+		},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithDenisTrendsProvider(trendsProvider),
+		WithMotivationProvider(motivationProvider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured:      true,
+		ShowDenisTrends: true,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if !lineTextsContain(lines, "Hacker News: Рост стартапа") {
+		t.Fatalf("expected translated Denis Trends title, got %#v", lines)
+	}
+	if !lineTextsContain(lines, "Founder mode and startup growth") {
+		t.Fatalf("expected original Denis Trends title, got %#v", lines)
+	}
+	if link := receiptLinkForText(lines, "Hacker News: Рост стартапа"); link != "https://example.com/founder" {
+		t.Fatalf("expected translated trend link on title line, got %q", link)
+	}
+	if link := receiptLinkForText(lines, "Founder mode and startup growth"); link != "" {
+		t.Fatalf("expected original trend title to stay plain, got link %q", link)
+	}
+	if len(motivationProvider.translatedTitles) != 1 {
+		t.Fatalf("expected only non-cyrillic Denis Trends title to be translated, got %#v", motivationProvider.translatedTitles)
+	}
+	if got := motivationProvider.translatedTitles[0]; got.Index != 0 || got.SourceName != "Hacker News" || got.Title != "Founder mode and startup growth" {
+		t.Fatalf("unexpected Denis Trends translation request: %#v", got)
+	}
+}
+
+func TestReceiptServiceKeepsDenisTrendsOriginalWhenTranslationFails(t *testing.T) {
+	translateTitles := true
+	store := &fakeStore{
+		denisTrends:  denistrends.DefaultSettings(),
+		newsSettings: news.Settings{TranslateTitles: &translateTitles},
+	}
+	trendsProvider := &fakeDenisTrendsProvider{
+		sections: []denistrends.Section{
+			{
+				Period: denistrends.PeriodDay,
+				Title:  "Top day",
+				Items: []denistrends.Item{
+					{Title: "GitHub releases a faster runner", SourceName: "GitHub", Link: "https://example.com/runner"},
+				},
+			},
+		},
+	}
+	motivationProvider := &fakeMotivationProvider{translationErr: errors.New("ollama offline")}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithDenisTrendsProvider(trendsProvider),
+		WithMotivationProvider(motivationProvider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured:      true,
+		ShowDenisTrends: true,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) == 0 {
+		t.Fatalf("expected translation warning, got none")
+	}
+	if !lineTextsContainSubstring(lines, "GitHub releases a faster") || !lineTextsContain(lines, "runner") {
+		t.Fatalf("expected original Denis Trends title after translation failure, got %#v", lines)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "AI-перевод Denis Trends недоступен") {
+		t.Fatalf("expected Denis Trends translation warning, got %#v", warnings)
+	}
+}
+
 func TestReceiptServiceBuildsDenisTrendsUsingScheduledTime(t *testing.T) {
 	location, err := time.LoadLocation(denistrends.DefaultTimezone)
 	if err != nil {
