@@ -110,6 +110,62 @@ func TestRenderSnapshotHTMLShowsOneLeadingSummaryButtonPerLinkedBlock(t *testing
 	}
 }
 
+func TestRenderSnapshotHTMLPreservesReceiptLineBoundaries(t *testing.T) {
+	html, err := RenderSnapshotHTML(Snapshot{
+		ID:         "snapshot-1",
+		Status:     StatusPublished,
+		PaperChars: 32,
+		ReceiptLines: []ReceiptLine{
+			{Text: "Календарь", Alignment: "center", Role: "normal", LineSize: 15},
+			{Text: "10:00      Планирование", Alignment: "left", Role: "normal", LineSize: 15},
+		},
+	})
+	if err != nil {
+		t.Fatalf("render snapshot: %v", err)
+	}
+	body := string(html)
+
+	paperCSS := cssRuleBody(t, body, ".receipt-paper")
+	for _, want := range []string{
+		"width: min(100%, calc(var(--paper-chars, 32) * 1ch))",
+		"margin: 0 auto",
+		"white-space: pre-wrap",
+	} {
+		if !strings.Contains(paperCSS, want) {
+			t.Fatalf("expected receipt paper CSS to contain %q:\n%s", want, paperCSS)
+		}
+	}
+
+	lineCSS := cssRuleBody(t, body, ".receipt-line")
+	for _, want := range []string{
+		"display: flex",
+		"width: calc(100% / var(--line-scale-x))",
+		"min-height: calc(var(--line-size) * 1.22 * var(--line-scale-y))",
+	} {
+		if !strings.Contains(lineCSS, want) {
+			t.Fatalf("expected receipt line CSS to contain %q:\n%s", want, lineCSS)
+		}
+	}
+	if strings.Contains(lineCSS, "display: inline") {
+		t.Fatalf("snapshot receipt line CSS must not merge rows with inline display:\n%s", lineCSS)
+	}
+	if strings.Contains(body, `.receipt-line::after`) {
+		t.Fatalf("snapshot must not merge receipt lines with .receipt-line::after spacing:\n%s", body)
+	}
+
+	lineTextCSS := cssRuleBody(t, body, ".receipt-line-text")
+	for _, want := range []string{
+		"display: inline-block",
+		"white-space: pre-wrap",
+		"overflow-wrap: anywhere",
+		"overflow: visible",
+	} {
+		if !strings.Contains(lineTextCSS, want) {
+			t.Fatalf("expected receipt line text CSS to contain %q:\n%s", want, lineTextCSS)
+		}
+	}
+}
+
 func TestRenderSnapshotHTMLDoesNotClipLongReceiptText(t *testing.T) {
 	html, err := RenderSnapshotHTML(Snapshot{
 		ID:     "snapshot-1",
