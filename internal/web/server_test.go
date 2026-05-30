@@ -279,6 +279,8 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`renderDenisTrendsModeControl`,
 				`data-schedule-denis-trends-mode`,
 				`data-interval-denis-trends-mode`,
+				`data-news-url-visible`,
+				`data-schedule-news-url-visible`,
 				`Утро`,
 				`День`,
 				`Вечер`,
@@ -1322,6 +1324,37 @@ func TestSaveNewsEndpointPersistsTranslateTitlesToggle(t *testing.T) {
 	}
 	if store.newsSettings.TranslateTitles == nil || *store.newsSettings.TranslateTitles {
 		t.Fatalf("expected disabled news translation setting to be saved, got %#v", store.newsSettings)
+	}
+}
+
+func TestSaveNewsEndpointPersistsKnownPresetWithoutFeedURL(t *testing.T) {
+	store := &fakeStore{}
+	server := NewServer(store, &fakePrinter{}, fixedClock)
+
+	body := bytes.NewBufferString(`{"translateTitles":true,"sources":[{"preset":"bloomberg_markets","enabled":true,"maxItems":4}]}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/settings/news", body)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var bloomberg *news.SourceSettings
+	for index := range store.newsSettings.Sources {
+		if store.newsSettings.Sources[index].Preset == news.Preset("bloomberg_markets") {
+			bloomberg = &store.newsSettings.Sources[index]
+			break
+		}
+	}
+	if bloomberg == nil {
+		t.Fatalf("expected saved settings to include Bloomberg Markets, got %#v", store.newsSettings.Sources)
+	}
+	if !bloomberg.Enabled || bloomberg.MaxItems != 4 {
+		t.Fatalf("expected enabled Bloomberg Markets with count 4, got %#v", bloomberg)
+	}
+	if got, want := bloomberg.FeedURL, "https://feeds.bloomberg.com/markets/news.rss"; got != want {
+		t.Fatalf("expected canonical Bloomberg Markets URL, got %q want %q", got, want)
 	}
 }
 

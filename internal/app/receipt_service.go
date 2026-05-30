@@ -1222,7 +1222,8 @@ func shouldTranslateNewsItem(item news.Item) bool {
 	sourceName := strings.ToLower(strings.TrimSpace(item.SourceName))
 	return strings.Contains(sourceName, "reuters") ||
 		strings.Contains(sourceName, "economist") ||
-		strings.Contains(sourceName, "hacker news")
+		strings.Contains(sourceName, "hacker news") ||
+		strings.Contains(sourceName, "bloomberg")
 }
 
 func (s *ReceiptService) translateDenisTrendSections(ctx context.Context, newsSettings news.Settings, sections []denistrends.Section) ([]denistrends.Section, string) {

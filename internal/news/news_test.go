@@ -122,6 +122,104 @@ func TestEconomistPresetUsesLatestFeedAndMigratesOldDefault(t *testing.T) {
 	}
 }
 
+func TestPresetsIncludeBloombergFeeds(t *testing.T) {
+	want := map[Preset]struct {
+		displayName string
+		feedURL     string
+	}{
+		Preset("bloomberg_markets"):    {"Bloomberg Markets", "https://feeds.bloomberg.com/markets/news.rss"},
+		Preset("bloomberg_technology"): {"Bloomberg Technology", "https://feeds.bloomberg.com/technology/news.rss"},
+		Preset("bloomberg_politics"):   {"Bloomberg Politics", "https://feeds.bloomberg.com/politics/news.rss"},
+		Preset("bloomberg_business"):   {"Bloomberg Business", "https://feeds.bloomberg.com/business/news.rss"},
+		Preset("bloomberg_economics"):  {"Bloomberg Economics", "https://feeds.bloomberg.com/economics/news.rss"},
+		Preset("bloomberg_wealth"):     {"Bloomberg Wealth", "https://feeds.bloomberg.com/wealth/news.rss"},
+		Preset("bloomberg_crypto"):     {"Bloomberg Crypto", "https://feeds.bloomberg.com/crypto/news.rss"},
+	}
+
+	got := make(map[Preset]PresetInfo)
+	for _, preset := range Presets() {
+		got[preset.Preset] = preset
+	}
+	for preset, expected := range want {
+		info, ok := got[preset]
+		if !ok {
+			t.Fatalf("expected Bloomberg preset %q in presets, got %#v", preset, Presets())
+		}
+		if info.DisplayName != expected.displayName || info.FeedURL != expected.feedURL {
+			t.Fatalf("unexpected Bloomberg preset %q: got %#v want display=%q url=%q", preset, info, expected.displayName, expected.feedURL)
+		}
+	}
+}
+
+func TestDefaultSettingsKeepBloombergDisabled(t *testing.T) {
+	settings := DefaultSettings().Normalized()
+	foundBloomberg := false
+	for _, source := range settings.Sources {
+		if strings.HasPrefix(string(source.Preset), "bloomberg_") {
+			foundBloomberg = true
+			if source.Enabled {
+				t.Fatalf("expected Bloomberg source to be disabled by default, got %#v", source)
+			}
+			if source.MaxItems != DefaultMaxItems {
+				t.Fatalf("expected Bloomberg source default count %d, got %#v", DefaultMaxItems, source)
+			}
+		}
+	}
+	if !foundBloomberg {
+		t.Fatalf("expected default settings to include Bloomberg sources, got %#v", settings.Sources)
+	}
+}
+
+func TestKnownPresetNormalizationIgnoresCustomFeedURL(t *testing.T) {
+	settings := SourceSettings{
+		Preset:   Preset("bloomberg_markets"),
+		Enabled:  true,
+		FeedURL:  "https://example.com/changed.xml",
+		MaxItems: 3,
+	}.Normalized()
+
+	if got, want := settings.FeedURL, "https://feeds.bloomberg.com/markets/news.rss"; got != want {
+		t.Fatalf("expected known preset URL to normalize to canonical URL, got %q want %q", got, want)
+	}
+}
+
+func TestParseFeedParsesBloombergRSSAndStripsCDATAHTML(t *testing.T) {
+	xml := `
+		<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss/" version="2.0">
+			<channel>
+				<title><![CDATA[Bloomberg Markets]]></title>
+				<item>
+					<title><![CDATA[<strong>Aluminum Under Pressure, While Poland Surges Ahead</strong>]]></title>
+					<description><![CDATA[It will take a long time to bring aluminum back.]]></description>
+					<link>https://www.bloomberg.com/news/newsletters/2026-05-30/aluminum-under-pressure-while-poland-surges-ahead</link>
+					<guid isPermaLink="true">https://www.bloomberg.com/news/newsletters/2026-05-30/aluminum-under-pressure-while-poland-surges-ahead</guid>
+					<dc:creator><![CDATA[David Westin]]></dc:creator>
+					<pubDate>Sat, 30 May 2026 12:00:01 GMT</pubDate>
+					<media:content url="https://assets.bwbx.io/image.jpg" type="image/jpeg"></media:content>
+				</item>
+				<item>
+					<title><![CDATA[BP’s High-Stakes Reboot Descended Into an Ugly Boardroom Drama]]></title>
+					<link>https://www.bloomberg.com/news/articles/2026-05-30/bp-s-high-stakes-reboot-descended-into-an-ugly-boardroom-drama</link>
+				</item>
+			</channel>
+		</rss>
+	`
+
+	items, err := ParseFeed(xml, "Bloomberg Markets", 1)
+	if err != nil {
+		t.Fatalf("parse Bloomberg RSS: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one limited Bloomberg item, got %d: %#v", len(items), items)
+	}
+	if got, want := items[0].Title, "Aluminum Under Pressure, While Poland Surges Ahead"; got != want {
+		t.Fatalf("expected Bloomberg HTML title to be stripped, got %q want %q", got, want)
+	}
+	if got, want := items[0].Link, "https://www.bloomberg.com/news/newsletters/2026-05-30/aluminum-under-pressure-while-poland-surges-ahead"; got != want {
+		t.Fatalf("unexpected Bloomberg link: got %q want %q", got, want)
+	}
+}
+
 func TestSettingsDefaultsTranslateTitlesAndPreservesDisabledTranslation(t *testing.T) {
 	if !DefaultSettings().TranslateTitlesEnabled() {
 		t.Fatal("expected news title translation to be enabled by default")

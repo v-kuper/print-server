@@ -748,6 +748,13 @@ button:disabled {
   min-height: 36px;
 }
 
+.news-source-title {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
 .helper-text {
   margin: 0;
   color: var(--muted);
