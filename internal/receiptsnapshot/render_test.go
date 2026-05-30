@@ -110,6 +110,88 @@ func TestRenderSnapshotHTMLShowsOneLeadingSummaryButtonPerLinkedBlock(t *testing
 	}
 }
 
+func TestRenderSnapshotHTMLUsesReadableLinkedRows(t *testing.T) {
+	html, err := RenderSnapshotHTML(Snapshot{
+		ID:         "snapshot-1",
+		Status:     StatusPublished,
+		PaperChars: 32,
+		ReceiptLines: []ReceiptLine{
+			{Text: "Denis Trends", Alignment: "center", Role: "normal", LineSize: 15},
+			{
+				Text:      "Hacker News: Стоит ли использовать трекер сна?",
+				Link:      "https://example.com/sleep",
+				Alignment: "center",
+				Role:      "normal",
+				LineSize:  15,
+			},
+			{
+				Text:      "Should you use a sleep tracker?",
+				Link:      "https://example.com/sleep",
+				Alignment: "center",
+				Role:      "original",
+				LineSize:  12,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("render snapshot: %v", err)
+	}
+	body := string(html)
+
+	headerLine := receiptLineContaining(t, body, "Denis Trends")
+	if strings.Contains(headerLine, "receipt-linked-line") {
+		t.Fatalf("non-linked receipt rows must keep normal receipt layout:\n%s", headerLine)
+	}
+
+	linkedLine := receiptLineContaining(t, body, "Стоит ли использовать трекер сна")
+	if !strings.Contains(linkedLine, `receipt-linked-line`) {
+		t.Fatalf("linked receipt rows must get readable linked-row class:\n%s", linkedLine)
+	}
+	if buttonIndex := strings.Index(linkedLine, `class="summary-button"`); buttonIndex < 0 {
+		t.Fatalf("first linked row must have summary button:\n%s", linkedLine)
+	} else if textIndex := strings.Index(linkedLine, `class="receipt-line-text"`); textIndex < 0 || buttonIndex > textIndex {
+		t.Fatalf("summary button must be before linked text:\n%s", linkedLine)
+	}
+
+	continuationLine := receiptLineContaining(t, body, "Should you use a sleep tracker")
+	if !strings.Contains(continuationLine, `receipt-linked-line`) {
+		t.Fatalf("continuation linked rows must keep readable linked-row class:\n%s", continuationLine)
+	}
+	if strings.Contains(continuationLine, `class="summary-button"`) {
+		t.Fatalf("continuation linked rows must not duplicate visible summary buttons:\n%s", continuationLine)
+	}
+	if !strings.Contains(continuationLine, `class="summary-button-spacer"`) {
+		t.Fatalf("continuation linked rows must reserve the icon column:\n%s", continuationLine)
+	}
+	if !strings.Contains(continuationLine, `href="https://example.com/sleep"`) {
+		t.Fatalf("continuation linked rows must remain clickable:\n%s", continuationLine)
+	}
+
+	linkedLineCSS := cssRuleBody(t, body, ".receipt-linked-line")
+	for _, want := range []string{"justify-content: flex-start", "text-align: left", "width: 100%"} {
+		if !strings.Contains(linkedLineCSS, want) {
+			t.Fatalf("expected linked line CSS to contain %q:\n%s", want, linkedLineCSS)
+		}
+	}
+	linkRowCSS := cssRuleBody(t, body, ".receipt-link-row")
+	for _, want := range []string{"display: grid", "grid-template-columns: 22px minmax(0, 1fr)", "width: 100%"} {
+		if !strings.Contains(linkRowCSS, want) {
+			t.Fatalf("expected linked row CSS to contain %q:\n%s", want, linkRowCSS)
+		}
+	}
+	linkedTextCSS := cssRuleBody(t, body, ".receipt-linked-line .receipt-line-text")
+	for _, want := range []string{"white-space: normal", "word-break: normal", "overflow-wrap: break-word"} {
+		if !strings.Contains(linkedTextCSS, want) {
+			t.Fatalf("expected linked text CSS to contain %q:\n%s", want, linkedTextCSS)
+		}
+	}
+	for _, unwanted := range []string{"white-space: nowrap", "overflow: hidden", "word-break: break-all"} {
+		if strings.Contains(linkedTextCSS, unwanted) {
+			t.Fatalf("linked text CSS must not contain %q:\n%s", unwanted, linkedTextCSS)
+		}
+	}
+}
+
 func TestRenderSnapshotHTMLPreservesReceiptLineBoundaries(t *testing.T) {
 	html, err := RenderSnapshotHTML(Snapshot{
 		ID:         "snapshot-1",
@@ -227,6 +309,23 @@ func linkedRowForSummaryIndex(t *testing.T, body string, lineIndex string) strin
 		t.Fatalf("linked row end not found after %q:\n%s", marker, body)
 	}
 	return body[rowStart : rowStart+rowEnd+len(`</span>`)]
+}
+
+func receiptLineContaining(t *testing.T, body string, text string) string {
+	t.Helper()
+	textIndex := strings.Index(body, text)
+	if textIndex < 0 {
+		t.Fatalf("text %q not found:\n%s", text, body)
+	}
+	lineStart := strings.LastIndex(body[:textIndex], `<div class="receipt-line`)
+	if lineStart < 0 {
+		t.Fatalf("receipt line start not found before %q:\n%s", text, body)
+	}
+	lineEnd := strings.Index(body[textIndex:], `</div>`)
+	if lineEnd < 0 {
+		t.Fatalf("receipt line end not found after %q:\n%s", text, body)
+	}
+	return body[lineStart : textIndex+lineEnd+len(`</div>`)]
 }
 
 func cssRuleBody(t *testing.T, body string, selector string) string {
