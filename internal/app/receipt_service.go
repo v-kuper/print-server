@@ -417,8 +417,25 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 
 	var newsItems []news.Item
 	var newsTranslationWarning string
+	var resolvedNewsSettings news.Settings
+	var newsSettingsLoaded bool
+	resolveNewsSettings := func() (news.Settings, error) {
+		if content.NewsSettings != nil {
+			return content.NewsSettings.Normalized(), nil
+		}
+		if newsSettingsLoaded {
+			return resolvedNewsSettings, nil
+		}
+		settings, err := s.store.LoadNews()
+		if err != nil {
+			return news.Settings{}, err
+		}
+		resolvedNewsSettings = settings.Normalized()
+		newsSettingsLoaded = true
+		return resolvedNewsSettings, nil
+	}
 	if content.ShowNews {
-		newsSettings, err := s.store.LoadNews()
+		newsSettings, err := resolveNewsSettings()
 		if err != nil {
 			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 		}
@@ -435,7 +452,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 	var denisTrendSections []denistrends.Section
 	var denisTrendsTranslationWarning string
 	if content.ShowDenisTrends {
-		trendsSettings, err := s.store.LoadDenisTrends()
+		trendsSettings, err := s.resolveDenisTrendsSettings(content)
 		if err != nil {
 			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 		}
@@ -443,7 +460,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		if err != nil {
 			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
 		}
-		newsSettings, err := s.store.LoadNews()
+		newsSettings, err := resolveNewsSettings()
 		if err != nil {
 			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 		}
@@ -480,6 +497,17 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		PaperChars: receiptSnapshotPaperChars(receiptStyle),
 		Style:      receiptStyle.Normalized(),
 	}, nil
+}
+
+func (s *ReceiptService) resolveDenisTrendsSettings(content receipt.ContentSettings) (denistrends.Settings, error) {
+	if content.DenisTrendsSettings != nil {
+		return content.DenisTrendsSettings.Normalized(), nil
+	}
+	settings, err := s.store.LoadDenisTrends()
+	if err != nil {
+		return denistrends.Settings{}, err
+	}
+	return settings.Normalized(), nil
 }
 
 func (s *ReceiptService) PrintDailyReceipt(ctx context.Context) error {
@@ -1194,6 +1222,10 @@ func denisTrendsMode(value string) denistrends.Mode {
 		return denistrends.ModeNow
 	case receipt.DenisTrendsModeDay:
 		return denistrends.ModeDay
+	case receipt.DenisTrendsModeWeek:
+		return denistrends.ModeWeek
+	case receipt.DenisTrendsModeMonth:
+		return denistrends.ModeMonth
 	default:
 		return denistrends.ModeAuto
 	}

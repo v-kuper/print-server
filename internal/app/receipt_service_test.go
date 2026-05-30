@@ -1388,6 +1388,84 @@ func TestReceiptServicePassesConfiguredDenisTrendsMode(t *testing.T) {
 	}
 }
 
+func TestReceiptServiceUsesEmbeddedNewsSettingsForScheduledContent(t *testing.T) {
+	translateTitles := false
+	embedded := news.Settings{
+		TranslateTitles: &translateTitles,
+		Sources: []news.SourceSettings{
+			{Preset: news.PresetBBCRussian, Enabled: true, FeedURL: "https://example.com/schedule.xml", MaxItems: 7},
+			{Preset: news.PresetReuters, Enabled: false, FeedURL: "https://example.com/reuters.xml", MaxItems: 2},
+		},
+	}
+	global := news.DefaultSettings()
+	global.Sources[0].MaxItems = 1
+	provider := &fakeNewsProvider{items: []news.Item{{Title: "Scheduled title", SourceName: "BBC Russian"}}}
+	service := NewReceiptService(
+		&fakeStore{newsSettings: global},
+		&fakePrinter{},
+		fixedClock,
+		WithNewsProvider(provider),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	_, err := service.BuildDailyReceiptWithContent(context.Background(), receipt.ContentSettings{
+		Configured:   true,
+		ShowNews:     true,
+		NewsSettings: &embedded,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+
+	got := provider.settings.Normalized()
+	want := embedded.Normalized()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected embedded news settings %#v, got %#v", want, got)
+	}
+}
+
+func TestReceiptServiceUsesEmbeddedDenisTrendsSettingsAndForcedMonthMode(t *testing.T) {
+	embedded := denistrends.DefaultSettings()
+	embedded.Periods[denistrends.PeriodMonth] = denistrends.PeriodSettings{Enabled: true, MaxItems: 3}
+	global := denistrends.DefaultSettings()
+	global.Periods[denistrends.PeriodMonth] = denistrends.PeriodSettings{Enabled: true, MaxItems: 99}
+	provider := &fakeDenisTrendsProvider{
+		sections: []denistrends.Section{
+			{
+				Period: denistrends.PeriodMonth,
+				Title:  "Top month",
+				Items:  []denistrends.Item{{Title: "Monthly title", SourceName: "GitHub"}},
+			},
+		},
+	}
+	service := NewReceiptService(
+		&fakeStore{denisTrends: global},
+		&fakePrinter{},
+		fixedClock,
+		WithDenisTrendsProvider(provider),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	_, err := service.BuildDailyReceiptWithContent(context.Background(), receipt.ContentSettings{
+		Configured:          true,
+		ShowDenisTrends:     true,
+		DenisTrendsMode:     receipt.DenisTrendsModeMonth,
+		DenisTrendsSettings: &embedded,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+
+	if provider.mode != denistrends.ModeMonth {
+		t.Fatalf("expected forced month mode, got %q", provider.mode)
+	}
+	got := provider.settings.Normalized()
+	want := embedded.Normalized()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected embedded Denis Trends settings %#v, got %#v", want, got)
+	}
+}
+
 func TestReceiptServiceTranslatesEnglishDenisTrendTitles(t *testing.T) {
 	translateTitles := true
 	store := &fakeStore{
@@ -1891,10 +1969,12 @@ func (p *fakeBankRatesProvider) Current(context.Context) (bankrates.Summary, err
 }
 
 type fakeNewsProvider struct {
-	items []news.Item
+	items    []news.Item
+	settings news.Settings
 }
 
-func (p *fakeNewsProvider) Current(context.Context, news.Settings) ([]news.Item, error) {
+func (p *fakeNewsProvider) Current(_ context.Context, settings news.Settings) ([]news.Item, error) {
+	p.settings = settings
 	return p.items, nil
 }
 
@@ -1902,9 +1982,11 @@ type fakeDenisTrendsProvider struct {
 	sections []denistrends.Section
 	now      time.Time
 	mode     denistrends.Mode
+	settings denistrends.Settings
 }
 
-func (p *fakeDenisTrendsProvider) CurrentForMode(_ context.Context, _ denistrends.Settings, now time.Time, mode denistrends.Mode) ([]denistrends.Section, error) {
+func (p *fakeDenisTrendsProvider) CurrentForMode(_ context.Context, settings denistrends.Settings, now time.Time, mode denistrends.Mode) ([]denistrends.Section, error) {
+	p.settings = settings
 	p.now = now
 	p.mode = mode
 	return p.sections, nil

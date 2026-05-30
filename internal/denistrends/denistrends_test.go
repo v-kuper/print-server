@@ -65,7 +65,7 @@ func TestActivePeriodsUseEuropeMinskCalendarRules(t *testing.T) {
 	}
 }
 
-func TestActivePeriodsCanBeForcedToNowOrDay(t *testing.T) {
+func TestActivePeriodsCanBeForcedToSinglePeriod(t *testing.T) {
 	settings := DefaultSettings()
 	location := time.FixedZone("Europe/Minsk", 3*60*60)
 	sundayMonthEndMorning := time.Date(2026, 5, 31, 9, 0, 0, 0, location)
@@ -74,14 +74,20 @@ func TestActivePeriodsCanBeForcedToNowOrDay(t *testing.T) {
 	if got := settings.ActivePeriodsForMode(weekdayEvening, ModeNow); len(got) != 1 || got[0] != PeriodNow {
 		t.Fatalf("expected forced now to include now only, got %#v", got)
 	}
-	if got := settings.ActivePeriodsForMode(sundayMonthEndMorning, ModeDay); len(got) != 3 || got[0] != PeriodDay || got[1] != PeriodWeek || got[2] != PeriodMonth {
-		t.Fatalf("expected forced day to include day/week/month on Sunday month-end, got %#v", got)
+	if got := settings.ActivePeriodsForMode(sundayMonthEndMorning, ModeDay); len(got) != 1 || got[0] != PeriodDay {
+		t.Fatalf("expected forced day to include day only, got %#v", got)
+	}
+	if got := settings.ActivePeriodsForMode(weekdayEvening, ModeWeek); len(got) != 1 || got[0] != PeriodWeek {
+		t.Fatalf("expected forced week to include week only, got %#v", got)
+	}
+	if got := settings.ActivePeriodsForMode(weekdayEvening, ModeMonth); len(got) != 1 || got[0] != PeriodMonth {
+		t.Fatalf("expected forced month to include month only, got %#v", got)
 	}
 
 	disabled := DefaultSettings()
 	disabled.Periods[PeriodDay] = PeriodSettings{Enabled: false, MaxItems: 20}
-	if got := disabled.ActivePeriodsForMode(sundayMonthEndMorning, ModeDay); len(got) != 2 || got[0] != PeriodWeek || got[1] != PeriodMonth {
-		t.Fatalf("expected forced day to respect disabled day and keep calendar additions, got %#v", got)
+	if got := disabled.ActivePeriodsForMode(sundayMonthEndMorning, ModeDay); len(got) != 0 {
+		t.Fatalf("expected forced disabled day to be skipped, got %#v", got)
 	}
 }
 
