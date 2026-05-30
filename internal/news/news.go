@@ -5,9 +5,11 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -23,9 +25,16 @@ const deprecatedEconomistWorldThisWeekFeed = "https://www.economist.com/the-worl
 type Preset string
 
 const (
-	PresetReuters    Preset = "reuters"
-	PresetEconomist  Preset = "economist"
-	PresetHackerNews Preset = "hacker_news"
+	PresetReuters             Preset = "reuters"
+	PresetEconomist           Preset = "economist"
+	PresetHackerNews          Preset = "hacker_news"
+	PresetBloombergMarkets    Preset = "bloomberg_markets"
+	PresetBloombergTechnology Preset = "bloomberg_technology"
+	PresetBloombergPolitics   Preset = "bloomberg_politics"
+	PresetBloombergBusiness   Preset = "bloomberg_business"
+	PresetBloombergEconomics  Preset = "bloomberg_economics"
+	PresetBloombergWealth     Preset = "bloomberg_wealth"
+	PresetBloombergCrypto     Preset = "bloomberg_crypto"
 )
 
 type PresetInfo struct {
@@ -74,6 +83,41 @@ func Presets() []PresetInfo {
 			DisplayName: "Hacker News",
 			FeedURL:     "https://news.ycombinator.com/rss",
 		},
+		{
+			Preset:      PresetBloombergMarkets,
+			DisplayName: "Bloomberg Markets",
+			FeedURL:     "https://feeds.bloomberg.com/markets/news.rss",
+		},
+		{
+			Preset:      PresetBloombergTechnology,
+			DisplayName: "Bloomberg Technology",
+			FeedURL:     "https://feeds.bloomberg.com/technology/news.rss",
+		},
+		{
+			Preset:      PresetBloombergPolitics,
+			DisplayName: "Bloomberg Politics",
+			FeedURL:     "https://feeds.bloomberg.com/politics/news.rss",
+		},
+		{
+			Preset:      PresetBloombergBusiness,
+			DisplayName: "Bloomberg Business",
+			FeedURL:     "https://feeds.bloomberg.com/business/news.rss",
+		},
+		{
+			Preset:      PresetBloombergEconomics,
+			DisplayName: "Bloomberg Economics",
+			FeedURL:     "https://feeds.bloomberg.com/economics/news.rss",
+		},
+		{
+			Preset:      PresetBloombergWealth,
+			DisplayName: "Bloomberg Wealth",
+			FeedURL:     "https://feeds.bloomberg.com/wealth/news.rss",
+		},
+		{
+			Preset:      PresetBloombergCrypto,
+			DisplayName: "Bloomberg Crypto",
+			FeedURL:     "https://feeds.bloomberg.com/crypto/news.rss",
+		},
 	}
 }
 
@@ -82,7 +126,7 @@ func DefaultSettings() Settings {
 	for _, preset := range Presets() {
 		sources = append(sources, SourceSettings{
 			Preset:   preset.Preset,
-			Enabled:  true,
+			Enabled:  defaultEnabled(preset.Preset),
 			FeedURL:  preset.FeedURL,
 			MaxItems: DefaultMaxItems,
 		})
@@ -103,7 +147,7 @@ func (s Settings) Normalized() Settings {
 		if !ok {
 			source = SourceSettings{
 				Preset:   preset.Preset,
-				Enabled:  true,
+				Enabled:  defaultEnabled(preset.Preset),
 				FeedURL:  preset.FeedURL,
 				MaxItems: DefaultMaxItems,
 			}
@@ -147,8 +191,12 @@ func (s SourceSettings) Normalized() SourceSettings {
 	if info.Preset == "" {
 		info = PresetInfo{Preset: s.Preset, DisplayName: string(s.Preset), FeedURL: s.FeedURL}
 	}
-	s.FeedURL = strings.TrimSpace(s.FeedURL)
-	if s.FeedURL == "" || isDeprecatedPresetFeed(s.Preset, s.FeedURL) {
+	if isKnownPreset(s.Preset) || isDeprecatedPresetFeed(s.Preset, s.FeedURL) {
+		s.FeedURL = info.FeedURL
+	} else {
+		s.FeedURL = strings.TrimSpace(s.FeedURL)
+	}
+	if s.FeedURL == "" {
 		s.FeedURL = info.FeedURL
 	}
 	if s.MaxItems < MinItems {
@@ -172,15 +220,12 @@ func (s SourceSettings) Validate() error {
 	if !s.Enabled {
 		return nil
 	}
-	feedURL := strings.TrimSpace(s.FeedURL)
-	if feedURL == "" {
-		feedURL = presetInfo(s.Preset).FeedURL
-	}
 	if s.MaxItems < MinItems || s.MaxItems > MaxItems {
 		return fmt.Errorf("%s max items must be between %d and %d", s.DisplayName(), MinItems, MaxItems)
 	}
-	if _, err := url.ParseRequestURI(feedURL); err != nil {
-		return fmt.Errorf("%s feed URL is invalid", s.DisplayName())
+	normalized := s.Normalized()
+	if _, err := url.ParseRequestURI(normalized.FeedURL); err != nil {
+		return fmt.Errorf("%s feed URL is invalid", normalized.DisplayName())
 	}
 	return nil
 }
@@ -360,7 +405,11 @@ func readElementText(decoder *xml.Decoder, start xml.StartElement) (string, erro
 	}
 }
 
+var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
+
 func cleanText(value string) string {
+	value = htmlTagPattern.ReplaceAllString(value, " ")
+	value = html.UnescapeString(value)
 	return strings.Join(strings.Fields(value), " ")
 }
 
@@ -434,6 +483,14 @@ func stripTitleSuffix(title string, suffix string) (string, bool) {
 
 func isDeprecatedPresetFeed(preset Preset, feedURL string) bool {
 	return preset == PresetEconomist && strings.EqualFold(feedURL, deprecatedEconomistWorldThisWeekFeed)
+}
+
+func isKnownPreset(preset Preset) bool {
+	return presetInfo(preset).Preset != ""
+}
+
+func defaultEnabled(preset Preset) bool {
+	return !strings.HasPrefix(string(preset), "bloomberg_")
 }
 
 func presetInfo(preset Preset) PresetInfo {

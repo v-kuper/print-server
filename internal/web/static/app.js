@@ -321,13 +321,10 @@ function renderScheduleNewsSettings(settings) {
     preset.dataset.scheduleNewsPreset = "";
     preset.value = source.preset || "";
 
-    const urlLabel = document.createElement("label");
-    urlLabel.textContent = newsPresetLabel(source.preset);
-    const url = document.createElement("input");
-    url.dataset.scheduleNewsUrlVisible = "";
-    url.autocomplete = "off";
-    url.value = source.feedUrl || "";
-    urlLabel.appendChild(url);
+    const title = document.createElement("span");
+    title.className = "news-source-title";
+    title.dataset.newsSourceTitle = "";
+    title.textContent = newsPresetLabel(source.preset);
 
     const countLabel = document.createElement("label");
     countLabel.textContent = "Кол-во";
@@ -340,7 +337,7 @@ function renderScheduleNewsSettings(settings) {
     count.value = valueOrEmpty(source.maxItems || 1);
     countLabel.appendChild(count);
 
-    row.append(enabled, preset, urlLabel, countLabel);
+    row.append(enabled, preset, title, countLabel);
     panel.appendChild(row);
   }
   return panel;
@@ -413,18 +410,10 @@ function renderNewsSources(newsSettings, presets) {
     preset.dataset.newsPreset = "";
     preset.value = source.preset || "";
 
-    const url = document.createElement("input");
-    url.type = "hidden";
-    url.dataset.newsUrl = "";
-    url.value = source.feedUrl || "";
-
-    const urlLabel = document.createElement("label");
-    urlLabel.textContent = presetNames.get(source.preset) || source.preset || "RSS";
-    const visibleURL = document.createElement("input");
-    visibleURL.dataset.newsUrlVisible = "";
-    visibleURL.autocomplete = "off";
-    visibleURL.value = source.feedUrl || "";
-    urlLabel.appendChild(visibleURL);
+    const title = document.createElement("span");
+    title.className = "news-source-title";
+    title.dataset.newsSourceTitle = "";
+    title.textContent = presetNames.get(source.preset) || source.preset || "RSS";
 
     const countLabel = document.createElement("label");
     countLabel.textContent = "Кол-во";
@@ -437,7 +426,7 @@ function renderNewsSources(newsSettings, presets) {
     count.value = valueOrEmpty(source.maxItems || 1);
     countLabel.appendChild(count);
 
-    row.append(enabled, preset, url, urlLabel, countLabel);
+    row.append(enabled, preset, title, countLabel);
     newsSourceListEl.appendChild(row);
   }
 }
@@ -938,7 +927,7 @@ function validateNewsSettings() {
     if (!validInteger || !Number.isFinite(count) || count < 1 || count > 100) {
       countInput.classList.add("invalid");
       countInput.setAttribute("aria-invalid", "true");
-      const name = source.querySelector("label")?.textContent.trim() || "RSS";
+      const name = source.querySelector("[data-news-source-title]")?.textContent.trim() || "RSS";
       errors.push(name + ": укажи количество от 1 до 100");
     }
   });
@@ -994,7 +983,7 @@ function validateScheduleNestedSettings() {
       if (!row.querySelector("[data-schedule-news-enabled]")?.checked) {
         return;
       }
-      const name = row.querySelector("label")?.childNodes[0]?.textContent?.trim() || "RSS";
+      const name = row.querySelector("[data-news-source-title]")?.textContent?.trim() || "RSS";
       checkCount(row.querySelector("[data-schedule-news-count]"), label + " · " + name);
     });
     container.querySelectorAll("[data-schedule-denis-trend-period]").forEach(row => {
@@ -1045,7 +1034,6 @@ async function saveNewsSettings() {
     return {
       preset: source.querySelector("[data-news-preset]").value,
       enabled: source.querySelector("[data-news-enabled]").checked,
-      feedUrl: source.querySelector("[data-news-url-visible]").value,
       maxItems: Number.isFinite(count) && count > 0 ? count : 1
     };
   });
@@ -1335,7 +1323,6 @@ function readScheduleNewsSettings(container) {
     return {
       preset: row.querySelector("[data-schedule-news-preset]")?.value || "",
       enabled: Boolean(row.querySelector("[data-schedule-news-enabled]")?.checked),
-      feedUrl: row.querySelector("[data-schedule-news-url-visible]")?.value || "",
       maxItems: Number.isFinite(count) && count > 0 ? count : 1
     };
   });
