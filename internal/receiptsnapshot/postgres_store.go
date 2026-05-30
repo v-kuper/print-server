@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"atol-server/internal/storage"
 
@@ -61,6 +62,69 @@ func (s *PostgresStore) Load(ctx context.Context, id string) (Snapshot, error) {
 		return Snapshot{}, ErrNotFound
 	}
 	return snapshot, err
+}
+
+func (s *PostgresStore) LoadSummary(ctx context.Context, snapshotID string, lineIndex int, url string) (Summary, error) {
+	var summary Summary
+	var rawBullets []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT snapshot_id::text, line_index, url, title, summary, bullets, generated_at
+		FROM receipt_snapshot_summaries
+		WHERE workspace_id = $1::uuid
+			AND snapshot_id = $2::uuid
+			AND line_index = $3
+			AND url = $4`,
+		s.workspaceID, strings.TrimSpace(snapshotID), lineIndex, strings.TrimSpace(url),
+	).Scan(&summary.SnapshotID, &summary.LineIndex, &summary.URL, &summary.Title, &summary.Summary, &rawBullets, &summary.GeneratedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Summary{}, ErrSummaryNotFound
+	}
+	if err != nil {
+		return Summary{}, err
+	}
+	if err := json.Unmarshal(rawBullets, &summary.Bullets); err != nil {
+		return Summary{}, fmt.Errorf("decode receipt snapshot summary bullets: %w", err)
+	}
+	return summary, nil
+}
+
+func (s *PostgresStore) SaveSummary(ctx context.Context, input SummaryInput) error {
+	bulletsData, err := json.Marshal(input.Bullets)
+	if err != nil {
+		return fmt.Errorf("encode receipt snapshot summary bullets: %w", err)
+	}
+	generatedAt := input.GeneratedAt
+	if generatedAt.IsZero() {
+		generatedAt = time.Now().UTC()
+	}
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO receipt_snapshot_summaries (
+			workspace_id, snapshot_id, line_index, url, title, summary, bullets, generated_at
+		)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8)
+		ON CONFLICT (workspace_id, snapshot_id, line_index, url)
+		DO UPDATE SET
+			title = EXCLUDED.title,
+			summary = EXCLUDED.summary,
+			bullets = EXCLUDED.bullets,
+			generated_at = EXCLUDED.generated_at,
+			updated_at = now()`,
+		s.workspaceID,
+		strings.TrimSpace(input.SnapshotID),
+		input.LineIndex,
+		strings.TrimSpace(input.URL),
+		strings.TrimSpace(input.Title),
+		strings.TrimSpace(input.Summary),
+		string(bulletsData),
+		generatedAt,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PostgresStore) FinalizeReceiptLines(ctx context.Context, id string, lines []ReceiptLine, paperChars int) error {

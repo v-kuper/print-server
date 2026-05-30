@@ -15,6 +15,7 @@ const (
 
 var (
 	ErrNotFound          = errors.New("receipt snapshot not found")
+	ErrSummaryNotFound   = errors.New("receipt snapshot summary not found")
 	errUnsupportedScheme = errors.New("base URL scheme must be http or https")
 	errMissingHost       = errors.New("base URL host is required")
 )
@@ -60,4 +61,24 @@ type Snapshot struct {
 	CreatedAt    time.Time
 	PublishedAt  *time.Time
 	FailedAt     *time.Time
+}
+
+type SummaryInput struct {
+	SnapshotID  string
+	LineIndex   int
+	URL         string
+	Title       string
+	Summary     string
+	Bullets     []string
+	GeneratedAt time.Time
+}
+
+type Summary struct {
+	SnapshotID  string
+	LineIndex   int
+	URL         string
+	Title       string
+	Summary     string
+	Bullets     []string
+	GeneratedAt time.Time
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"atol-server/internal/bankrates"
+	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
 	"atol-server/internal/history"
@@ -1307,6 +1308,90 @@ func TestReceiptServicePrintsDailyReceiptWithExplicitContent(t *testing.T) {
 	}
 }
 
+func TestReceiptServiceBuildsDenisTrendsBlockWhenEnabled(t *testing.T) {
+	store := &fakeStore{
+		denisTrends: denistrends.DefaultSettings(),
+	}
+	provider := &fakeDenisTrendsProvider{
+		sections: []denistrends.Section{
+			{
+				Period: denistrends.PeriodDay,
+				Title:  "Top day",
+				Items: []denistrends.Item{
+					{Title: "HN title", SourceName: "Hacker News", Link: "https://example.com/hn"},
+				},
+			},
+		},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithDenisTrendsProvider(provider),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, err := service.BuildDailyReceiptWithContent(context.Background(), receipt.ContentSettings{
+		Configured:      true,
+		ShowDenisTrends: true,
+	})
+	if err != nil {
+		t.Fatalf("build daily receipt: %v", err)
+	}
+
+	if !provider.now.Equal(fixedClock()) {
+		t.Fatalf("expected provider to receive service clock, got %v", provider.now)
+	}
+	if !lineTextsContain(lines, "Denis Trends") || !lineTextsContain(lines, "Hacker News: HN title") {
+		t.Fatalf("expected Denis Trends receipt lines, got %#v", lines)
+	}
+	if link := receiptLinkForText(lines, "Hacker News: HN title"); link != "https://example.com/hn" {
+		t.Fatalf("expected trend link on receipt line, got %q", link)
+	}
+}
+
+func TestReceiptServiceBuildsDenisTrendsUsingScheduledTime(t *testing.T) {
+	location, err := time.LoadLocation(denistrends.DefaultTimezone)
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	scheduledAt := time.Date(2026, 5, 25, 7, 0, 0, 0, location)
+	store := &fakeStore{
+		denisTrends: denistrends.DefaultSettings(),
+	}
+	provider := &fakeDenisTrendsProvider{
+		sections: []denistrends.Section{
+			{
+				Period: denistrends.PeriodNow,
+				Title:  "Top now",
+				Items:  []denistrends.Item{{Title: "Morning title", SourceName: "GitHub", Link: "https://example.com/morning"}},
+			},
+		},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		func() time.Time { return time.Date(2026, 5, 25, 18, 30, 0, 0, location) },
+		WithDenisTrendsProvider(provider),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, err := service.BuildDailyReceiptWithContentAt(context.Background(), receipt.ContentSettings{
+		Configured:      true,
+		ShowDenisTrends: true,
+	}, scheduledAt)
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+
+	if !lineTextsContain(lines, "Top now") {
+		t.Fatalf("expected scheduled morning Top now section, got %#v", lines)
+	}
+	if !provider.now.Equal(scheduledAt) {
+		t.Fatalf("expected provider to receive scheduled time %s, got %s", scheduledAt, provider.now)
+	}
+}
+
 func TestReceiptServicePrintsWeatherAdviceWhenLegacyMotivationDisabled(t *testing.T) {
 	weatherCode := 0
 	motivationProvider := &fakeMotivationProvider{
@@ -1469,6 +1554,7 @@ type fakeStore struct {
 	location                weather.Location
 	portfolio               finance.TonPortfolio
 	newsSettings            news.Settings
+	denisTrends             denistrends.Settings
 	receiptStyle            receipt.StyleSettings
 	receiptContent          receipt.ContentSettings
 	receiptContentLoadCalls int
@@ -1490,6 +1576,13 @@ func (s *fakeStore) LoadFinance() (finance.TonPortfolio, error) {
 
 func (s *fakeStore) LoadNews() (news.Settings, error) {
 	return s.newsSettings, nil
+}
+
+func (s *fakeStore) LoadDenisTrends() (denistrends.Settings, error) {
+	if len(s.denisTrends.Periods) == 0 && len(s.denisTrends.Sources) == 0 {
+		return denistrends.DefaultSettings(), nil
+	}
+	return s.denisTrends.Normalized(), nil
 }
 
 func (s *fakeStore) LoadReceiptStyle() (receipt.StyleSettings, error) {
@@ -1656,6 +1749,16 @@ func (p *fakeNewsProvider) Current(context.Context, news.Settings) ([]news.Item,
 	return p.items, nil
 }
 
+type fakeDenisTrendsProvider struct {
+	sections []denistrends.Section
+	now      time.Time
+}
+
+func (p *fakeDenisTrendsProvider) Current(_ context.Context, _ denistrends.Settings, now time.Time) ([]denistrends.Section, error) {
+	p.now = now
+	return p.sections, nil
+}
+
 type fakeHistoryProvider struct {
 	events []history.Event
 	err    error
@@ -1770,6 +1873,15 @@ func lineTextsContain(lines []receipt.Line, want string) bool {
 		}
 	}
 	return false
+}
+
+func receiptLinkForText(lines []receipt.Line, text string) string {
+	for _, line := range lines {
+		if line.Text == text {
+			return line.Link
+		}
+	}
+	return ""
 }
 
 func lineTextsContainSubstring(lines []receipt.Line, want string) bool {

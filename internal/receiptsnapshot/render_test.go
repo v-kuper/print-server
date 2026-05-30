@@ -47,6 +47,10 @@ func TestRenderSnapshotHTMLGroupsNewsAndEscapesContent(t *testing.T) {
 		"Первый &lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;",
 		"First &lt;World&gt;",
 		`href="https://example.com/first"`,
+		`class="summary-button"`,
+		`data-summary-line-index="3"`,
+		`data-summary-modal`,
+		`/api/snapshots/`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected rendered HTML to contain %q:\n%s", want, body)
@@ -57,6 +61,9 @@ func TestRenderSnapshotHTMLGroupsNewsAndEscapesContent(t *testing.T) {
 	}
 	if strings.Contains(body, "javascript:alert") {
 		t.Fatalf("unsafe javascript link must not be rendered:\n%s", body)
+	}
+	if strings.Contains(body, `data-summary-line-index="5"`) {
+		t.Fatalf("unsafe link must not get summary button:\n%s", body)
 	}
 	assertReceiptPaperHasNoWhitespaceNodes(t, body)
 }

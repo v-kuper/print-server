@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"atol-server/internal/storage"
 )
@@ -83,6 +84,44 @@ func TestPostgresStoreCreatesPublishesFailsAndLoadsSnapshot(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreSavesAndLoadsSnapshotSummary(t *testing.T) {
+	ctx := context.Background()
+	pool := openSnapshotTestPool(t, ctx)
+	resetSnapshotTestDatabase(t, ctx, pool)
+	workspaceID := ensureSnapshotTestWorkspace(t, ctx, pool)
+	store := NewPostgresStore(pool, workspaceID)
+
+	created, err := store.Create(ctx, CreateInput{ReceiptLines: []ReceiptLine{{Text: "News", Link: "https://example.com/news"}}})
+	if err != nil {
+		t.Fatalf("create snapshot: %v", err)
+	}
+	if _, err := store.LoadSummary(ctx, created.ID, 0, "https://example.com/news"); !errors.Is(err, ErrSummaryNotFound) {
+		t.Fatalf("expected missing summary, got %v", err)
+	}
+
+	generatedAt := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	input := SummaryInput{
+		SnapshotID:  created.ID,
+		LineIndex:   0,
+		URL:         "https://example.com/news",
+		Title:       "Article title",
+		Summary:     "Короткое описание материала.",
+		Bullets:     []string{"Первый тезис", "Второй тезис"},
+		GeneratedAt: generatedAt,
+	}
+	if err := store.SaveSummary(ctx, input); err != nil {
+		t.Fatalf("save summary: %v", err)
+	}
+
+	got, err := store.LoadSummary(ctx, created.ID, 0, "https://example.com/news")
+	if err != nil {
+		t.Fatalf("load summary: %v", err)
+	}
+	if got.SnapshotID != created.ID || got.LineIndex != 0 || got.URL != input.URL || got.Title != input.Title || got.Summary != input.Summary || !reflect.DeepEqual(got.Bullets, input.Bullets) || !got.GeneratedAt.Equal(generatedAt) {
+		t.Fatalf("unexpected loaded summary: %#v", got)
+	}
+}
+
 func openSnapshotTestPool(t *testing.T, ctx context.Context) storage.Pool {
 	t.Helper()
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
@@ -103,6 +142,7 @@ func openSnapshotTestPool(t *testing.T, ctx context.Context) storage.Pool {
 func resetSnapshotTestDatabase(t *testing.T, ctx context.Context, pool storage.Pool) {
 	t.Helper()
 	_, err := pool.Exec(ctx, `TRUNCATE
+		receipt_snapshot_summaries,
 		receipt_snapshots,
 		legacy_imports,
 		audit_events,
