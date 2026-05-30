@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/motivation"
 	"atol-server/internal/news"
@@ -29,6 +30,7 @@ const (
 
 	settingWeather         = "weather"
 	settingFinance         = "finance"
+	settingDenisTrends     = "denis_trends"
 	settingNews            = "news"
 	settingMotivation      = "motivation"
 	settingReceiptStyle    = "receipt_style"
@@ -139,6 +141,14 @@ func (s *PostgresStore) LoadNews() (news.Settings, error) {
 	return value.Normalized(), nil
 }
 
+func (s *PostgresStore) LoadDenisTrends() (denistrends.Settings, error) {
+	value, err := loadSetting(s, settingDenisTrends, denistrends.DefaultSettings())
+	if err != nil {
+		return denistrends.Settings{}, err
+	}
+	return value.Normalized(), nil
+}
+
 func (s *PostgresStore) SaveNews(newsSettings news.Settings) error {
 	if err := newsSettings.Validate(); err != nil {
 		return err
@@ -150,6 +160,13 @@ func (s *PostgresStore) SaveNews(newsSettings news.Settings) error {
 		}
 	}
 	return s.saveSetting(settingNews, normalized)
+}
+
+func (s *PostgresStore) SaveDenisTrends(trendsSettings denistrends.Settings) error {
+	if err := trendsSettings.Validate(); err != nil {
+		return err
+	}
+	return s.saveSetting(settingDenisTrends, trendsSettings.Normalized())
 }
 
 func (s *PostgresStore) LoadMotivation() (motivation.Settings, error) {

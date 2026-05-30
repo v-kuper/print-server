@@ -13,6 +13,7 @@ import (
 
 	"atol-server/internal/bankrates"
 	"atol-server/internal/chart"
+	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
 	"atol-server/internal/history"
@@ -29,6 +30,7 @@ type SettingsStore interface {
 	LoadWeather() (weather.Location, error)
 	LoadFinance() (finance.TonPortfolio, error)
 	LoadNews() (news.Settings, error)
+	LoadDenisTrends() (denistrends.Settings, error)
 	LoadMotivation() (motivation.Settings, error)
 	SaveMotivation(motivation.Settings) error
 	LoadReceiptStyle() (receipt.StyleSettings, error)
@@ -75,6 +77,10 @@ type NewsProvider interface {
 	Current(context.Context, news.Settings) ([]news.Item, error)
 }
 
+type DenisTrendsProvider interface {
+	Current(context.Context, denistrends.Settings, time.Time) ([]denistrends.Section, error)
+}
+
 type HistoryProvider interface {
 	Current(context.Context, time.Time) ([]history.Event, error)
 }
@@ -107,6 +113,7 @@ type ReceiptService struct {
 	fiatChartProvider   FiatMarketChartProvider
 	bankRatesProvider   BankRatesProvider
 	newsProvider        NewsProvider
+	denisTrendsProvider DenisTrendsProvider
 	historyProvider     HistoryProvider
 	googleProvider      GoogleProvider
 	motivationProvider  MotivationProvider
@@ -196,6 +203,12 @@ func WithNewsProvider(provider NewsProvider) ReceiptServiceOption {
 	}
 }
 
+func WithDenisTrendsProvider(provider DenisTrendsProvider) ReceiptServiceOption {
+	return func(s *ReceiptService) {
+		s.denisTrendsProvider = provider
+	}
+}
+
 func WithHistoryProvider(provider HistoryProvider) ReceiptServiceOption {
 	return func(s *ReceiptService) {
 		s.historyProvider = provider
@@ -236,6 +249,7 @@ func NewReceiptService(store SettingsStore, printerGateway Printer, clock func()
 		fiatChartProvider:   fiatProvider,
 		bankRatesProvider:   bankrates.NewTheMoneyProvider(nil),
 		newsProvider:        news.NewProvider(nil),
+		denisTrendsProvider: denistrends.NewProvider(nil),
 		historyProvider:     history.NewProvider(nil),
 		motivationProvider:  motivation.NewOllamaProvider(nil),
 		generatedAssetsPath: defaultGeneratedAssetsPath,
@@ -273,8 +287,17 @@ func (s *ReceiptService) BuildDailyReceiptWithContent(ctx context.Context, conte
 	return lines, err
 }
 
+func (s *ReceiptService) BuildDailyReceiptWithContentAt(ctx context.Context, content receipt.ContentSettings, effectiveTime time.Time) ([]receipt.Line, error) {
+	lines, _, err := s.BuildDailyReceiptWithContentAtAndWarnings(ctx, content, effectiveTime)
+	return lines, err
+}
+
 func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Context, content receipt.ContentSettings) ([]receipt.Line, []string, error) {
-	result, err := s.buildDailyReceipt(ctx, content)
+	return s.BuildDailyReceiptWithContentAtAndWarnings(ctx, content, s.clock())
+}
+
+func (s *ReceiptService) BuildDailyReceiptWithContentAtAndWarnings(ctx context.Context, content receipt.ContentSettings, effectiveTime time.Time) ([]receipt.Line, []string, error) {
+	result, err := s.buildDailyReceiptAt(ctx, content, effectiveTime)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -282,7 +305,7 @@ func (s *ReceiptService) BuildDailyReceiptWithContentAndWarnings(ctx context.Con
 }
 
 func (s *ReceiptService) BuildDailyReceiptPreviewWithContentAndWarnings(ctx context.Context, content receipt.ContentSettings) ([]receipt.Line, []string, error) {
-	build, err := s.buildDailyReceipt(ctx, content)
+	build, err := s.buildDailyReceiptAt(ctx, content, s.clock())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -298,6 +321,13 @@ func (s *ReceiptService) BuildDailyReceiptPreviewWithContentAndWarnings(ctx cont
 }
 
 func (s *ReceiptService) buildDailyReceipt(ctx context.Context, content receipt.ContentSettings) (dailyReceiptBuild, error) {
+	return s.buildDailyReceiptAt(ctx, content, s.clock())
+}
+
+func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receipt.ContentSettings, effectiveTime time.Time) (dailyReceiptBuild, error) {
+	if effectiveTime.IsZero() {
+		effectiveTime = s.clock()
+	}
 	content = content.Normalized()
 
 	snapshot := weather.Snapshot{
@@ -402,26 +432,39 @@ func (s *ReceiptService) buildDailyReceipt(ctx context.Context, content receipt.
 		}
 	}
 
+	var denisTrendSections []denistrends.Section
+	if content.ShowDenisTrends {
+		trendsSettings, err := s.store.LoadDenisTrends()
+		if err != nil {
+			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
+		}
+		denisTrendSections, err = s.denisTrendsProvider.Current(ctx, trendsSettings, effectiveTime)
+		if err != nil {
+			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
+		}
+	}
+
 	receiptStyle, err := s.store.LoadReceiptStyle()
 	if err != nil {
 		return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 	}
 
 	lines := receipt.DailyReceiptWithStyle(receipt.DailyReceiptData{
-		HideWeather:      !content.ShowWeather,
-		Weather:          snapshot,
-		WeatherAdvice:    weatherAdvice,
-		MotivationQuote:  motivationQuote,
-		TonPortfolio:     tonSummary,
-		TonChartImage:    tonChartImage,
-		USDBYNRate:       usdBynRate,
-		USDBYNChartImage: usdBynChartImage,
-		BankRates:        bankRatesSummary,
-		MailMessages:     googleSummary.Mail,
-		CalendarSections: calendarSections,
-		CalendarAdvice:   calendarAdvice,
-		HistoryFacts:     historyFacts,
-		NewsItems:        newsItems,
+		HideWeather:        !content.ShowWeather,
+		Weather:            snapshot,
+		WeatherAdvice:      weatherAdvice,
+		MotivationQuote:    motivationQuote,
+		TonPortfolio:       tonSummary,
+		TonChartImage:      tonChartImage,
+		USDBYNRate:         usdBynRate,
+		USDBYNChartImage:   usdBynChartImage,
+		BankRates:          bankRatesSummary,
+		MailMessages:       googleSummary.Mail,
+		CalendarSections:   calendarSections,
+		CalendarAdvice:     calendarAdvice,
+		HistoryFacts:       historyFacts,
+		NewsItems:          newsItems,
+		DenisTrendSections: denisTrendSections,
 	}, receiptStyle)
 	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning)
 	return dailyReceiptBuild{
@@ -438,6 +481,14 @@ func (s *ReceiptService) PrintDailyReceipt(ctx context.Context) error {
 	return err
 }
 
+func (s *ReceiptService) PrintDailyReceiptAt(ctx context.Context, effectiveTime time.Time) error {
+	content, err := s.store.LoadReceiptContent()
+	if err != nil {
+		return buildError(http.StatusInternalServerError, err)
+	}
+	return s.PrintDailyReceiptWithContentAt(ctx, content, effectiveTime)
+}
+
 func (s *ReceiptService) PrintDailyReceiptWithWarnings(ctx context.Context) ([]string, error) {
 	content, err := s.store.LoadReceiptContent()
 	if err != nil {
@@ -451,13 +502,22 @@ func (s *ReceiptService) PrintDailyReceiptWithContent(ctx context.Context, conte
 	return err
 }
 
+func (s *ReceiptService) PrintDailyReceiptWithContentAt(ctx context.Context, content receipt.ContentSettings, effectiveTime time.Time) error {
+	_, err := s.PrintDailyReceiptWithContentAtAndWarnings(ctx, content, effectiveTime)
+	return err
+}
+
 func (s *ReceiptService) PrintDailyReceiptWithContentAndWarnings(ctx context.Context, content receipt.ContentSettings) ([]string, error) {
+	return s.PrintDailyReceiptWithContentAtAndWarnings(ctx, content, s.clock())
+}
+
+func (s *ReceiptService) PrintDailyReceiptWithContentAtAndWarnings(ctx context.Context, content receipt.ContentSettings, effectiveTime time.Time) ([]string, error) {
 	config, err := s.store.LoadPrinter()
 	if err != nil {
 		return nil, buildError(http.StatusInternalServerError, err)
 	}
 
-	build, err := s.buildDailyReceipt(ctx, content)
+	build, err := s.buildDailyReceiptAt(ctx, content, effectiveTime)
 	if err != nil {
 		return nil, err
 	}
@@ -483,7 +543,7 @@ func (s *ReceiptService) PrintDailyReceiptWithContentAndWarnings(ctx context.Con
 }
 
 func (s *ReceiptService) appendNewsSnapshotQRCode(ctx context.Context, lines []receipt.Line, items []news.Item, style receipt.StyleSettings, paperChars int) ([]receipt.Line, string, []string) {
-	if len(items) == 0 || s.snapshotStore == nil {
+	if (len(items) == 0 && !receiptLinesHaveLinks(lines)) || s.snapshotStore == nil {
 		return lines, "", nil
 	}
 	settings, err := s.store.LoadReceiptSnapshotSettings()
@@ -518,6 +578,15 @@ func (s *ReceiptService) appendNewsSnapshotQRCode(ctx context.Context, lines []r
 		return lines, "", []string{"Онлайн-слепок создан, но финальный чек не сохранен: " + err.Error()}
 	}
 	return finalLines, snapshot.ID, nil
+}
+
+func receiptLinesHaveLinks(lines []receipt.Line) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line.Link) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func newsSnapshotItems(items []news.Item) []receiptsnapshot.NewsItem {

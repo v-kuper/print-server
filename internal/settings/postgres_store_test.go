@@ -205,6 +205,7 @@ func openPostgresStoreTestPool(t *testing.T, ctx context.Context) storage.Pool {
 func resetPostgresStoreTestDatabase(t *testing.T, ctx context.Context, pool storage.Pool) {
 	t.Helper()
 	_, err := pool.Exec(ctx, `TRUNCATE
+		receipt_snapshot_summaries,
 		receipt_snapshots,
 		legacy_imports,
 		audit_events,

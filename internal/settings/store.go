@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/motivation"
 	"atol-server/internal/news"
@@ -26,6 +27,7 @@ type fileSettings struct {
 	Printer        printer.Config          `json:"printer"`
 	Weather        weather.Location        `json:"weather"`
 	Finance        finance.TonPortfolio    `json:"finance"`
+	DenisTrends    denistrends.Settings    `json:"denisTrends"`
 	News           news.Settings           `json:"news"`
 	Motivation     motivation.Settings     `json:"motivation"`
 	Receipt        receipt.StyleSettings   `json:"receipt"`
@@ -133,6 +135,17 @@ func (s *Store) LoadNews() (news.Settings, error) {
 	return settings.News.Normalized(), nil
 }
 
+func (s *Store) LoadDenisTrends() (denistrends.Settings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	settings, err := s.load()
+	if err != nil {
+		return denistrends.Settings{}, err
+	}
+	return settings.DenisTrends.Normalized(), nil
+}
+
 func (s *Store) LoadMotivation() (motivation.Settings, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -180,6 +193,23 @@ func (s *Store) SaveNews(newsSettings news.Settings) error {
 		return err
 	}
 	settings.News = normalized
+	return s.save(settings)
+}
+
+func (s *Store) SaveDenisTrends(trendsSettings denistrends.Settings) error {
+	if err := trendsSettings.Validate(); err != nil {
+		return err
+	}
+	normalized := trendsSettings.Normalized()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	settings, err := s.load()
+	if err != nil {
+		return err
+	}
+	settings.DenisTrends = normalized
 	return s.save(settings)
 }
 

@@ -20,8 +20,16 @@ type Job interface {
 	PrintDailyReceipt(context.Context) error
 }
 
+type ScheduledJob interface {
+	PrintDailyReceiptAt(context.Context, time.Time) error
+}
+
 type ContentJob interface {
 	PrintDailyReceiptWithContent(context.Context, receipt.ContentSettings) error
+}
+
+type ScheduledContentJob interface {
+	PrintDailyReceiptWithContentAt(context.Context, receipt.ContentSettings, time.Time) error
 }
 
 type Service struct {
@@ -179,15 +187,20 @@ func (s *Service) printScheduledReceipt(ctx context.Context, settings schedule.S
 	normalized := settings.Normalized()
 	if normalized.Mode == schedule.ModeInterval {
 		if normalized.IntervalContent == nil {
+			if scheduledJob, ok := s.job.(ScheduledJob); ok {
+				return scheduledJob.PrintDailyReceiptAt(ctx, scheduledAt)
+			}
 			return s.job.PrintDailyReceipt(ctx)
 		}
-		contentJob, ok := s.job.(ContentJob)
-		if !ok {
-			return fmt.Errorf("scheduled content printing is not supported")
+		if scheduledContentJob, ok := s.job.(ScheduledContentJob); ok {
+			return scheduledContentJob.PrintDailyReceiptWithContentAt(ctx, *normalized.IntervalContent, scheduledAt)
 		}
-		return contentJob.PrintDailyReceiptWithContent(ctx, *normalized.IntervalContent)
+		return s.printWithContent(ctx, *normalized.IntervalContent)
 	}
 	if normalized.Mode != schedule.ModeDailyTimes {
+		if scheduledJob, ok := s.job.(ScheduledJob); ok {
+			return scheduledJob.PrintDailyReceiptAt(ctx, scheduledAt)
+		}
 		return s.job.PrintDailyReceipt(ctx)
 	}
 	run, ok, err := schedule.RunForScheduledAt(normalized, scheduledAt)
@@ -195,13 +208,24 @@ func (s *Service) printScheduledReceipt(ctx context.Context, settings schedule.S
 		return err
 	}
 	if !ok || run.Profile == schedule.ProfileDefault {
+		if scheduledJob, ok := s.job.(ScheduledJob); ok {
+			return scheduledJob.PrintDailyReceiptAt(ctx, scheduledAt)
+		}
 		return s.job.PrintDailyReceipt(ctx)
 	}
+	content := run.ResolveContent(receipt.DefaultContentSettings())
+	if scheduledContentJob, ok := s.job.(ScheduledContentJob); ok {
+		return scheduledContentJob.PrintDailyReceiptWithContentAt(ctx, content, scheduledAt)
+	}
+	return s.printWithContent(ctx, content)
+}
+
+func (s *Service) printWithContent(ctx context.Context, content receipt.ContentSettings) error {
 	contentJob, ok := s.job.(ContentJob)
 	if !ok {
 		return fmt.Errorf("scheduled content printing is not supported")
 	}
-	return contentJob.PrintDailyReceiptWithContent(ctx, run.ResolveContent(receipt.DefaultContentSettings()))
+	return contentJob.PrintDailyReceiptWithContent(ctx, content)
 }
 
 func (s *Service) Reload() {

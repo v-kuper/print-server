@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"atol-server/internal/app"
+	"atol-server/internal/articlesummary"
+	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
 	"atol-server/internal/imageeditor"
@@ -39,6 +41,8 @@ type SettingsStore interface {
 	SaveMotivation(motivation.Settings) error
 	LoadNews() (news.Settings, error)
 	SaveNews(news.Settings) error
+	LoadDenisTrends() (denistrends.Settings, error)
+	SaveDenisTrends(denistrends.Settings) error
 	LoadReceiptStyle() (receipt.StyleSettings, error)
 	SaveReceiptStyle(receipt.StyleSettings) error
 	LoadReceiptContent() (receipt.ContentSettings, error)
@@ -87,6 +91,10 @@ type MotivationProvider interface {
 	TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error)
 }
 
+type ArticleSummaryProvider interface {
+	Summarize(context.Context, motivation.Settings, string) (articlesummary.Result, error)
+}
+
 type GoogleClient interface {
 	Current(context.Context) (googleintegration.Summary, error)
 	Status() googleintegration.Status
@@ -106,6 +114,8 @@ type ReceiptSnapshotStore interface {
 	Publish(context.Context, string) error
 	Fail(context.Context, string, error) error
 	Load(context.Context, string) (receiptsnapshot.Snapshot, error)
+	LoadSummary(context.Context, string, int, string) (receiptsnapshot.Summary, error)
+	SaveSummary(context.Context, receiptsnapshot.SummaryInput) error
 }
 
 type DailyReceiptWarningService interface {
@@ -150,6 +160,7 @@ type Server struct {
 	newsProvider           NewsProvider
 	googleClient           GoogleClient
 	motivationProvider     MotivationProvider
+	articleSummaryProvider ArticleSummaryProvider
 	receiptService         DailyReceiptService
 	snapshotStore          ReceiptSnapshotStore
 	scheduler              Scheduler
@@ -207,6 +218,18 @@ type motivationResponse struct {
 	Error    string               `json:"error,omitempty"`
 	Quote    *motivation.Quote    `json:"quote,omitempty"`
 	Settings *motivation.Settings `json:"settings,omitempty"`
+}
+
+type snapshotSummaryResponse struct {
+	OK          bool       `json:"ok"`
+	Message     string     `json:"message,omitempty"`
+	Error       string     `json:"error,omitempty"`
+	URL         string     `json:"url,omitempty"`
+	Title       string     `json:"title,omitempty"`
+	Summary     string     `json:"summary,omitempty"`
+	Bullets     []string   `json:"bullets,omitempty"`
+	Cached      bool       `json:"cached"`
+	GeneratedAt *time.Time `json:"generatedAt,omitempty"`
 }
 
 type googleStatusResponse struct {
@@ -285,6 +308,12 @@ func WithMotivationProvider(provider MotivationProvider) ServerOption {
 	}
 }
 
+func WithArticleSummaryProvider(provider ArticleSummaryProvider) ServerOption {
+	return func(s *Server) {
+		s.articleSummaryProvider = provider
+	}
+}
+
 func WithAssetsPath(path string) ServerOption {
 	return func(s *Server) {
 		s.assetsPath = path
@@ -334,6 +363,7 @@ func NewServer(store SettingsStore, gateway PrinterGateway, clock func() time.Ti
 		fiatRateProvider:       finance.NewNbrbUsdBynRateProvider(nil),
 		newsProvider:           news.NewProvider(nil),
 		motivationProvider:     motivation.NewOllamaProvider(nil),
+		articleSummaryProvider: articlesummary.NewProvider(nil),
 		clock:                  clock,
 		assetsPath:             defaultAssetsPath,
 		imageEditorPath:        defaultImageEditorPath,
@@ -363,6 +393,7 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /snapshots/{id}", s.handleReceiptSnapshot)
+	mux.HandleFunc("POST /api/snapshots/{id}/lines/{lineIndex}/summary", s.handleReceiptSnapshotSummary)
 	mux.HandleFunc("GET /static/app.css", handleAppCSS)
 	mux.HandleFunc("GET /static/app.js", handleAppJS)
 	mux.Handle("GET /assets/", noStore(http.StripPrefix("/assets/", http.FileServer(http.Dir(s.assetsPathOrDefault())))))
@@ -375,6 +406,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/settings/motivation", s.handleSaveMotivation)
 	mux.HandleFunc("POST /api/motivation/test", s.handleMotivationTest)
 	mux.HandleFunc("POST /api/settings/news", s.handleSaveNews)
+	mux.HandleFunc("POST /api/settings/denis-trends", s.handleSaveDenisTrends)
 	mux.HandleFunc("POST /api/settings/receipt-snapshot", s.handleSaveReceiptSnapshot)
 	mux.HandleFunc("GET /api/google/status", s.handleGoogleStatus)
 	mux.HandleFunc("GET /api/google/auth/start", s.handleGoogleAuthStart)
@@ -453,6 +485,146 @@ func (s *Server) handleReceiptSnapshot(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(html)
 }
 
+func (s *Server) handleReceiptSnapshotSummary(w http.ResponseWriter, r *http.Request) {
+	if s.snapshotStore == nil {
+		http.NotFound(w, r)
+		return
+	}
+	lineIndex, err := strconv.Atoi(strings.TrimSpace(r.PathValue("lineIndex")))
+	if err != nil || lineIndex < 0 {
+		writeJSON(w, http.StatusBadRequest, snapshotSummaryResponse{
+			OK:    false,
+			Error: "invalid snapshot line index",
+		})
+		return
+	}
+
+	snapshot, err := s.snapshotStore.Load(r.Context(), r.PathValue("id"))
+	if errors.Is(err, receiptsnapshot.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, snapshotSummaryResponse{
+			OK:    false,
+			Error: err.Error(),
+		})
+		return
+	}
+	if snapshot.Status == receiptsnapshot.StatusFailed {
+		writeJSON(w, http.StatusGone, snapshotSummaryResponse{
+			OK:    false,
+			Error: "receipt snapshot is unavailable: " + snapshot.Error,
+		})
+		return
+	}
+
+	lines := receiptsnapshot.ReceiptLinesForSnapshot(snapshot)
+	if lineIndex >= len(lines) {
+		writeJSON(w, http.StatusBadRequest, snapshotSummaryResponse{
+			OK:    false,
+			Error: "snapshot line index is out of range",
+		})
+		return
+	}
+	lineURL, err := articlesummary.ValidateArticleURL(lines[lineIndex].Link)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, snapshotSummaryResponse{
+			OK:    false,
+			Error: "snapshot line has no summarizable link",
+		})
+		return
+	}
+
+	cached, err := s.snapshotStore.LoadSummary(r.Context(), snapshot.ID, lineIndex, lineURL)
+	if err == nil {
+		writeJSON(w, http.StatusOK, snapshotSummaryPayloadFromCache(cached))
+		return
+	}
+	if !errors.Is(err, receiptsnapshot.ErrSummaryNotFound) {
+		writeJSON(w, http.StatusInternalServerError, snapshotSummaryResponse{
+			OK:    false,
+			Error: err.Error(),
+		})
+		return
+	}
+	if s.articleSummaryProvider == nil {
+		writeJSON(w, http.StatusServiceUnavailable, snapshotSummaryResponse{
+			OK:    false,
+			Error: "article summary provider is not configured",
+		})
+		return
+	}
+	settings, err := s.store.LoadMotivation()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, snapshotSummaryResponse{
+			OK:    false,
+			Error: err.Error(),
+		})
+		return
+	}
+	result, err := s.articleSummaryProvider.Summarize(r.Context(), settings.Normalized(), lineURL)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, snapshotSummaryResponse{
+			OK:    false,
+			Error: err.Error(),
+			URL:   lineURL,
+		})
+		return
+	}
+	if result.GeneratedAt.IsZero() {
+		result.GeneratedAt = s.clock().UTC()
+	}
+	if result.URL == "" {
+		result.URL = lineURL
+	}
+	input := receiptsnapshot.SummaryInput{
+		SnapshotID:  snapshot.ID,
+		LineIndex:   lineIndex,
+		URL:         lineURL,
+		Title:       result.Title,
+		Summary:     result.Summary,
+		Bullets:     result.Bullets,
+		GeneratedAt: result.GeneratedAt,
+	}
+	if err := s.snapshotStore.SaveSummary(r.Context(), input); err != nil {
+		writeJSON(w, http.StatusInternalServerError, snapshotSummaryResponse{
+			OK:    false,
+			Error: err.Error(),
+			URL:   lineURL,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, snapshotSummaryPayloadFromResult(result, false))
+}
+
+func snapshotSummaryPayloadFromCache(summary receiptsnapshot.Summary) snapshotSummaryResponse {
+	generatedAt := summary.GeneratedAt
+	return snapshotSummaryResponse{
+		OK:          true,
+		URL:         summary.URL,
+		Title:       summary.Title,
+		Summary:     summary.Summary,
+		Bullets:     summary.Bullets,
+		Cached:      true,
+		GeneratedAt: &generatedAt,
+	}
+}
+
+func snapshotSummaryPayloadFromResult(result articlesummary.Result, cached bool) snapshotSummaryResponse {
+	generatedAt := result.GeneratedAt
+	return snapshotSummaryResponse{
+		OK:          true,
+		URL:         result.URL,
+		Title:       result.Title,
+		Summary:     result.Summary,
+		Bullets:     result.Bullets,
+		Cached:      cached,
+		GeneratedAt: &generatedAt,
+	}
+}
+
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	data, err := s.bootstrapData()
 	if err != nil {
@@ -483,6 +655,10 @@ func (s *Server) bootstrapData() (bootstrapData, error) {
 		return bootstrapData{}, err
 	}
 	newsSettings, err := s.store.LoadNews()
+	if err != nil {
+		return bootstrapData{}, err
+	}
+	denisTrendsSettings, err := s.store.LoadDenisTrends()
 	if err != nil {
 		return bootstrapData{}, err
 	}
@@ -518,6 +694,7 @@ func (s *Server) bootstrapData() (bootstrapData, error) {
 		Motivation:        motivationSettings,
 		GoogleStatus:      googleStatus,
 		News:              bootstrapNewsSettings{TranslateTitles: normalizedNews.TranslateTitlesEnabled(), Sources: normalizedNews.Sources},
+		DenisTrends:       denisTrendsSettings.Normalized(),
 		ReceiptStyle:      receiptStyle,
 		ReceiptContent:    receiptContent,
 		ReceiptSnapshot:   receiptSnapshot,
@@ -825,6 +1002,30 @@ func (s *Server) handleSaveNews(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, statusResponse{
 		OK:      true,
 		Message: "Настройки новостей сохранены.",
+	})
+}
+
+func (s *Server) handleSaveDenisTrends(w http.ResponseWriter, r *http.Request) {
+	var settings denistrends.Settings
+	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+		writeJSON(w, http.StatusBadRequest, statusResponse{
+			OK:    false,
+			Error: "invalid JSON: " + err.Error(),
+		})
+		return
+	}
+
+	if err := s.store.SaveDenisTrends(settings); err != nil {
+		writeJSON(w, http.StatusBadRequest, statusResponse{
+			OK:    false,
+			Error: err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, statusResponse{
+		OK:      true,
+		Message: "Настройки Denis Trends сохранены.",
 	})
 }
 
@@ -1575,6 +1776,7 @@ type bootstrapData struct {
 	Motivation        motivation.Settings      `json:"motivation"`
 	GoogleStatus      googleintegration.Status `json:"googleStatus"`
 	News              bootstrapNewsSettings    `json:"news"`
+	DenisTrends       denistrends.Settings     `json:"denisTrends"`
 	ReceiptStyle      receipt.StyleSettings    `json:"receiptStyle"`
 	ReceiptContent    receipt.ContentSettings  `json:"receiptContent"`
 	ReceiptSnapshot   receiptsnapshot.Settings `json:"receiptSnapshot"`

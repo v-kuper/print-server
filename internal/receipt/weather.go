@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"atol-server/internal/bankrates"
+	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
 	"atol-server/internal/motivation"
@@ -44,21 +45,22 @@ var russianWeekdays = []string{
 }
 
 type DailyReceiptData struct {
-	Weather          weather.Snapshot
-	HideWeather      bool
-	WeatherAdvice    *motivation.WeatherAdvice
-	MotivationQuote  *motivation.Quote
-	TonPortfolio     *finance.TonPortfolioSummary
-	TonChartImage    *Image
-	USDBYNRate       *finance.FiatRate
-	USDBYNChartImage *Image
-	BankRates        *bankrates.Summary
-	MailMessages     []googleintegration.MailMessage
-	CalendarEvents   []googleintegration.CalendarEvent
-	CalendarSections []CalendarSection
-	CalendarAdvice   *motivation.CalendarAdvice
-	HistoryFacts     []motivation.HistoryFact
-	NewsItems        []news.Item
+	Weather            weather.Snapshot
+	HideWeather        bool
+	WeatherAdvice      *motivation.WeatherAdvice
+	MotivationQuote    *motivation.Quote
+	TonPortfolio       *finance.TonPortfolioSummary
+	TonChartImage      *Image
+	USDBYNRate         *finance.FiatRate
+	USDBYNChartImage   *Image
+	BankRates          *bankrates.Summary
+	MailMessages       []googleintegration.MailMessage
+	CalendarEvents     []googleintegration.CalendarEvent
+	CalendarSections   []CalendarSection
+	CalendarAdvice     *motivation.CalendarAdvice
+	HistoryFacts       []motivation.HistoryFact
+	NewsItems          []news.Item
+	DenisTrendSections []denistrends.Section
 }
 
 type CalendarSection struct {
@@ -238,6 +240,41 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 				}
 			}
 			if sourceIndex < len(grouped)-1 {
+				result = append(result, blankLine(normalStyle))
+			}
+		}
+	}
+	if len(data.DenisTrendSections) > 0 {
+		result = appendSectionHeader(result, "Denis Trends", normalStyle)
+		result = append(result, blankLine(normalStyle))
+
+		for sectionIndex, section := range data.DenisTrendSections {
+			if len(section.Items) == 0 {
+				continue
+			}
+			title := strings.TrimSpace(section.Title)
+			if title == "" {
+				title = section.Period.DisplayName()
+			}
+			result = append(result, wrappedAligned(title, normalStyle)...)
+			for itemIndex, item := range section.Items {
+				text := strings.TrimSpace(item.SourceName)
+				if text != "" {
+					text += ": "
+				}
+				text += strings.TrimSpace(item.Title)
+				titleLines := wrappedAligned(text, normalStyle)
+				if link := strings.TrimSpace(item.Link); link != "" {
+					for lineIndex := range titleLines {
+						titleLines[lineIndex].Link = link
+					}
+				}
+				result = append(result, titleLines...)
+				if itemIndex < len(section.Items)-1 {
+					result = append(result, blankLine(normalStyle))
+				}
+			}
+			if sectionIndex < len(data.DenisTrendSections)-1 {
 				result = append(result, blankLine(normalStyle))
 			}
 		}

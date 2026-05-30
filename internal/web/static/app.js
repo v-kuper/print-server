@@ -7,6 +7,7 @@ const googleStatusEl = document.querySelector("#google-status");
 const googleCredentialsPathEl = document.querySelector("#google-credentials-path");
 const googleTokenPathEl = document.querySelector("#google-token-path");
 const newsSourceListEl = document.querySelector("#news-source-list");
+const denisTrendsSettingsEl = document.querySelector("#denis-trends-settings");
 const weatherNameInput = document.querySelector("#weather-name");
 const weatherLatitudeInput = document.querySelector("#weather-latitude");
 const weatherLongitudeInput = document.querySelector("#weather-longitude");
@@ -58,6 +59,13 @@ const scheduleContentOptions = [
   { key: "showCalendar",        label: "Календарь",       group: "Google"   },
   { key: "showHistory",         label: "История дня",     group: "Новости"  },
   { key: "showNews",            label: "Коротко о мире",  group: "Новости"  },
+  { key: "showDenisTrends",     label: "Denis Trends",    group: "Новости"  },
+];
+const denisTrendPeriods = [
+  { key: "now", label: "Top now" },
+  { key: "day", label: "Top day" },
+  { key: "week", label: "Top week" },
+  { key: "month", label: "Top month" }
 ];
 
 
@@ -244,6 +252,54 @@ function renderNewsSources(newsSettings, presets) {
   }
 }
 
+function renderDenisTrendsSettings(settings) {
+  if (!denisTrendsSettingsEl) {
+    return;
+  }
+  const normalized = settings || {};
+  const periods = normalized.periods || {};
+  denisTrendsSettingsEl.replaceChildren();
+
+  const periodTitle = document.createElement("div");
+  periodTitle.className = "content-group-title";
+  periodTitle.textContent = "Периоды";
+  denisTrendsSettingsEl.appendChild(periodTitle);
+
+  const hint = document.createElement("p");
+  hint.className = "helper-text";
+  hint.textContent = "Denis Trends: до 12:00 печатается Top now, после 12:00 - Top day, по воскресеньям добавляется Top week, в последний день месяца - Top month.";
+  denisTrendsSettingsEl.appendChild(hint);
+
+  denisTrendPeriods.forEach(period => {
+    const value = periods[period.key] || {};
+    const row = document.createElement("div");
+    row.className = "news-source";
+    row.dataset.denisTrendPeriod = period.key;
+
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.dataset.denisTrendPeriodEnabled = "";
+    enabled.checked = Boolean(value.enabled);
+
+    const label = document.createElement("span");
+    label.textContent = period.label;
+
+    const countLabel = document.createElement("label");
+    countLabel.textContent = "Кол-во";
+    const count = document.createElement("input");
+    count.dataset.denisTrendPeriodCount = "";
+    count.autocomplete = "off";
+    count.inputMode = "numeric";
+    count.min = "1";
+    count.max = "100";
+    count.value = valueOrEmpty(value.maxItems || 20);
+    countLabel.appendChild(count);
+
+    row.append(enabled, label, countLabel);
+    denisTrendsSettingsEl.appendChild(row);
+  });
+}
+
 function renderMotivationInitialStatus(settings) {
   if (!settings) {
     setMotivationStatus("", "Модель будет использоваться для включенных AI-блоков в составе чека.");
@@ -276,6 +332,7 @@ function applyBootstrap(data) {
   setChecked("#content-calendar", content.showCalendar);
   setChecked("#content-history", content.showHistory);
   setChecked("#content-news", content.showNews);
+  setChecked("#content-denis-trends", content.showDenisTrends);
 
   const weather = data.weather || {};
   setValue("#weather-name", weather.name);
@@ -315,6 +372,7 @@ function applyBootstrap(data) {
   const news = data.news || {};
   setChecked("#news-translate", news.translateTitles);
   renderNewsSources(news, data.newsPresets || []);
+  renderDenisTrendsSettings(data.denisTrends || {});
 
   const receiptSnapshot = data.receiptSnapshot || {};
   setValue("#receipt-snapshot-base-url", receiptSnapshot.baseUrl || defaultReceiptSnapshotBaseURL());
@@ -695,6 +753,52 @@ function validateNewsSettings() {
   }
 }
 
+function validateDenisTrendsSettings() {
+  const errors = [];
+  document.querySelectorAll("[data-denis-trend-period]").forEach(row => {
+    const enabled = row.querySelector("[data-denis-trend-period-enabled]").checked;
+    const countInput = row.querySelector("[data-denis-trend-period-count]");
+    countInput.classList.remove("invalid");
+    countInput.removeAttribute("aria-invalid");
+    if (!enabled) {
+      return;
+    }
+    const raw = countInput.value.trim();
+    const count = Number.parseInt(raw, 10);
+    if (!/^\d+$/.test(raw) || !Number.isFinite(count) || count < 1 || count > 100) {
+      countInput.classList.add("invalid");
+      countInput.setAttribute("aria-invalid", "true");
+      errors.push("Denis Trends " + (row.dataset.denisTrendPeriod || "period") + ": укажи количество от 1 до 100");
+    }
+  });
+  if (errors.length > 0) {
+    throw new Error(errors.join("\n"));
+  }
+}
+
+async function saveDenisTrendsSettings() {
+  validateDenisTrendsSettings();
+  const periods = {};
+  document.querySelectorAll("[data-denis-trend-period]").forEach(row => {
+    const countInput = row.querySelector("[data-denis-trend-period-count]");
+    const count = Number.parseInt(countInput.value, 10);
+    periods[row.dataset.denisTrendPeriod] = {
+      enabled: row.querySelector("[data-denis-trend-period-enabled]").checked,
+      maxItems: Number.isFinite(count) && count > 0 ? count : 20
+    };
+  });
+  const response = await fetch("/api/settings/denis-trends", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ periods })
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.error || "Не удалось сохранить настройки Denis Trends.");
+  }
+  return payload;
+}
+
 async function saveNewsSettings() {
   validateNewsSettings();
   const sources = Array.from(document.querySelectorAll("[data-news-source]")).map(source => {
@@ -879,7 +983,8 @@ function readReceiptContentSettings() {
     showMail: checked("#content-mail"),
     showCalendar: checked("#content-calendar"),
     showHistory: checked("#content-history"),
-    showNews: checked("#content-news")
+    showNews: checked("#content-news"),
+    showDenisTrends: checked("#content-denis-trends")
   };
 }
 
@@ -905,6 +1010,7 @@ async function saveAllSettings() {
   }
   await saveMotivationSettings();
   await saveNewsSettings();
+  await saveDenisTrendsSettings();
   await saveReceiptSnapshotSettings();
   await saveReceiptStyle();
 }
@@ -933,7 +1039,8 @@ function scheduleContentFromSettings(settings) {
     showMail: Boolean(content.showMail),
     showCalendar: Boolean(content.showCalendar),
     showHistory: Boolean(content.showHistory),
-    showNews: Boolean(content.showNews)
+    showNews: Boolean(content.showNews),
+    showDenisTrends: Boolean(content.showDenisTrends)
   };
 }
 
@@ -2560,6 +2667,8 @@ function bindEventListeners() {
   });
   document.querySelector("#news-source-list").addEventListener("input", clearNewsCountValidation);
   document.querySelector("#news-source-list").addEventListener("change", clearNewsCountValidation);
+  document.querySelector("#denis-trends-settings").addEventListener("input", clearNewsCountValidation);
+  document.querySelector("#denis-trends-settings").addEventListener("change", clearNewsCountValidation);
   document.querySelector("#news-translate").addEventListener("input", clearNewsCountValidation);
   document.querySelector("#news-translate").addEventListener("change", clearNewsCountValidation);
   document.querySelector('[data-action="save-schedule"]').addEventListener("click", () => {
@@ -2613,8 +2722,8 @@ function bindEventListeners() {
 
 function clearNewsCountValidation(event) {
   const input = event.target;
-  const row = input.closest("[data-news-source]");
-  const countInput = row?.querySelector("[data-news-count]");
+  const row = input.closest("[data-news-source]") || input.closest("[data-denis-trend-period]");
+  const countInput = row?.querySelector("[data-news-count]") || row?.querySelector("[data-denis-trend-period-count]");
   countInput?.classList.remove("invalid");
   countInput?.removeAttribute("aria-invalid");
 }

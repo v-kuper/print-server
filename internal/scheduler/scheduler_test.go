@@ -111,8 +111,8 @@ func TestRunDueUsesDailyRunPresetContent(t *testing.T) {
 	if job.calls != 0 {
 		t.Fatalf("expected global print not to be called, got %d", job.calls)
 	}
-	if job.contentCalls != 1 {
-		t.Fatalf("expected one content print call, got %d", job.contentCalls)
+	if job.contentAtCalls != 1 || job.contentCalls != 0 {
+		t.Fatalf("expected one scheduled content print call, contentAt=%d content=%d", job.contentAtCalls, job.contentCalls)
 	}
 	if !job.printedContent.ShowWeather || !job.printedContent.ShowTonPortfolio || job.printedContent.ShowMail {
 		t.Fatalf("expected morning preset content, got %#v", job.printedContent)
@@ -158,11 +158,49 @@ func TestRunDueUsesCustomDailyRunContent(t *testing.T) {
 	if !didRun {
 		t.Fatal("expected due run")
 	}
-	if job.contentCalls != 1 {
-		t.Fatalf("expected one content print call, got %d", job.contentCalls)
+	if job.contentAtCalls != 1 || job.contentCalls != 0 {
+		t.Fatalf("expected one scheduled content print call, contentAt=%d content=%d", job.contentAtCalls, job.contentCalls)
 	}
 	if job.printedContent != custom {
 		t.Fatalf("expected custom content %#v, got %#v", custom, job.printedContent)
+	}
+}
+
+func TestRunDuePassesScheduledTimeToContentJob(t *testing.T) {
+	location, err := time.LoadLocation(schedule.DefaultTimezone)
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	custom := receipt.ContentSettings{Configured: true, ShowDenisTrends: true}
+	scheduledAt := time.Date(2026, 5, 25, 7, 0, 0, 0, location)
+	now := time.Date(2026, 5, 25, 18, 30, 0, 0, location)
+	store := &fakeStore{
+		settings: schedule.Settings{
+			Enabled:         true,
+			Mode:            schedule.ModeDailyTimes,
+			IntervalMinutes: 15,
+			Runs: []schedule.Run{
+				{Time: "07:00", Profile: schedule.ProfileCustom, Content: &custom},
+			},
+			Timezone: schedule.DefaultTimezone,
+		},
+		state: schedule.State{NextRunAt: scheduledAt},
+	}
+	job := &fakeJob{}
+	service := NewService(store, job, func() time.Time { return now })
+
+	didRun, err := service.RunDue(context.Background())
+	if err != nil {
+		t.Fatalf("run due: %v", err)
+	}
+	if !didRun {
+		t.Fatal("expected due run")
+	}
+	if job.contentAtCalls != 1 || job.contentCalls != 0 {
+		t.Fatalf("expected scheduled content print call, contentAt=%d content=%d", job.contentAtCalls, job.contentCalls)
+	}
+	if !job.scheduledAt.Equal(scheduledAt) {
+		t.Fatalf("expected scheduled time %s, got %s", scheduledAt, job.scheduledAt)
 	}
 }
 
@@ -248,8 +286,8 @@ func TestRunDueUsesIntervalContentWhenConfigured(t *testing.T) {
 	if !didRun {
 		t.Fatal("expected interval due run")
 	}
-	if job.calls != 0 || job.contentCalls != 1 {
-		t.Fatalf("expected interval content print, got calls=%d contentCalls=%d", job.calls, job.contentCalls)
+	if job.calls != 0 || job.contentAtCalls != 1 || job.contentCalls != 0 {
+		t.Fatalf("expected interval scheduled content print, got calls=%d contentAt=%d content=%d", job.calls, job.contentAtCalls, job.contentCalls)
 	}
 	if job.printedContent != content {
 		t.Fatalf("expected interval content %#v, got %#v", content, job.printedContent)
@@ -344,7 +382,9 @@ func (s *fakeStore) SaveScheduleState(state schedule.State) error {
 type fakeJob struct {
 	calls          int
 	contentCalls   int
+	contentAtCalls int
 	printedContent receipt.ContentSettings
+	scheduledAt    time.Time
 	err            error
 	started        chan struct{}
 	release        chan struct{}
@@ -359,8 +399,25 @@ func (j *fakeJob) PrintDailyReceipt(context.Context) error {
 	return j.err
 }
 
+func (j *fakeJob) PrintDailyReceiptAt(_ context.Context, scheduledAt time.Time) error {
+	j.calls++
+	j.scheduledAt = scheduledAt
+	if j.started != nil {
+		close(j.started)
+		<-j.release
+	}
+	return j.err
+}
+
 func (j *fakeJob) PrintDailyReceiptWithContent(_ context.Context, content receipt.ContentSettings) error {
 	j.contentCalls++
 	j.printedContent = content
+	return j.err
+}
+
+func (j *fakeJob) PrintDailyReceiptWithContentAt(_ context.Context, content receipt.ContentSettings, scheduledAt time.Time) error {
+	j.contentAtCalls++
+	j.printedContent = content
+	j.scheduledAt = scheduledAt
 	return j.err
 }

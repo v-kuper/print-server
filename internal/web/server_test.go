@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"atol-server/internal/articlesummary"
+	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
 	"atol-server/internal/motivation"
@@ -1342,6 +1344,116 @@ func TestSnapshotPageRendersPublishedSnapshot(t *testing.T) {
 	}
 }
 
+func TestSnapshotSummaryEndpointSummarizesSavedLineLink(t *testing.T) {
+	store := &fakeStore{motivationSettings: motivation.Settings{Configured: true, Enabled: true, BaseURL: "http://ollama.local", Model: "summary-model"}}
+	snapshotStore := &fakeReceiptSnapshotStore{snapshots: map[string]receiptsnapshot.Snapshot{
+		"snapshot-1": {
+			ID:     "snapshot-1",
+			Status: receiptsnapshot.StatusPublished,
+			ReceiptLines: []receiptsnapshot.ReceiptLine{{
+				Text: "News title",
+				Link: "https://example.com/news",
+			}},
+		},
+	}}
+	provider := &fakeArticleSummaryProvider{result: articlesummary.Result{
+		URL:     "https://example.com/news",
+		Title:   "Article title",
+		Summary: "Короткое описание материала.",
+		Bullets: []string{"Первый тезис", "Второй тезис"},
+	}}
+	server := NewServer(store, &fakePrinter{}, fixedClock, WithReceiptSnapshotStore(snapshotStore), WithArticleSummaryProvider(provider))
+
+	request := httptest.NewRequest(http.MethodPost, "/api/snapshots/snapshot-1/lines/0/summary", bytes.NewBufferString(`{"url":"http://localhost/admin"}`))
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if provider.calls != 1 || provider.url != "https://example.com/news" {
+		t.Fatalf("expected provider to receive saved line URL, calls=%d url=%q", provider.calls, provider.url)
+	}
+	if snapshotStore.savedSummary.URL != "https://example.com/news" || snapshotStore.savedSummary.Summary == "" {
+		t.Fatalf("expected summary to be cached, got %#v", snapshotStore.savedSummary)
+	}
+	var payload snapshotSummaryResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.OK || payload.Cached || payload.URL != "https://example.com/news" || len(payload.Bullets) != 2 {
+		t.Fatalf("unexpected response: %#v", payload)
+	}
+}
+
+func TestSnapshotSummaryEndpointReturnsCachedSummaryWithoutModelCall(t *testing.T) {
+	cached := receiptsnapshot.Summary{
+		SnapshotID:  "snapshot-1",
+		LineIndex:   0,
+		URL:         "https://example.com/news",
+		Title:       "Cached title",
+		Summary:     "Сохраненное описание.",
+		Bullets:     []string{"Сохраненный тезис"},
+		GeneratedAt: fixedClock(),
+	}
+	snapshotStore := &fakeReceiptSnapshotStore{
+		snapshots: map[string]receiptsnapshot.Snapshot{
+			"snapshot-1": {ID: "snapshot-1", Status: receiptsnapshot.StatusPublished, ReceiptLines: []receiptsnapshot.ReceiptLine{{Text: "News", Link: "https://example.com/news"}}},
+		},
+		summaries: map[string]receiptsnapshot.Summary{"snapshot-1|0|https://example.com/news": cached},
+	}
+	provider := &fakeArticleSummaryProvider{}
+	server := NewServer(&fakeStore{}, &fakePrinter{}, fixedClock, WithReceiptSnapshotStore(snapshotStore), WithArticleSummaryProvider(provider))
+
+	request := httptest.NewRequest(http.MethodPost, "/api/snapshots/snapshot-1/lines/0/summary", nil)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if provider.calls != 0 {
+		t.Fatalf("expected cached summary to skip provider, calls=%d", provider.calls)
+	}
+	var payload snapshotSummaryResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.Cached || payload.Summary != cached.Summary || payload.GeneratedAt == nil {
+		t.Fatalf("expected cached response, got %#v", payload)
+	}
+}
+
+func TestSnapshotSummaryEndpointRejectsMissingLineLinkAndMissingSnapshot(t *testing.T) {
+	snapshotStore := &fakeReceiptSnapshotStore{snapshots: map[string]receiptsnapshot.Snapshot{
+		"snapshot-1": {ID: "snapshot-1", Status: receiptsnapshot.StatusPublished, ReceiptLines: []receiptsnapshot.ReceiptLine{{Text: "No link"}}},
+	}}
+	server := NewServer(&fakeStore{}, &fakePrinter{}, fixedClock, WithReceiptSnapshotStore(snapshotStore), WithArticleSummaryProvider(&fakeArticleSummaryProvider{}))
+
+	for _, test := range []struct {
+		name string
+		path string
+		code int
+	}{
+		{name: "line without link", path: "/api/snapshots/snapshot-1/lines/0/summary", code: http.StatusBadRequest},
+		{name: "bad line index", path: "/api/snapshots/snapshot-1/lines/3/summary", code: http.StatusBadRequest},
+		{name: "missing snapshot", path: "/api/snapshots/missing/lines/0/summary", code: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.path, nil)
+			response := httptest.NewRecorder()
+
+			server.Routes().ServeHTTP(response, request)
+
+			if response.Code != test.code {
+				t.Fatalf("expected %d, got %d: %s", test.code, response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestSnapshotPageReturnsGoneForFailedSnapshot(t *testing.T) {
 	snapshotStore := &fakeReceiptSnapshotStore{snapshots: map[string]receiptsnapshot.Snapshot{
 		"snapshot-1": {ID: "snapshot-1", Status: receiptsnapshot.StatusFailed, Error: "paper empty"},
@@ -1660,6 +1772,7 @@ type fakeStore struct {
 	location           weather.Location
 	portfolio          finance.TonPortfolio
 	newsSettings       news.Settings
+	denisTrends        denistrends.Settings
 	receiptStyle       receipt.StyleSettings
 	receiptContent     receipt.ContentSettings
 	snapshotSettings   receiptsnapshot.Settings
@@ -1726,6 +1839,21 @@ func (s *fakeStore) SaveNews(settings news.Settings) error {
 		return err
 	}
 	s.newsSettings = settings.Normalized()
+	return nil
+}
+
+func (s *fakeStore) LoadDenisTrends() (denistrends.Settings, error) {
+	if len(s.denisTrends.Periods) == 0 && len(s.denisTrends.Sources) == 0 {
+		return denistrends.DefaultSettings(), nil
+	}
+	return s.denisTrends.Normalized(), nil
+}
+
+func (s *fakeStore) SaveDenisTrends(settings denistrends.Settings) error {
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	s.denisTrends = settings.Normalized()
 	return nil
 }
 
@@ -1835,6 +1963,8 @@ type fakePrintJob struct {
 
 type fakeReceiptSnapshotStore struct {
 	snapshots           map[string]receiptsnapshot.Snapshot
+	summaries           map[string]receiptsnapshot.Summary
+	savedSummary        receiptsnapshot.SummaryInput
 	createdInput        receiptsnapshot.CreateInput
 	finalizedID         string
 	finalizedLines      []receiptsnapshot.ReceiptLine
@@ -1872,6 +2002,39 @@ func (s *fakeReceiptSnapshotStore) Load(_ context.Context, id string) (receiptsn
 		return receiptsnapshot.Snapshot{}, receiptsnapshot.ErrNotFound
 	}
 	return snapshot, nil
+}
+
+func (s *fakeReceiptSnapshotStore) LoadSummary(_ context.Context, snapshotID string, lineIndex int, url string) (receiptsnapshot.Summary, error) {
+	if s.summaries == nil {
+		return receiptsnapshot.Summary{}, receiptsnapshot.ErrSummaryNotFound
+	}
+	summary, ok := s.summaries[snapshotSummaryKey(snapshotID, lineIndex, url)]
+	if !ok {
+		return receiptsnapshot.Summary{}, receiptsnapshot.ErrSummaryNotFound
+	}
+	return summary, nil
+}
+
+func (s *fakeReceiptSnapshotStore) SaveSummary(_ context.Context, input receiptsnapshot.SummaryInput) error {
+	s.savedSummary = input
+	return nil
+}
+
+func snapshotSummaryKey(snapshotID string, lineIndex int, url string) string {
+	return snapshotID + "|" + strconv.Itoa(lineIndex) + "|" + url
+}
+
+type fakeArticleSummaryProvider struct {
+	result articlesummary.Result
+	err    error
+	calls  int
+	url    string
+}
+
+func (p *fakeArticleSummaryProvider) Summarize(_ context.Context, _ motivation.Settings, url string) (articlesummary.Result, error) {
+	p.calls++
+	p.url = url
+	return p.result, p.err
 }
 
 type fakeDailyReceiptService struct {

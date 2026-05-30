@@ -24,6 +24,7 @@ type snapshotPageData struct {
 }
 
 type snapshotReceiptLine struct {
+	LineIndex          int
 	Text               string
 	Link               string
 	QRCode             string
@@ -54,21 +55,26 @@ func RenderSnapshotHTML(snapshot Snapshot) ([]byte, error) {
 }
 
 func prepareReceiptLines(snapshot Snapshot) []snapshotReceiptLine {
-	lines := snapshot.ReceiptLines
-	if len(lines) == 0 {
-		lines = fallbackNewsReceiptLines(snapshot.NewsItems)
-	}
+	lines := ReceiptLinesForSnapshot(snapshot)
 	result := make([]snapshotReceiptLine, 0, len(lines))
-	for _, line := range lines {
-		result = append(result, prepareReceiptLine(line))
+	for index, line := range lines {
+		result = append(result, prepareReceiptLine(index, line))
 	}
 	return result
 }
 
-func prepareReceiptLine(line ReceiptLine) snapshotReceiptLine {
+func ReceiptLinesForSnapshot(snapshot Snapshot) []ReceiptLine {
+	if len(snapshot.ReceiptLines) > 0 {
+		return snapshot.ReceiptLines
+	}
+	return fallbackNewsReceiptLines(snapshot.NewsItems)
+}
+
+func prepareReceiptLine(index int, line ReceiptLine) snapshotReceiptLine {
 	line.Text = strings.TrimRight(line.Text, "\r\n")
 	line = normalizeReceiptLine(line)
 	result := snapshotReceiptLine{
+		LineIndex: index,
 		Text:      line.Text,
 		Link:      safeHTTPURL(line.Link),
 		QRCode:    strings.TrimSpace(line.QRCode),
@@ -315,6 +321,129 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       text-decoration: underline;
       text-underline-offset: 2px;
     }
+    .receipt-link-row {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      max-width: 100%;
+      min-width: 0;
+    }
+    .receipt-link-row .receipt-line-text {
+      min-width: 0;
+      max-width: calc(100% - 28px);
+    }
+    .summary-button {
+      appearance: none;
+      border: 1px solid #cfc5b2;
+      background: #fffaf1;
+      color: #302719;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      padding: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .summary-button:hover,
+    .summary-button:focus {
+      border-color: #8f7a55;
+      background: #fff1d2;
+      outline: none;
+    }
+    .summary-modal[hidden] { display: none; }
+    .summary-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+    }
+    .summary-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(27, 22, 16, 0.36);
+    }
+    .summary-dialog {
+      position: relative;
+      width: min(460px, 100%);
+      max-height: min(78vh, 680px);
+      overflow: auto;
+      border: 1px solid #d8cdb8;
+      border-radius: 8px;
+      background: #fffdf8;
+      box-shadow: 0 18px 45px rgba(30, 24, 14, 0.24);
+      padding: 18px 18px 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      white-space: normal;
+    }
+    .summary-close {
+      appearance: none;
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 30px;
+      height: 30px;
+      border: 1px solid transparent;
+      border-radius: 50%;
+      background: transparent;
+      color: #41382b;
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .summary-close:hover,
+    .summary-close:focus {
+      border-color: #d8cdb8;
+      background: #f8f0df;
+      outline: none;
+    }
+    .summary-source {
+      margin: 0 34px 4px 0;
+      color: #6d6251;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .summary-title {
+      margin: 0 34px 10px 0;
+      color: #17130d;
+      font-size: 18px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .summary-status {
+      margin: 0 0 10px;
+      color: #5a4c37;
+      font-size: 14px;
+    }
+    .summary-status.error { color: #8a241f; }
+    .summary-text {
+      margin: 0 0 10px;
+      color: #211b12;
+      font-size: 15px;
+      line-height: 1.45;
+    }
+    .summary-bullets {
+      margin: 0 0 14px 18px;
+      padding: 0;
+      color: #211b12;
+      font-size: 15px;
+      line-height: 1.45;
+    }
+    .summary-original {
+      color: #5d4619;
+      font-size: 14px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
     .align-left   { text-align: left;   justify-content: flex-start; }
     .align-center { text-align: center; justify-content: center;     }
     .align-right  { text-align: right;  justify-content: flex-end;   }
@@ -356,10 +485,116 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
   </style>
 </head>
 <body>
-  <main>
+  <main data-snapshot-id="{{.ID}}">
     <section class="receipt-preview">
-      <article class="receipt-paper" style="--paper-chars: {{.PaperChars}};">{{- if .PendingNotice -}}<p class="notice">Этот слепок создан, но печать еще не подтверждена.</p>{{- end -}}{{- range .Lines -}}{{- if .QRCode -}}<div class="receipt-line receipt-qr-line align-{{.Alignment}} role-{{.Role}}">{{- if .QRDataURL -}}<img class="receipt-qr" src="{{.QRDataURL}}" alt="{{.QRCode}}">{{- else -}}<span class="receipt-line-text">{{.QRCode}}</span>{{- end -}}</div>{{- else if .ImageSrc -}}<div class="receipt-line receipt-image-line align-{{.Alignment}} role-{{.Role}}" style="--image-line-height: {{.ImageLineHeight}}px;"><img class="receipt-image" src="{{.ImageSrc}}" alt="" style="width: {{.ImagePreviewWidth}}px; height: {{.ImagePreviewHeight}}px;"></div>{{- else -}}<div class="receipt-line align-{{.Alignment}} role-{{.Role}}" style="--line-size: {{.LineSize}}px; --line-scale-x: {{.ScaleX}}; --line-scale-y: {{.ScaleY}};">{{- if .Link -}}<a class="receipt-line-text" href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</a>{{- else -}}<span class="receipt-line-text">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</span>{{- end -}}</div>{{- end -}}{{- end -}}</article>
+      <article class="receipt-paper" style="--paper-chars: {{.PaperChars}};">{{- if .PendingNotice -}}<p class="notice">Этот слепок создан, но печать еще не подтверждена.</p>{{- end -}}{{- range .Lines -}}{{- if .QRCode -}}<div class="receipt-line receipt-qr-line align-{{.Alignment}} role-{{.Role}}">{{- if .QRDataURL -}}<img class="receipt-qr" src="{{.QRDataURL}}" alt="{{.QRCode}}">{{- else -}}<span class="receipt-line-text">{{.QRCode}}</span>{{- end -}}</div>{{- else if .ImageSrc -}}<div class="receipt-line receipt-image-line align-{{.Alignment}} role-{{.Role}}" style="--image-line-height: {{.ImageLineHeight}}px;"><img class="receipt-image" src="{{.ImageSrc}}" alt="" style="width: {{.ImagePreviewWidth}}px; height: {{.ImagePreviewHeight}}px;"></div>{{- else -}}<div class="receipt-line align-{{.Alignment}} role-{{.Role}}" style="--line-size: {{.LineSize}}px; --line-scale-x: {{.ScaleX}}; --line-scale-y: {{.ScaleY}};">{{- if .Link -}}<span class="receipt-link-row"><a class="receipt-line-text" href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</a><button class="summary-button" type="button" data-summary-button data-summary-line-index="{{.LineIndex}}" title="Сделать summary" aria-label="Сделать summary"><span aria-hidden="true">✦</span></button></span>{{- else -}}<span class="receipt-line-text">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</span>{{- end -}}</div>{{- end -}}{{- end -}}</article>
     </section>
+    <div class="summary-modal" data-summary-modal hidden>
+      <div class="summary-backdrop" data-summary-close></div>
+      <section class="summary-dialog" role="dialog" aria-modal="true" aria-labelledby="summary-title">
+        <button class="summary-close" type="button" data-summary-close aria-label="Закрыть">×</button>
+        <p class="summary-source" data-summary-source></p>
+        <h2 class="summary-title" id="summary-title" data-summary-title>Кратко</h2>
+        <p class="summary-status" data-summary-status></p>
+        <p class="summary-text" data-summary-text></p>
+        <ul class="summary-bullets" data-summary-bullets></ul>
+        <a class="summary-original" data-summary-original target="_blank" rel="noopener noreferrer">Открыть оригинал</a>
+      </section>
+    </div>
   </main>
+  <script>
+    (() => {
+      const root = document.querySelector("[data-snapshot-id]");
+      const modal = document.querySelector("[data-summary-modal]");
+      if (!root || !modal) return;
+      const snapshotID = root.dataset.snapshotId || "";
+      const status = modal.querySelector("[data-summary-status]");
+      const source = modal.querySelector("[data-summary-source]");
+      const title = modal.querySelector("[data-summary-title]");
+      const text = modal.querySelector("[data-summary-text]");
+      const bullets = modal.querySelector("[data-summary-bullets]");
+      const original = modal.querySelector("[data-summary-original]");
+
+      function setOpen(open) {
+        modal.hidden = !open;
+        document.body.style.overflow = open ? "hidden" : "";
+      }
+
+      function resetModal(lineText) {
+        title.textContent = lineText || "Кратко";
+        source.textContent = "";
+        status.textContent = "Читаю источник...";
+        status.classList.remove("error");
+        text.textContent = "";
+        bullets.replaceChildren();
+        original.hidden = true;
+        original.removeAttribute("href");
+      }
+
+      function renderSummary(payload) {
+        title.textContent = payload.title || "Кратко";
+        source.textContent = payload.cached ? "Сохраненное summary" : "Новое summary";
+        status.textContent = "";
+        text.textContent = payload.summary || "";
+        bullets.replaceChildren();
+        for (const item of payload.bullets || []) {
+          const li = document.createElement("li");
+          li.textContent = item;
+          bullets.appendChild(li);
+        }
+        if (payload.url) {
+          original.href = payload.url;
+          original.hidden = false;
+        }
+      }
+
+      function renderError(message, href) {
+        status.textContent = message || "Не удалось собрать summary. Открой оригинал.";
+        status.classList.add("error");
+        text.textContent = "";
+        bullets.replaceChildren();
+        if (href) {
+          original.href = href;
+          original.hidden = false;
+        }
+      }
+
+      async function loadSummary(button) {
+        const lineIndex = button.dataset.summaryLineIndex;
+        const line = button.closest(".receipt-line");
+        const link = line ? line.querySelector("a.receipt-line-text") : null;
+        resetModal(link ? link.textContent.trim() : "");
+        if (link && link.href) {
+          original.href = link.href;
+          original.hidden = false;
+        }
+        setOpen(true);
+        try {
+          const response = await fetch("/api/snapshots/" + encodeURIComponent(snapshotID) + "/lines/" + encodeURIComponent(lineIndex) + "/summary", { method: "POST" });
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) {
+            throw new Error(payload.error || "Не удалось собрать summary.");
+          }
+          renderSummary(payload);
+        } catch (error) {
+          renderError(error && error.message ? error.message : "Не удалось собрать summary.", link ? link.href : "");
+        }
+      }
+
+      document.querySelectorAll("[data-summary-button]").forEach(button => {
+        button.addEventListener("click", event => {
+          event.preventDefault();
+          event.stopPropagation();
+          loadSummary(button);
+        });
+      });
+      modal.querySelectorAll("[data-summary-close]").forEach(button => {
+        button.addEventListener("click", () => setOpen(false));
+      });
+      document.addEventListener("keydown", event => {
+        if (event.key === "Escape") setOpen(false);
+      });
+    })();
+  </script>
 </body>
 </html>`))
