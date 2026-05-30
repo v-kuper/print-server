@@ -316,8 +316,9 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       max-width: calc(100% / var(--line-scale-x));
       font-size: var(--line-size);
       line-height: 1.22;
-      white-space: nowrap;
-      overflow: hidden;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      overflow: visible;
       transform: scale(var(--line-scale-x), var(--line-scale-y));
       transform-origin: center center;
     }
