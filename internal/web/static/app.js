@@ -48,6 +48,9 @@ const fallbackFontMetrics = [
 ];
 let fontMetrics = new Map(fallbackFontMetrics.map(metric => [metric.font, metric]));
 let activeLoadingToast = null;
+let bootstrapNewsSettings = { translateTitles: true, sources: [] };
+let bootstrapDenisTrendsSettings = { periods: {} };
+let bootstrapNewsPresets = [];
 const scheduleContentOptions = [
   { key: "showWeather",         label: "Погода",          group: "Основное" },
   { key: "showWeatherAdvice",   label: "AI-совет",        group: "Основное" },
@@ -70,7 +73,9 @@ const denisTrendPeriods = [
 const denisTrendModeOptions = [
   { key: "auto", label: "Авто" },
   { key: "now", label: "Top now" },
-  { key: "day", label: "Top day" }
+  { key: "day", label: "Top day" },
+  { key: "week", label: "Top week" },
+  { key: "month", label: "Top month" }
 ];
 
 
@@ -198,8 +203,25 @@ function renderScheduleContentGroups(container, content, keyAttribute) {
       checkbox.checked = Boolean(customContent[option.key]);
       label.append(checkbox, document.createTextNode(option.label));
       col.appendChild(label);
+      if (option.key === "showNews") {
+        const panel = renderScheduleNewsSettings(customContent.newsSettings);
+        panel.hidden = !checkbox.checked;
+        checkbox.addEventListener("change", () => {
+          panel.hidden = !checkbox.checked;
+        });
+        col.appendChild(panel);
+      }
       if (option.key === "showDenisTrends") {
-        col.appendChild(renderDenisTrendsModeControl(customContent.denisTrendsMode, keyAttribute));
+        const modeControl = renderDenisTrendsModeControl(customContent.denisTrendsMode, keyAttribute);
+        const panel = renderScheduleDenisTrendsSettings(customContent.denisTrendsSettings);
+        modeControl.hidden = !checkbox.checked;
+        panel.hidden = !checkbox.checked;
+        checkbox.addEventListener("change", () => {
+          const hidden = !checkbox.checked;
+          modeControl.hidden = hidden;
+          panel.hidden = hidden;
+        });
+        col.append(modeControl, panel);
       }
     }
     container.appendChild(col);
@@ -226,6 +248,143 @@ function renderDenisTrendsModeControl(value, keyAttribute) {
   select.value = denisTrendsMode(value);
   label.appendChild(select);
   return label;
+}
+
+function newsPresetLabel(preset) {
+  const match = (bootstrapNewsPresets || []).find(item => item.preset === preset);
+  return (match && match.displayName) || preset || "RSS";
+}
+
+function cloneNewsSettings(settings) {
+  const source = settings || {};
+  const translateTitles = source.translateTitles === undefined || source.translateTitles === null
+    ? true
+    : Boolean(source.translateTitles);
+  const sources = Array.isArray(source.sources) ? source.sources : [];
+  return {
+    translateTitles,
+    sources: sources.map(item => {
+      const count = Number.parseInt(item.maxItems, 10);
+      return {
+        preset: item.preset || "",
+        enabled: Boolean(item.enabled),
+        feedUrl: item.feedUrl || "",
+        maxItems: Number.isFinite(count) && count > 0 ? count : 1
+      };
+    })
+  };
+}
+
+function cloneDenisTrendsSettings(settings) {
+  const source = settings || {};
+  const periods = source.periods || {};
+  const result = {};
+  for (const period of denisTrendPeriods) {
+    const value = periods[period.key] || {};
+    const count = Number.parseInt(value.maxItems, 10);
+    result[period.key] = {
+      enabled: value.enabled === undefined ? true : Boolean(value.enabled),
+      maxItems: Number.isFinite(count) && count > 0 ? count : 20
+    };
+  }
+  return { periods: result };
+}
+
+function renderScheduleNewsSettings(settings) {
+  const normalized = cloneNewsSettings(settings || bootstrapNewsSettings);
+  const panel = document.createElement("div");
+  panel.className = "schedule-source-settings";
+  panel.dataset.scheduleNewsSettings = "";
+
+  const translateLabel = document.createElement("label");
+  translateLabel.className = "toggle-label";
+  const translate = document.createElement("input");
+  translate.type = "checkbox";
+  translate.dataset.scheduleNewsTranslate = "";
+  translate.checked = normalized.translateTitles;
+  translateLabel.append(translate, document.createTextNode("Переводить английские заголовки через AI"));
+  panel.appendChild(translateLabel);
+
+  for (const source of normalized.sources) {
+    const row = document.createElement("div");
+    row.className = "news-source schedule-source-row";
+    row.dataset.scheduleNewsSource = "";
+
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.dataset.scheduleNewsEnabled = "";
+    enabled.checked = Boolean(source.enabled);
+
+    const preset = document.createElement("input");
+    preset.type = "hidden";
+    preset.dataset.scheduleNewsPreset = "";
+    preset.value = source.preset || "";
+
+    const urlLabel = document.createElement("label");
+    urlLabel.textContent = newsPresetLabel(source.preset);
+    const url = document.createElement("input");
+    url.dataset.scheduleNewsUrlVisible = "";
+    url.autocomplete = "off";
+    url.value = source.feedUrl || "";
+    urlLabel.appendChild(url);
+
+    const countLabel = document.createElement("label");
+    countLabel.textContent = "Кол-во";
+    const count = document.createElement("input");
+    count.dataset.scheduleNewsCount = "";
+    count.autocomplete = "off";
+    count.inputMode = "numeric";
+    count.min = "1";
+    count.max = "100";
+    count.value = valueOrEmpty(source.maxItems || 1);
+    countLabel.appendChild(count);
+
+    row.append(enabled, preset, urlLabel, countLabel);
+    panel.appendChild(row);
+  }
+  return panel;
+}
+
+function renderScheduleDenisTrendsSettings(settings) {
+  const normalized = cloneDenisTrendsSettings(settings || bootstrapDenisTrendsSettings);
+  const panel = document.createElement("div");
+  panel.className = "schedule-source-settings";
+  panel.dataset.scheduleDenisTrendsSettings = "";
+
+  const hint = document.createElement("p");
+  hint.className = "helper-text";
+  hint.textContent = "Авто: до 12:00 Top now, после 12:00 Top day; воскресенье и конец месяца добавляют week/month. Forced mode печатает только выбранный период.";
+  panel.appendChild(hint);
+
+  for (const period of denisTrendPeriods) {
+    const value = normalized.periods[period.key] || {};
+    const row = document.createElement("div");
+    row.className = "news-source schedule-source-row";
+    row.dataset.scheduleDenisTrendPeriod = period.key;
+
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.dataset.scheduleDenisTrendPeriodEnabled = "";
+    enabled.checked = Boolean(value.enabled);
+
+    const label = document.createElement("span");
+    label.textContent = period.label;
+
+    const countLabel = document.createElement("label");
+    countLabel.textContent = "Кол-во";
+    const count = document.createElement("input");
+    count.dataset.scheduleDenisTrendPeriodCount = "";
+    count.autocomplete = "off";
+    count.inputMode = "numeric";
+    count.min = "1";
+    count.max = "100";
+    count.value = valueOrEmpty(value.maxItems || 20);
+    countLabel.appendChild(count);
+
+    row.append(enabled, label, countLabel);
+    panel.appendChild(row);
+  }
+  return panel;
 }
 
 function renderIntervalContent(content) {
@@ -401,6 +560,9 @@ function applyBootstrap(data) {
   initTextPrintBlocks();
 
   const news = data.news || {};
+  bootstrapNewsSettings = cloneNewsSettings(news);
+  bootstrapDenisTrendsSettings = cloneDenisTrendsSettings(data.denisTrends || {});
+  bootstrapNewsPresets = data.newsPresets || [];
   setChecked("#news-translate", news.translateTitles);
   renderNewsSources(news, data.newsPresets || []);
   renderDenisTrendsSettings(data.denisTrends || {});
@@ -807,6 +969,50 @@ function validateDenisTrendsSettings() {
   }
 }
 
+function validateScheduleNestedSettings() {
+  const errors = [];
+  const checkCount = (input, label) => {
+    if (!input) {
+      return;
+    }
+    input.classList.remove("invalid");
+    input.removeAttribute("aria-invalid");
+    const raw = input.value.trim();
+    const count = Number.parseInt(raw, 10);
+    if (!/^\d+$/.test(raw) || !Number.isFinite(count) || count < 1 || count > 100) {
+      input.classList.add("invalid");
+      input.setAttribute("aria-invalid", "true");
+      errors.push(label + ": укажи количество от 1 до 100");
+    }
+  };
+  const validateContainer = (container, label) => {
+    if (!container) {
+      return;
+    }
+    container.querySelectorAll("[data-schedule-news-source]").forEach(row => {
+      if (!row.querySelector("[data-schedule-news-enabled]")?.checked) {
+        return;
+      }
+      const name = row.querySelector("label")?.childNodes[0]?.textContent?.trim() || "RSS";
+      checkCount(row.querySelector("[data-schedule-news-count]"), label + " · " + name);
+    });
+    container.querySelectorAll("[data-schedule-denis-trend-period]").forEach(row => {
+      if (!row.querySelector("[data-schedule-denis-trend-period-enabled]")?.checked) {
+        return;
+      }
+      checkCount(row.querySelector("[data-schedule-denis-trend-period-count]"), label + " · Denis Trends " + (row.dataset.scheduleDenisTrendPeriod || "period"));
+    });
+  };
+  validateContainer(document.querySelector("#schedule-interval-content"), "Интервал");
+  document.querySelectorAll("[data-schedule-time-row]").forEach(row => {
+    const time = row.querySelector("[data-schedule-time]")?.value || "время";
+    validateContainer(row, "Запуск " + time);
+  });
+  if (errors.length > 0) {
+    throw new Error(errors.join("\n"));
+  }
+}
+
 async function saveDenisTrendsSettings() {
   validateDenisTrendsSettings();
   const periods = {};
@@ -1073,12 +1279,14 @@ function scheduleContentFromSettings(settings) {
     showHistory: Boolean(content.showHistory),
     showNews: Boolean(content.showNews),
     showDenisTrends: Boolean(content.showDenisTrends),
-    denisTrendsMode: denisTrendsMode(content.denisTrendsMode)
+    denisTrendsMode: denisTrendsMode(content.denisTrendsMode),
+    newsSettings: cloneNewsSettings(content.newsSettings || bootstrapNewsSettings),
+    denisTrendsSettings: cloneDenisTrendsSettings(content.denisTrendsSettings || bootstrapDenisTrendsSettings)
   };
 }
 
 function denisTrendsMode(value) {
-  if (value === "now" || value === "day") {
+  if (value === "now" || value === "day" || value === "week" || value === "month") {
     return value;
   }
   return "auto";
@@ -1103,6 +1311,8 @@ function scheduleRowContent(row) {
     content[input.dataset.scheduleContentKey] = input.checked;
   });
   content.denisTrendsMode = row.querySelector("[data-schedule-denis-trends-mode]")?.value || "auto";
+  content.newsSettings = readScheduleNewsSettings(row);
+  content.denisTrendsSettings = readScheduleDenisTrendsSettings(row);
   return scheduleContentFromSettings(content);
 }
 
@@ -1112,7 +1322,46 @@ function readIntervalContentSettings() {
     content[input.dataset.intervalContentKey] = input.checked;
   });
   content.denisTrendsMode = document.querySelector("[data-interval-denis-trends-mode]")?.value || "auto";
+  const container = document.querySelector("#schedule-interval-content");
+  content.newsSettings = readScheduleNewsSettings(container);
+  content.denisTrendsSettings = readScheduleDenisTrendsSettings(container);
   return scheduleContentFromSettings(content);
+}
+
+function readScheduleNewsSettings(container) {
+  const panel = container?.querySelector("[data-schedule-news-settings]");
+  if (!panel) {
+    return cloneNewsSettings(bootstrapNewsSettings);
+  }
+  const sources = Array.from(panel.querySelectorAll("[data-schedule-news-source]")).map(row => {
+    const count = Number.parseInt(row.querySelector("[data-schedule-news-count]")?.value, 10);
+    return {
+      preset: row.querySelector("[data-schedule-news-preset]")?.value || "",
+      enabled: Boolean(row.querySelector("[data-schedule-news-enabled]")?.checked),
+      feedUrl: row.querySelector("[data-schedule-news-url-visible]")?.value || "",
+      maxItems: Number.isFinite(count) && count > 0 ? count : 1
+    };
+  });
+  return {
+    translateTitles: Boolean(panel.querySelector("[data-schedule-news-translate]")?.checked),
+    sources
+  };
+}
+
+function readScheduleDenisTrendsSettings(container) {
+  const panel = container?.querySelector("[data-schedule-denis-trends-settings]");
+  if (!panel) {
+    return cloneDenisTrendsSettings(bootstrapDenisTrendsSettings);
+  }
+  const periods = {};
+  panel.querySelectorAll("[data-schedule-denis-trend-period]").forEach(row => {
+    const count = Number.parseInt(row.querySelector("[data-schedule-denis-trend-period-count]")?.value, 10);
+    periods[row.dataset.scheduleDenisTrendPeriod] = {
+      enabled: Boolean(row.querySelector("[data-schedule-denis-trend-period-enabled]")?.checked),
+      maxItems: Number.isFinite(count) && count > 0 ? count : 20
+    };
+  });
+  return { periods };
 }
 
 function updateScheduleRowSummary(row) {
@@ -1234,7 +1483,7 @@ async function saveScheduleSettings() {
   setBusy(true);
   setStatus("", "Сохраняю расписание...");
   try {
-    await saveAllSettings();
+    validateScheduleNestedSettings();
     const response = await fetch("/api/settings/schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2722,6 +2971,9 @@ function bindEventListeners() {
   document.querySelector('[data-action="add-schedule-time"]').addEventListener("click", () => {
     addScheduleTime("");
   });
+  document.querySelector("#schedule-interval-content").addEventListener("input", clearNewsCountValidation);
+  document.querySelector("#schedule-interval-content").addEventListener("change", clearNewsCountValidation);
+  document.querySelector("#schedule-time-list").addEventListener("input", clearNewsCountValidation);
   document.querySelector("#schedule-time-list").addEventListener("click", event => {
     const button = event.target.closest('[data-action="remove-schedule-time"]');
     if (!button) {
@@ -2736,6 +2988,7 @@ function bindEventListeners() {
     }
   });
   document.querySelector("#schedule-time-list").addEventListener("change", event => {
+    clearNewsCountValidation(event);
     const row = event.target.closest("[data-schedule-time-row]");
     if (row && event.target.matches("[data-schedule-content-key]")) {
       updateScheduleRowSummary(row);
@@ -2764,8 +3017,14 @@ function bindEventListeners() {
 
 function clearNewsCountValidation(event) {
   const input = event.target;
-  const row = input.closest("[data-news-source]") || input.closest("[data-denis-trend-period]");
-  const countInput = row?.querySelector("[data-news-count]") || row?.querySelector("[data-denis-trend-period-count]");
+  const row = input.closest("[data-news-source]") ||
+    input.closest("[data-denis-trend-period]") ||
+    input.closest("[data-schedule-news-source]") ||
+    input.closest("[data-schedule-denis-trend-period]");
+  const countInput = row?.querySelector("[data-news-count]") ||
+    row?.querySelector("[data-denis-trend-period-count]") ||
+    row?.querySelector("[data-schedule-news-count]") ||
+    row?.querySelector("[data-schedule-denis-trend-period-count]");
   countInput?.classList.remove("invalid");
   countInput?.removeAttribute("aria-invalid");
 }

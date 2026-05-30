@@ -256,6 +256,10 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`showHistory`,
 				`data-schedule-content-key`,
 				`data-interval-content-key`,
+				`function renderScheduleNewsSettings`,
+				`function readScheduleNewsSettings`,
+				`data-schedule-news-source`,
+				`data-schedule-denis-trend-period`,
 				`function applyImageEditorProcessing`,
 				`function createBlankImageEditorCanvas`,
 				`function applyImageEditorShape`,
@@ -472,7 +476,18 @@ func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	if len(payload.Data.Schedule.Runs) != 2 || payload.Data.Schedule.Runs[0].Profile != schedule.ProfileDefault {
 		t.Fatalf("expected normalized default schedule runs in bootstrap, got %#v", payload.Data.Schedule.Runs)
 	}
-	if payload.Data.Schedule.IntervalContent == nil || *payload.Data.Schedule.IntervalContent != intervalContent {
+	if payload.Data.Schedule.IntervalContent == nil {
+		t.Fatal("expected interval content in bootstrap")
+	}
+	if !payload.Data.Schedule.IntervalContent.ShowNews || payload.Data.Schedule.IntervalContent.NewsSettings == nil {
+		t.Fatalf("expected bootstrap to seed legacy schedule news settings, got %#v", payload.Data.Schedule.IntervalContent)
+	}
+	if payload.Data.Schedule.IntervalContent.NewsSettings.Sources[0].MaxItems != 3 {
+		t.Fatalf("expected seeded schedule news settings to copy current tab settings, got %#v", payload.Data.Schedule.IntervalContent.NewsSettings)
+	}
+	if payload.Data.Schedule.IntervalContent.ShowWeather != intervalContent.ShowWeather ||
+		payload.Data.Schedule.IntervalContent.ShowUsdBynRate != intervalContent.ShowUsdBynRate ||
+		payload.Data.Schedule.IntervalContent.ShowBankRates != intervalContent.ShowBankRates {
 		t.Fatalf("expected interval content in bootstrap, got %#v", payload.Data.Schedule.IntervalContent)
 	}
 	if len(payload.Data.FontOptions) != 10 || payload.Data.FontOptions[9] != 9 {
@@ -1605,7 +1620,24 @@ func TestSaveScheduleEndpointPersistsIntervalContent(t *testing.T) {
 			"showBankRates": true,
 			"showMail": false,
 			"showCalendar": false,
-			"showNews": true
+			"showNews": true,
+			"showDenisTrends": true,
+			"denisTrendsMode": "week",
+			"newsSettings": {
+				"translateTitles": false,
+				"sources": [
+					{"preset":"bbc_russian","enabled":true,"feedUrl":"https://example.com/rss","maxItems":7},
+					{"preset":"reuters","enabled":false,"feedUrl":"https://example.com/reuters","maxItems":2}
+				]
+			},
+			"denisTrendsSettings": {
+				"periods": {
+					"now": {"enabled": true, "maxItems": 4},
+					"day": {"enabled": true, "maxItems": 5},
+					"week": {"enabled": true, "maxItems": 6},
+					"month": {"enabled": false, "maxItems": 7}
+				}
+			}
 		}
 	}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/settings/schedule", body)
@@ -1623,8 +1655,22 @@ func TestSaveScheduleEndpointPersistsIntervalContent(t *testing.T) {
 		!store.scheduleSettings.IntervalContent.ShowUsdBynRate ||
 		!store.scheduleSettings.IntervalContent.ShowBankRates ||
 		!store.scheduleSettings.IntervalContent.ShowNews ||
+		!store.scheduleSettings.IntervalContent.ShowDenisTrends ||
 		store.scheduleSettings.IntervalContent.ShowCalendar {
 		t.Fatalf("expected saved interval content toggles, got %#v", store.scheduleSettings.IntervalContent)
+	}
+	if store.scheduleSettings.IntervalContent.DenisTrendsMode != receipt.DenisTrendsModeWeek {
+		t.Fatalf("expected forced week mode, got %#v", store.scheduleSettings.IntervalContent)
+	}
+	if store.scheduleSettings.IntervalContent.NewsSettings == nil ||
+		store.scheduleSettings.IntervalContent.NewsSettings.Sources[0].MaxItems != 7 ||
+		store.scheduleSettings.IntervalContent.NewsSettings.TranslateTitlesEnabled() {
+		t.Fatalf("expected saved interval news settings, got %#v", store.scheduleSettings.IntervalContent.NewsSettings)
+	}
+	if store.scheduleSettings.IntervalContent.DenisTrendsSettings == nil ||
+		store.scheduleSettings.IntervalContent.DenisTrendsSettings.Periods[denistrends.PeriodWeek].MaxItems != 6 ||
+		store.scheduleSettings.IntervalContent.DenisTrendsSettings.Periods[denistrends.PeriodMonth].Enabled {
+		t.Fatalf("expected saved interval Denis Trends settings, got %#v", store.scheduleSettings.IntervalContent.DenisTrendsSettings)
 	}
 	if scheduler.resetCalls != 1 {
 		t.Fatalf("expected scheduler reset call, got %d", scheduler.resetCalls)

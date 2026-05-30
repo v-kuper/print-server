@@ -33,9 +33,11 @@ const (
 type Mode string
 
 const (
-	ModeAuto Mode = "auto"
-	ModeNow  Mode = "now"
-	ModeDay  Mode = "day"
+	ModeAuto  Mode = "auto"
+	ModeNow   Mode = "now"
+	ModeDay   Mode = "day"
+	ModeWeek  Mode = "week"
+	ModeMonth Mode = "month"
 )
 
 type Source string
@@ -135,11 +137,13 @@ func (s Settings) ActivePeriodsForMode(now time.Time, mode Mode) []Period {
 	local := now.In(location)
 	switch mode {
 	case ModeNow:
-		if normalized.Periods[PeriodNow].Enabled {
-			return []Period{PeriodNow}
-		}
-		return nil
+		return forcedPeriod(normalized, PeriodNow)
 	case ModeDay:
+		return forcedPeriod(normalized, PeriodDay)
+	case ModeWeek:
+		return forcedPeriod(normalized, PeriodWeek)
+	case ModeMonth:
+		return forcedPeriod(normalized, PeriodMonth)
 	default:
 		if local.Hour() < 12 {
 			if normalized.Periods[PeriodNow].Enabled {
@@ -160,6 +164,13 @@ func (s Settings) ActivePeriodsForMode(now time.Time, mode Mode) []Period {
 		result = append(result, PeriodMonth)
 	}
 	return result
+}
+
+func forcedPeriod(settings Settings, period Period) []Period {
+	if settings.Periods[period].Enabled {
+		return []Period{period}
+	}
+	return nil
 }
 
 func (p Period) DisplayName() string {

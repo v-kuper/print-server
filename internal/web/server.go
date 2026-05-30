@@ -687,6 +687,8 @@ func (s *Server) bootstrapData() (bootstrapData, error) {
 		googleStatus = s.googleClient.Status()
 	}
 	normalizedNews := newsSettings.Normalized()
+	normalizedDenisTrends := denisTrendsSettings.Normalized()
+	scheduleSettings = seedScheduleContentSettings(scheduleSettings, normalizedNews, normalizedDenisTrends)
 	return bootstrapData{
 		Printer:           printerConfig,
 		Weather:           weatherLocation,
@@ -694,7 +696,7 @@ func (s *Server) bootstrapData() (bootstrapData, error) {
 		Motivation:        motivationSettings,
 		GoogleStatus:      googleStatus,
 		News:              bootstrapNewsSettings{TranslateTitles: normalizedNews.TranslateTitlesEnabled(), Sources: normalizedNews.Sources},
-		DenisTrends:       denisTrendsSettings.Normalized(),
+		DenisTrends:       normalizedDenisTrends,
 		ReceiptStyle:      receiptStyle,
 		ReceiptContent:    receiptContent,
 		ReceiptSnapshot:   receiptSnapshot,
@@ -703,6 +705,29 @@ func (s *Server) bootstrapData() (bootstrapData, error) {
 		FontOptions:       []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
 		ScheduleIntervals: scheduleIntervalOptions(),
 	}, nil
+}
+
+func seedScheduleContentSettings(settings schedule.Settings, newsSettings news.Settings, denisTrendsSettings denistrends.Settings) schedule.Settings {
+	seeded := settings.Normalized()
+	seedContentSettings(seeded.IntervalContent, newsSettings, denisTrendsSettings)
+	for index := range seeded.Runs {
+		seedContentSettings(seeded.Runs[index].Content, newsSettings, denisTrendsSettings)
+	}
+	return seeded
+}
+
+func seedContentSettings(content *receipt.ContentSettings, newsSettings news.Settings, denisTrendsSettings denistrends.Settings) {
+	if content == nil {
+		return
+	}
+	if content.ShowNews && content.NewsSettings == nil {
+		settingsCopy := newsSettings.Normalized()
+		content.NewsSettings = &settingsCopy
+	}
+	if content.ShowDenisTrends && content.DenisTrendsSettings == nil {
+		settingsCopy := denisTrendsSettings.Normalized()
+		content.DenisTrendsSettings = &settingsCopy
+	}
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
