@@ -107,6 +107,14 @@
                     <input id="content-denis-trends" type="checkbox">
                     Denis Trends
                   </label>
+                  <label class="content-mode-label">
+                    Режим Denis Trends
+                    <select id="content-denis-trends-mode" data-denis-trends-mode>
+                      <option value="auto">Авто</option>
+                      <option value="now">Top now</option>
+                      <option value="day">Top day</option>
+                    </select>
+                  </label>
                 </div>
               </div>
             </section>
@@ -396,7 +404,7 @@
                   Точное время и состав
                 </label>
               </div>
-              <p class="helper-text">Denis Trends в расписании: до 12:00 печатает Top now, после 12:00 - Top day; воскресенье добавляет Top week, последний день месяца - Top month.</p>
+              <p class="helper-text">Denis Trends в расписании: режим выбирается в составе запуска. Авто оставляет правило до 12:00 Top now, после 12:00 Top day; воскресенье добавляет Top week, последний день месяца - Top month.</p>
               <div id="schedule-interval-panel" class="section-grid">
                 <label>
                   Печатать каждые

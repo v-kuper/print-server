@@ -132,6 +132,7 @@ func TestRunDueUsesCustomDailyRunContent(t *testing.T) {
 		ShowCalendar:     true,
 		ShowNews:         true,
 		ShowTonPortfolio: false,
+		DenisTrendsMode:  receipt.DenisTrendsModeAuto,
 	}
 	now := time.Date(2026, 5, 25, 21, 1, 0, 0, location)
 	store := &fakeStore{
@@ -171,7 +172,7 @@ func TestRunDuePassesScheduledTimeToContentJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load location: %v", err)
 	}
-	custom := receipt.ContentSettings{Configured: true, ShowDenisTrends: true}
+	custom := receipt.ContentSettings{Configured: true, ShowDenisTrends: true, DenisTrendsMode: receipt.DenisTrendsModeAuto}
 	scheduledAt := time.Date(2026, 5, 25, 7, 0, 0, 0, location)
 	now := time.Date(2026, 5, 25, 18, 30, 0, 0, location)
 	store := &fakeStore{
@@ -260,11 +261,12 @@ func TestRunDueUsesGlobalPrintForDefaultProfileAndInterval(t *testing.T) {
 func TestRunDueUsesIntervalContentWhenConfigured(t *testing.T) {
 	now := time.Date(2026, 5, 25, 9, 7, 0, 0, time.UTC)
 	content := receipt.ContentSettings{
-		Configured:     true,
-		ShowWeather:    true,
-		ShowUsdBynRate: true,
-		ShowBankRates:  true,
-		ShowNews:       true,
+		Configured:      true,
+		ShowWeather:     true,
+		ShowUsdBynRate:  true,
+		ShowBankRates:   true,
+		ShowNews:        true,
+		DenisTrendsMode: receipt.DenisTrendsModeAuto,
 	}
 	store := &fakeStore{
 		settings: schedule.Settings{

@@ -78,7 +78,7 @@ type NewsProvider interface {
 }
 
 type DenisTrendsProvider interface {
-	Current(context.Context, denistrends.Settings, time.Time) ([]denistrends.Section, error)
+	CurrentForMode(context.Context, denistrends.Settings, time.Time, denistrends.Mode) ([]denistrends.Section, error)
 }
 
 type HistoryProvider interface {
@@ -439,7 +439,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		if err != nil {
 			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 		}
-		denisTrendSections, err = s.denisTrendsProvider.Current(ctx, trendsSettings, effectiveTime)
+		denisTrendSections, err = s.denisTrendsProvider.CurrentForMode(ctx, trendsSettings, effectiveTime, denisTrendsMode(content.DenisTrendsMode))
 		if err != nil {
 			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
 		}
@@ -1186,6 +1186,17 @@ func (s *ReceiptService) translateDenisTrendSections(ctx context.Context, newsSe
 		item.Title = translation
 	}
 	return translatedSections, ""
+}
+
+func denisTrendsMode(value string) denistrends.Mode {
+	switch value {
+	case receipt.DenisTrendsModeNow:
+		return denistrends.ModeNow
+	case receipt.DenisTrendsModeDay:
+		return denistrends.ModeDay
+	default:
+		return denistrends.ModeAuto
+	}
 }
 
 func containsCyrillic(value string) bool {

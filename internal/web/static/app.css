@@ -483,6 +483,14 @@ button:disabled {
   line-height: 1.25;
 }
 
+.content-mode-label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 /* ─── Toggle switch ─── */
 
 .switch-label {

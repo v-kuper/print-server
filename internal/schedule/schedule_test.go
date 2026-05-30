@@ -253,5 +253,6 @@ func receiptContent(weather, weatherAdvice, motivation, ton, usdByn, bankRates, 
 		ShowCalendar:        calendar,
 		ShowHistory:         history,
 		ShowNews:            news,
+		DenisTrendsMode:     receipt.DenisTrendsModeAuto,
 	}
 }
