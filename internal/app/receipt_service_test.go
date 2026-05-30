@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"atol-server/internal/bankrates"
+	"atol-server/internal/dailyquest"
 	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
@@ -1839,6 +1840,230 @@ func TestReceiptServiceHidesWeatherBlockWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestReceiptServicePrintsDailyQuestsAfterMotivationQuote(t *testing.T) {
+	store := &fakeStore{
+		motivationSettings: motivation.Settings{
+			Configured: true,
+			Enabled:    true,
+			BaseURL:    motivation.DefaultBaseURL,
+			Model:      motivation.DefaultModel,
+		},
+	}
+	provider := &fakeMotivationProvider{
+		quote: motivation.Quote{Text: "Сегодня достаточно одного честного шага."},
+		dailyQuests: []dailyquest.DailyQuest{
+			{ID: 7, Text: "Составь карту любимых мест района."},
+			{ID: 23, Text: "Почини одну небольшую вещь дома."},
+			{ID: 48, Text: "Проживи день без жалоб."},
+		},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithMotivationProvider(provider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured:          true,
+		ShowWeather:         false,
+		ShowWeatherAdvice:   false,
+		ShowMotivationQuote: true,
+		ShowDailyQuests:     true,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+
+	quoteIndex := indexOfLineText(lines, "Сегодня достаточно одного")
+	questsIndex := indexOfLineText(lines, "Квест на день")
+	if quoteIndex < 0 || questsIndex < 0 || quoteIndex > questsIndex {
+		t.Fatalf("expected daily quests after quote, got %#v", lines)
+	}
+	for _, want := range []string{
+		"1. Составь карту любимых мест",
+		"2. Почини одну небольшую вещь",
+		"3. Проживи день без жалоб.",
+	} {
+		if !lineTextsContain(lines, want) {
+			t.Fatalf("expected daily quest line %q, got %#v", want, lines)
+		}
+	}
+	if provider.dailyQuestCalls != 1 || len(provider.dailyQuestInput) != 3 {
+		t.Fatalf("expected one AI daily quest generation with three selected IDs, provider=%#v", provider)
+	}
+	if store.motivationSettings.QuestCacheDate != motivation.CacheDate(fixedClock()) ||
+		len(store.motivationSettings.CachedDailyQuests) != 3 {
+		t.Fatalf("expected generated daily quests to be cached, got %#v", store.motivationSettings)
+	}
+}
+
+func TestReceiptServiceSkipsDailyQuestsWhenDisabled(t *testing.T) {
+	provider := &fakeMotivationProvider{
+		dailyQuests: []dailyquest.DailyQuest{{ID: 7, Text: "Составь карту района."}},
+	}
+	service := NewReceiptService(
+		&fakeStore{},
+		&fakePrinter{},
+		fixedClock,
+		WithMotivationProvider(provider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured:          true,
+		ShowWeather:         false,
+		ShowWeatherAdvice:   false,
+		ShowMotivationQuote: false,
+		ShowDailyQuests:     false,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if lineTextsContain(lines, "Квест на день") {
+		t.Fatalf("daily quests must not be printed when disabled, got %#v", lines)
+	}
+	if provider.dailyQuestCalls != 0 {
+		t.Fatalf("expected daily quest provider not to be called, got %d", provider.dailyQuestCalls)
+	}
+}
+
+func TestReceiptServiceUsesDailyQuestCacheForSameMinskDate(t *testing.T) {
+	store := &fakeStore{
+		motivationSettings: motivation.Settings{
+			Configured:     true,
+			Enabled:        true,
+			BaseURL:        motivation.DefaultBaseURL,
+			Model:          motivation.DefaultModel,
+			QuestCacheDate: motivation.CacheDate(fixedClock()),
+			CachedDailyQuests: []dailyquest.DailyQuest{
+				{ID: 7, Text: "Кэшированный квест один."},
+				{ID: 23, Text: "Кэшированный квест два."},
+				{ID: 48, Text: "Кэшированный квест три."},
+			},
+		},
+	}
+	provider := &fakeMotivationProvider{
+		dailyQuests: []dailyquest.DailyQuest{
+			{ID: 7, Text: "Новый квест не нужен."},
+			{ID: 23, Text: "Новый квест два."},
+			{ID: 48, Text: "Новый квест три."},
+		},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithMotivationProvider(provider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured:      true,
+		ShowDailyQuests: true,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if provider.dailyQuestCalls != 0 {
+		t.Fatalf("expected cached daily quests without AI call, got %d calls", provider.dailyQuestCalls)
+	}
+	if !lineTextsContain(lines, "1. Кэшированный квест один.") ||
+		!lineTextsContain(lines, "2. Кэшированный квест два.") ||
+		!lineTextsContain(lines, "3. Кэшированный квест три.") {
+		t.Fatalf("expected cached daily quests in receipt, got %#v", lines)
+	}
+}
+
+func TestReceiptServiceRegeneratesDailyQuestsForEffectiveScheduledDate(t *testing.T) {
+	location, err := time.LoadLocation(motivation.DefaultTimezone)
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	scheduledAt := time.Date(2026, 5, 26, 7, 0, 0, 0, location)
+	store := &fakeStore{
+		motivationSettings: motivation.Settings{
+			Configured:     true,
+			Enabled:        true,
+			BaseURL:        motivation.DefaultBaseURL,
+			Model:          motivation.DefaultModel,
+			QuestCacheDate: motivation.CacheDate(fixedClock()),
+			CachedDailyQuests: []dailyquest.DailyQuest{
+				{ID: 7, Text: "Вчерашний квест один."},
+				{ID: 23, Text: "Вчерашний квест два."},
+				{ID: 48, Text: "Вчерашний квест три."},
+			},
+		},
+	}
+	provider := &fakeMotivationProvider{
+		dailyQuests: []dailyquest.DailyQuest{
+			{ID: 11, Text: "Нарисуй обычный предмет 20 минут."},
+			{ID: 30, Text: "Освежи базу первой помощи."},
+			{ID: 44, Text: "Спроси родителей про молодость."},
+		},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithMotivationProvider(provider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithContentAtAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured:      true,
+		ShowDailyQuests: true,
+	}, scheduledAt)
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if provider.dailyQuestCalls != 1 {
+		t.Fatalf("expected AI generation for new scheduled date, got %d", provider.dailyQuestCalls)
+	}
+	if store.motivationSettings.QuestCacheDate != motivation.CacheDate(scheduledAt) {
+		t.Fatalf("expected cache date to use scheduled time, got %#v", store.motivationSettings)
+	}
+	if !lineTextsContain(lines, "1. Нарисуй обычный предмет 20") || !lineTextsContain(lines, "минут.") {
+		t.Fatalf("expected generated scheduled daily quests, got %#v", lines)
+	}
+}
+
+func TestReceiptServiceFallsBackWhenDailyQuestAIUnavailable(t *testing.T) {
+	provider := &fakeMotivationProvider{dailyQuestErr: errors.New("ollama offline")}
+	service := NewReceiptService(
+		&fakeStore{},
+		&fakePrinter{},
+		fixedClock,
+		WithMotivationProvider(provider),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithContentAndWarnings(context.Background(), receipt.ContentSettings{
+		Configured:      true,
+		ShowDailyQuests: true,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+	if !containsWarning(warnings, "AI-квесты дня недоступны") {
+		t.Fatalf("expected daily quest warning, got %#v", warnings)
+	}
+	if !lineTextsContain(lines, "Квест на день") ||
+		!lineTextsContainSubstring(lines, "1. ") ||
+		!lineTextsContainSubstring(lines, "2. ") ||
+		!lineTextsContainSubstring(lines, "3. ") {
+		t.Fatalf("expected fallback daily quests in receipt, got %#v", lines)
+	}
+}
+
 func fixedClock() time.Time {
 	return time.Date(2026, 5, 25, 9, 7, 0, 0, time.UTC)
 }
@@ -1896,7 +2121,7 @@ func (s *fakeStore) LoadReceiptSnapshotSettings() (receiptsnapshot.Settings, err
 }
 
 func (s *fakeStore) LoadMotivation() (motivation.Settings, error) {
-	if s.motivationSettings == (motivation.Settings{}) {
+	if reflect.DeepEqual(s.motivationSettings, motivation.Settings{}) {
 		return motivation.DefaultSettings(), nil
 	}
 	return s.motivationSettings.Normalized(), nil
@@ -2110,19 +2335,23 @@ type fakeMotivationProvider struct {
 	advice              motivation.WeatherAdvice
 	calendarAdvice      motivation.CalendarAdvice
 	historyFacts        []motivation.HistoryFact
+	dailyQuests         []dailyquest.DailyQuest
 	translations        []motivation.NewsTranslation
 	err                 error
 	calendarAdviceErr   error
 	historyFactsErr     error
+	dailyQuestErr       error
 	translationErr      error
 	weatherContext      motivation.WeatherContext
 	calendarContext     motivation.CalendarContext
 	historyEvents       []motivation.HistoryEvent
+	dailyQuestInput     []dailyquest.Quest
 	translatedTitles    []motivation.NewsTitle
 	quoteCalls          int
 	adviceCalls         int
 	calendarAdviceCalls int
 	historyFactCalls    int
+	dailyQuestCalls     int
 }
 
 func (p *fakeMotivationProvider) Generate(context.Context, motivation.Settings) (motivation.Quote, error) {
@@ -2157,6 +2386,25 @@ func (p *fakeMotivationProvider) GenerateHistoryFacts(_ context.Context, _ motiv
 		return nil, p.historyFactsErr
 	}
 	return append([]motivation.HistoryFact(nil), p.historyFacts...), p.err
+}
+
+func (p *fakeMotivationProvider) GenerateDailyQuests(_ context.Context, _ motivation.Settings, quests []dailyquest.Quest) ([]dailyquest.DailyQuest, error) {
+	p.dailyQuestCalls++
+	p.dailyQuestInput = append([]dailyquest.Quest(nil), quests...)
+	if p.dailyQuestErr != nil {
+		return nil, p.dailyQuestErr
+	}
+	if len(p.dailyQuests) == 0 {
+		return dailyquest.Fallback(quests), p.err
+	}
+	result := append([]dailyquest.DailyQuest(nil), p.dailyQuests...)
+	for index := range result {
+		if index >= len(quests) {
+			break
+		}
+		result[index].ID = quests[index].ID
+	}
+	return result, p.err
 }
 
 func (p *fakeMotivationProvider) TranslateNewsTitles(_ context.Context, _ motivation.Settings, titles []motivation.NewsTitle) ([]motivation.NewsTranslation, error) {

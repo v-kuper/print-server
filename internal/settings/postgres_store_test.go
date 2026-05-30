@@ -74,7 +74,7 @@ func TestPostgresStoreSavesLoadsSettingsAndRecordsAudit(t *testing.T) {
 	if err := store.SaveMotivation(motivationSettings); err != nil {
 		t.Fatalf("save motivation: %v", err)
 	}
-	if got, err := store.LoadMotivation(); err != nil || got != motivationSettings.Normalized() {
+	if got, err := store.LoadMotivation(); err != nil || !reflect.DeepEqual(got, motivationSettings.Normalized()) {
 		t.Fatalf("expected motivation %#v, got %#v, err=%v", motivationSettings.Normalized(), got, err)
 	}
 

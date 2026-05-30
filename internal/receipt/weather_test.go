@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"atol-server/internal/bankrates"
+	"atol-server/internal/dailyquest"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
 	"atol-server/internal/motivation"
@@ -149,6 +150,11 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 		},
 		WeatherAdvice:   &motivation.WeatherAdvice{Text: "Возьми зонт."},
 		MotivationQuote: &motivation.Quote{Text: "Сегодня достаточно одного честного шага."},
+		DailyQuests: []dailyquest.DailyQuest{
+			{ID: 7, Text: "Составь карту любимых мест района."},
+			{ID: 23, Text: "Почини одну небольшую вещь дома."},
+			{ID: 48, Text: "Проживи день без жалоб."},
+		},
 		NewsItems: []news.Item{
 			{Title: "Первый заголовок", SourceName: "Reuters"},
 			{Title: "Второй заголовок", SourceName: "Reuters"},
@@ -176,9 +182,17 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 
 	adviceIndex := indexOfText(got, "Возьми зонт.")
 	quoteIndex := indexOfTextContaining(got, "Сегодня достаточно")
+	questsIndex := indexOfText(got, "Квест на день")
 	tonIndex := indexOfText(got, "TON")
-	if adviceIndex < 0 || quoteIndex < 0 || tonIndex < 0 || adviceIndex > quoteIndex || quoteIndex > tonIndex {
-		t.Fatalf("expected weather advice then quote before TON, got %#v", got)
+	if adviceIndex < 0 || quoteIndex < 0 || questsIndex < 0 || tonIndex < 0 || adviceIndex > quoteIndex || quoteIndex > questsIndex || questsIndex > tonIndex {
+		t.Fatalf("expected weather advice then quote then daily quests before TON, got %#v", got)
+	}
+	for _, want := range []string{
+		"1. Составь карту любимых мест",
+		"2. Почини одну небольшую вещь",
+		"3. Проживи день без жалоб.",
+	} {
+		requireContains(t, got, want)
 	}
 }
 
@@ -190,6 +204,11 @@ func TestDailyReceiptPrintsCalendarBeforeFinanceAndHistoryBeforeNews(t *testing.
 		},
 		WeatherAdvice:   &motivation.WeatherAdvice{Text: "Возьми зонт."},
 		MotivationQuote: &motivation.Quote{Text: "Сегодня достаточно одного честного шага."},
+		DailyQuests: []dailyquest.DailyQuest{
+			{ID: 7, Text: "Составь карту района."},
+			{ID: 23, Text: "Почини вещь дома."},
+			{ID: 48, Text: "Не жалуйся 24 часа."},
+		},
 		CalendarEvents: []googleintegration.CalendarEvent{
 			{TimeLabel: "10:00", Title: "Планирование"},
 		},
@@ -219,6 +238,7 @@ func TestDailyReceiptPrintsCalendarBeforeFinanceAndHistoryBeforeNews(t *testing.
 	expectedOrder := []string{
 		"Возьми зонт.",
 		"Сегодня достаточно одного",
+		"Квест на день",
 		"Календарь",
 		"Оставь воздух между встречами.",
 		"TON",
@@ -237,6 +257,26 @@ func TestDailyReceiptPrintsCalendarBeforeFinanceAndHistoryBeforeNews(t *testing.
 			t.Fatalf("expected order %#v, got %#v", expectedOrder, got)
 		}
 		previousIndex = index
+	}
+}
+
+func TestDailyReceiptSeparatesMotivationQuoteFromWeatherAdvice(t *testing.T) {
+	lines := DailyReceipt(DailyReceiptData{
+		HideWeather:        true,
+		WeatherAdvice:      &motivation.WeatherAdvice{Text: "Возьми зонт."},
+		MotivationQuote:    &motivation.Quote{Text: "Сегодня достаточно одного честного шага."},
+		TonPortfolio:       &finance.TonPortfolioSummary{AmountTon: 1, Price: finance.TonPrice{USD: 2}, CurrentValueUSD: 2},
+		DenisTrendSections: nil,
+	})
+
+	got := texts(lines)
+	adviceIndex := indexOfText(got, "Возьми зонт.")
+	quoteIndex := indexOfText(got, "Сегодня достаточно одного")
+	if adviceIndex < 0 || quoteIndex < 2 || adviceIndex >= quoteIndex {
+		t.Fatalf("expected advice before quote, got %#v", got)
+	}
+	if strings.TrimSpace(got[quoteIndex-2]) != "" || got[quoteIndex-1] != strings.Repeat("-", weatherMaxLineLength/2) {
+		t.Fatalf("expected blank line and separator before AI quote, got %#v", got)
 	}
 }
 

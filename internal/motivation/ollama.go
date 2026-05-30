@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"atol-server/internal/dailyquest"
 )
 
 const quotePromptBase = "Сгенерируй короткую мотивационную цитату дня на русском языке для печати на кассовой ленте. Без markdown, без кавычек, без имени автора. 1-2 короткие строки, спокойно и по-человечески. Каждый ответ должен звучать свежо: избегай шаблонов, канцелярита и повторов вроде 'маленькие шаги ведут к большим переменам'."
@@ -19,6 +21,7 @@ type Provider interface {
 	GenerateWeatherAdvice(context.Context, Settings, WeatherContext) (WeatherAdvice, error)
 	GenerateCalendarAdvice(context.Context, Settings, CalendarContext) (CalendarAdvice, error)
 	GenerateHistoryFacts(context.Context, Settings, []HistoryEvent) ([]HistoryFact, error)
+	GenerateDailyQuests(context.Context, Settings, []dailyquest.Quest) ([]dailyquest.DailyQuest, error)
 	TranslateNewsTitles(context.Context, Settings, []NewsTitle) ([]NewsTranslation, error)
 }
 

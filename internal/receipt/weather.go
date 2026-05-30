@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"atol-server/internal/bankrates"
+	"atol-server/internal/dailyquest"
 	"atol-server/internal/denistrends"
 	"atol-server/internal/finance"
 	"atol-server/internal/googleintegration"
@@ -49,6 +50,7 @@ type DailyReceiptData struct {
 	HideWeather        bool
 	WeatherAdvice      *motivation.WeatherAdvice
 	MotivationQuote    *motivation.Quote
+	DailyQuests        []dailyquest.DailyQuest
 	TonPortfolio       *finance.TonPortfolioSummary
 	TonChartImage      *Image
 	USDBYNRate         *finance.FiatRate
@@ -140,7 +142,12 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 	}
 	if data.MotivationQuote != nil && strings.TrimSpace(data.MotivationQuote.Text) != "" {
 		result = append(result, blankLine(normalStyle))
+		result = append(result, separator(normalStyle))
 		result = append(result, wrappedAligned(data.MotivationQuote.Text, normalStyle)...)
+	}
+	if dailyQuestLines := formatDailyQuestLines(data.DailyQuests, normalStyle); len(dailyQuestLines) > 0 {
+		result = appendSectionHeader(result, "Квест на день", normalStyle)
+		result = append(result, dailyQuestLines...)
 	}
 	calendarSections := normalizedCalendarSections(data.CalendarSections, data.CalendarEvents)
 	if len(calendarSections) > 0 {
@@ -281,6 +288,20 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 				result = append(result, blankLine(normalStyle))
 			}
 		}
+	}
+	return result
+}
+
+func formatDailyQuestLines(quests []dailyquest.DailyQuest, style lineStyle) []Line {
+	result := make([]Line, 0, len(quests))
+	number := 1
+	for _, quest := range quests {
+		text := strings.TrimSpace(quest.Text)
+		if text == "" {
+			continue
+		}
+		result = append(result, wrappedAligned(fmt.Sprintf("%d. %s", number, text), style)...)
+		number++
 	}
 	return result
 }
