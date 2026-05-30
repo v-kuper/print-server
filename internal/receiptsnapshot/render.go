@@ -289,41 +289,38 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       padding: 16px 14px;
     }
     .receipt-paper {
-      width: 100%;
-      margin: 0;
+      width: min(100%, calc(var(--paper-chars, 32) * 1ch));
+      margin: 0 auto;
       color: #111;
       font-family: "Courier New", ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 15px;
-      line-height: 1.5;
+      font-size: 16px;
+      line-height: 1.22;
       letter-spacing: 0;
+      white-space: pre-wrap;
     }
-    /* Text lines: render inline so 32-char printer-split lines flow together */
     .receipt-line {
-      display: inline;
-    }
-    /* After each text line add a space so joined words don't merge */
-    .receipt-line::after {
-      content: " ";
-    }
-    /* Image and QR lines: keep as blocks with centering */
-    .receipt-image-line,
-    .receipt-qr-line {
+      --line-size: 15px;
+      --line-scale-x: 1;
+      --line-scale-y: 1;
       display: flex;
       align-items: center;
-      justify-content: center;
-      width: 100%;
-    }
-    .receipt-image-line::after,
-    .receipt-qr-line::after {
-      content: none;
+      justify-content: flex-start;
+      width: calc(100% / var(--line-scale-x));
+      margin: 0 auto;
+      min-height: calc(var(--line-size) * 1.22 * var(--line-scale-y));
+      line-height: 1.22;
+      overflow: visible;
     }
     .receipt-line-text {
-      display: inline;
+      display: inline-block;
+      max-width: calc(100% / var(--line-scale-x));
       font-size: var(--line-size);
-      line-height: 1.5;
-      white-space: normal;
-      overflow-wrap: break-word;
-      word-break: break-word;
+      line-height: 1.22;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      overflow: visible;
+      transform: scale(var(--line-scale-x), var(--line-scale-y));
+      transform-origin: center center;
     }
     a.receipt-line-text {
       color: inherit;
@@ -335,10 +332,16 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       text-underline-offset: 2px;
     }
     .receipt-link-row {
-      display: inline;
+      display: inline-flex;
+      align-items: flex-start;
+      justify-content: flex-start;
+      gap: 5px;
+      max-width: 100%;
+      min-width: 0;
     }
     .receipt-link-row .receipt-line-text {
-      display: inline;
+      min-width: 0;
+      max-width: calc(100% - 28px);
     }
     .summary-button {
       appearance: none;
@@ -457,6 +460,7 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
     .align-center { text-align: center; justify-content: center;     }
     .align-right  { text-align: right;  justify-content: flex-end;   }
     .align-center .receipt-line-text { transform-origin: center center; }
+    .align-left   .receipt-line-text { transform-origin: left center;   }
     .align-right  .receipt-line-text { transform-origin: right center;  }
     .receipt-image-line {
       width: 100%;
