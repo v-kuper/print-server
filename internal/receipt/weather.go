@@ -270,6 +270,9 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 					}
 				}
 				result = append(result, titleLines...)
+				if strings.TrimSpace(item.OriginalTitle) != "" {
+					result = append(result, wrappedAligned(item.OriginalTitle, originalStyle)...)
+				}
 				if itemIndex < len(section.Items)-1 {
 					result = append(result, blankLine(normalStyle))
 				}

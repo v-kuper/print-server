@@ -49,10 +49,11 @@ type Settings struct {
 }
 
 type Item struct {
-	Title      string
-	Source     Source
-	SourceName string
-	Link       string
+	Title         string
+	OriginalTitle string
+	Source        Source
+	SourceName    string
+	Link          string
 }
 
 type Section struct {

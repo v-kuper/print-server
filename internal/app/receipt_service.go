@@ -433,6 +433,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 	}
 
 	var denisTrendSections []denistrends.Section
+	var denisTrendsTranslationWarning string
 	if content.ShowDenisTrends {
 		trendsSettings, err := s.store.LoadDenisTrends()
 		if err != nil {
@@ -442,6 +443,11 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		if err != nil {
 			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
 		}
+		newsSettings, err := s.store.LoadNews()
+		if err != nil {
+			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
+		}
+		denisTrendSections, denisTrendsTranslationWarning = s.translateDenisTrendSections(ctx, newsSettings, denisTrendSections)
 	}
 
 	receiptStyle, err := s.store.LoadReceiptStyle()
@@ -466,7 +472,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		NewsItems:          newsItems,
 		DenisTrendSections: denisTrendSections,
 	}, receiptStyle)
-	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning)
+	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning, denisTrendsTranslationWarning)
 	return dailyReceiptBuild{
 		Lines:      lines,
 		Warnings:   warnings,
@@ -1119,6 +1125,67 @@ func shouldTranslateNewsItem(item news.Item) bool {
 	return strings.Contains(sourceName, "reuters") ||
 		strings.Contains(sourceName, "economist") ||
 		strings.Contains(sourceName, "hacker news")
+}
+
+func (s *ReceiptService) translateDenisTrendSections(ctx context.Context, newsSettings news.Settings, sections []denistrends.Section) ([]denistrends.Section, string) {
+	if !newsSettings.TranslateTitlesEnabled() || len(sections) == 0 {
+		return sections, ""
+	}
+	settings, err := s.store.LoadMotivation()
+	if err != nil {
+		return sections, "AI-перевод Denis Trends недоступен: " + err.Error()
+	}
+	settings = settings.Normalized()
+
+	type trendTitleRef struct {
+		sectionIndex int
+		itemIndex    int
+	}
+	refs := make(map[int]trendTitleRef)
+	titles := make([]motivation.NewsTitle, 0)
+	for sectionIndex, section := range sections {
+		for itemIndex, item := range section.Items {
+			title := strings.TrimSpace(item.Title)
+			if title == "" || containsCyrillic(title) {
+				continue
+			}
+			translationIndex := len(titles)
+			refs[translationIndex] = trendTitleRef{sectionIndex: sectionIndex, itemIndex: itemIndex}
+			titles = append(titles, motivation.NewsTitle{
+				Index:      translationIndex,
+				SourceName: strings.TrimSpace(item.SourceName),
+				Title:      title,
+			})
+		}
+	}
+	if len(titles) == 0 {
+		return sections, ""
+	}
+
+	translations, err := s.motivationProvider.TranslateNewsTitles(ctx, settings, titles)
+	if err != nil {
+		return sections, "AI-перевод Denis Trends недоступен: " + err.Error()
+	}
+	translationByIndex := make(map[int]string, len(translations))
+	for _, translation := range translations {
+		translationByIndex[translation.Index] = strings.TrimSpace(translation.Title)
+	}
+
+	translatedSections := append([]denistrends.Section(nil), sections...)
+	for sectionIndex := range translatedSections {
+		translatedSections[sectionIndex].Items = append([]denistrends.Item(nil), sections[sectionIndex].Items...)
+	}
+	for _, title := range titles {
+		translation := strings.TrimSpace(translationByIndex[title.Index])
+		if translation == "" || strings.EqualFold(translation, strings.TrimSpace(title.Title)) {
+			continue
+		}
+		ref := refs[title.Index]
+		item := &translatedSections[ref.sectionIndex].Items[ref.itemIndex]
+		item.OriginalTitle = strings.TrimSpace(title.Title)
+		item.Title = translation
+	}
+	return translatedSections, ""
 }
 
 func containsCyrillic(value string) bool {

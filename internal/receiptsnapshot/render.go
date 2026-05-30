@@ -27,6 +27,7 @@ type snapshotReceiptLine struct {
 	LineIndex          int
 	Text               string
 	Link               string
+	ShowSummaryButton  bool
 	QRCode             string
 	QRDataURL          template.URL
 	ImageSrc           string
@@ -57,8 +58,16 @@ func RenderSnapshotHTML(snapshot Snapshot) ([]byte, error) {
 func prepareReceiptLines(snapshot Snapshot) []snapshotReceiptLine {
 	lines := ReceiptLinesForSnapshot(snapshot)
 	result := make([]snapshotReceiptLine, 0, len(lines))
+	previousLink := ""
 	for index, line := range lines {
-		result = append(result, prepareReceiptLine(index, line))
+		prepared := prepareReceiptLine(index, line)
+		if prepared.Link != "" {
+			prepared.ShowSummaryButton = prepared.Link != previousLink
+			previousLink = prepared.Link
+		} else {
+			previousLink = ""
+		}
+		result = append(result, prepared)
 	}
 	return result
 }
@@ -487,7 +496,7 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
 <body>
   <main data-snapshot-id="{{.ID}}">
     <section class="receipt-preview">
-      <article class="receipt-paper" style="--paper-chars: {{.PaperChars}};">{{- if .PendingNotice -}}<p class="notice">Этот слепок создан, но печать еще не подтверждена.</p>{{- end -}}{{- range .Lines -}}{{- if .QRCode -}}<div class="receipt-line receipt-qr-line align-{{.Alignment}} role-{{.Role}}">{{- if .QRDataURL -}}<img class="receipt-qr" src="{{.QRDataURL}}" alt="{{.QRCode}}">{{- else -}}<span class="receipt-line-text">{{.QRCode}}</span>{{- end -}}</div>{{- else if .ImageSrc -}}<div class="receipt-line receipt-image-line align-{{.Alignment}} role-{{.Role}}" style="--image-line-height: {{.ImageLineHeight}}px;"><img class="receipt-image" src="{{.ImageSrc}}" alt="" style="width: {{.ImagePreviewWidth}}px; height: {{.ImagePreviewHeight}}px;"></div>{{- else -}}<div class="receipt-line align-{{.Alignment}} role-{{.Role}}" style="--line-size: {{.LineSize}}px; --line-scale-x: {{.ScaleX}}; --line-scale-y: {{.ScaleY}};">{{- if .Link -}}<span class="receipt-link-row"><a class="receipt-line-text" href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</a><button class="summary-button" type="button" data-summary-button data-summary-line-index="{{.LineIndex}}" title="Сделать summary" aria-label="Сделать summary"><span aria-hidden="true">✦</span></button></span>{{- else -}}<span class="receipt-line-text">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</span>{{- end -}}</div>{{- end -}}{{- end -}}</article>
+      <article class="receipt-paper" style="--paper-chars: {{.PaperChars}};">{{- if .PendingNotice -}}<p class="notice">Этот слепок создан, но печать еще не подтверждена.</p>{{- end -}}{{- range .Lines -}}{{- if .QRCode -}}<div class="receipt-line receipt-qr-line align-{{.Alignment}} role-{{.Role}}">{{- if .QRDataURL -}}<img class="receipt-qr" src="{{.QRDataURL}}" alt="{{.QRCode}}">{{- else -}}<span class="receipt-line-text">{{.QRCode}}</span>{{- end -}}</div>{{- else if .ImageSrc -}}<div class="receipt-line receipt-image-line align-{{.Alignment}} role-{{.Role}}" style="--image-line-height: {{.ImageLineHeight}}px;"><img class="receipt-image" src="{{.ImageSrc}}" alt="" style="width: {{.ImagePreviewWidth}}px; height: {{.ImagePreviewHeight}}px;"></div>{{- else -}}<div class="receipt-line align-{{.Alignment}} role-{{.Role}}" style="--line-size: {{.LineSize}}px; --line-scale-x: {{.ScaleX}}; --line-scale-y: {{.ScaleY}};">{{- if .Link -}}<span class="receipt-link-row">{{- if .ShowSummaryButton -}}<button class="summary-button" type="button" data-summary-button data-summary-line-index="{{.LineIndex}}" title="Сделать summary" aria-label="Сделать summary"><span aria-hidden="true">✦</span></button>{{- end -}}<a class="receipt-line-text" href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</a></span>{{- else -}}<span class="receipt-line-text">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</span>{{- end -}}</div>{{- end -}}{{- end -}}</article>
     </section>
     <div class="summary-modal" data-summary-modal hidden>
       <div class="summary-backdrop" data-summary-close></div>

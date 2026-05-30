@@ -68,6 +68,48 @@ func TestRenderSnapshotHTMLGroupsNewsAndEscapesContent(t *testing.T) {
 	assertReceiptPaperHasNoWhitespaceNodes(t, body)
 }
 
+func TestRenderSnapshotHTMLShowsOneLeadingSummaryButtonPerLinkedBlock(t *testing.T) {
+	snapshot := Snapshot{
+		ID:         "snapshot-1",
+		Status:     StatusPublished,
+		CreatedAt:  time.Date(2026, 5, 28, 9, 10, 0, 0, time.UTC),
+		PaperChars: 32,
+		ReceiptLines: []ReceiptLine{
+			{Text: "Hacker News: Very long title", Link: "https://example.com/one", Alignment: "center", LineSize: 15},
+			{Text: "continued wrapped title", Link: "https://example.com/one", Alignment: "center", LineSize: 15},
+			{Text: "GitHub: Another linked title", Link: "https://example.com/two", Alignment: "center", LineSize: 15},
+			{Text: "continued second title", Link: "https://example.com/two", Alignment: "center", LineSize: 15},
+			{Text: "Unsafe title", Link: "javascript:alert(1)", Alignment: "center", LineSize: 15},
+		},
+	}
+
+	html, err := RenderSnapshotHTML(snapshot)
+	if err != nil {
+		t.Fatalf("render snapshot: %v", err)
+	}
+	body := string(html)
+
+	if got := strings.Count(body, `class="summary-button"`); got != 2 {
+		t.Fatalf("expected one summary button per linked block, got %d:\n%s", got, body)
+	}
+	for _, want := range []string{`data-summary-line-index="0"`, `data-summary-line-index="2"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected summary button %s:\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{`data-summary-line-index="1"`, `data-summary-line-index="3"`, `data-summary-line-index="4"`} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("did not expect summary button %s:\n%s", unwanted, body)
+		}
+	}
+	row := linkedRowForSummaryIndex(t, body, "0")
+	if buttonIndex := strings.Index(row, `class="summary-button"`); buttonIndex < 0 {
+		t.Fatalf("summary button not found in row:\n%s", row)
+	} else if textIndex := strings.Index(row, `class="receipt-line-text"`); textIndex < 0 || buttonIndex > textIndex {
+		t.Fatalf("summary button must be rendered before linked text:\n%s", row)
+	}
+}
+
 func TestRenderSnapshotHTMLShowsPendingNotice(t *testing.T) {
 	html, err := RenderSnapshotHTML(Snapshot{
 		ID:        "snapshot-1",
@@ -81,6 +123,24 @@ func TestRenderSnapshotHTMLShowsPendingNotice(t *testing.T) {
 	if !strings.Contains(string(html), "печать еще не подтверждена") {
 		t.Fatalf("expected pending notice in HTML:\n%s", string(html))
 	}
+}
+
+func linkedRowForSummaryIndex(t *testing.T, body string, lineIndex string) string {
+	t.Helper()
+	marker := `data-summary-line-index="` + lineIndex + `"`
+	markerIndex := strings.Index(body, marker)
+	if markerIndex < 0 {
+		t.Fatalf("summary marker %q not found:\n%s", marker, body)
+	}
+	rowStart := strings.LastIndex(body[:markerIndex], `<span class="receipt-link-row"`)
+	if rowStart < 0 {
+		t.Fatalf("linked row start not found before %q:\n%s", marker, body)
+	}
+	rowEnd := strings.Index(body[rowStart:], `</span></div>`)
+	if rowEnd < 0 {
+		t.Fatalf("linked row end not found after %q:\n%s", marker, body)
+	}
+	return body[rowStart : rowStart+rowEnd+len(`</span>`)]
 }
 
 func assertReceiptPaperHasNoWhitespaceNodes(t *testing.T, body string) {
