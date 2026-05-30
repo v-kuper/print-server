@@ -332,16 +332,17 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       text-underline-offset: 2px;
     }
     .receipt-link-row {
-      display: inline-flex;
-      align-items: flex-start;
-      justify-content: flex-start;
-      gap: 5px;
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      column-gap: 8px;
+      align-items: start;
+      width: 100%;
       max-width: 100%;
       min-width: 0;
     }
     .receipt-link-row .receipt-line-text {
       min-width: 0;
-      max-width: calc(100% - 28px);
+      max-width: 100%;
     }
     .summary-button {
       appearance: none;
@@ -362,6 +363,11 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
       line-height: 1;
       cursor: pointer;
       align-self: flex-start;
+    }
+    .summary-button-spacer {
+      display: block;
+      width: 22px;
+      height: 22px;
     }
     .summary-button:hover,
     .summary-button:focus {
@@ -462,6 +468,19 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
     .align-center .receipt-line-text { transform-origin: center center; }
     .align-left   .receipt-line-text { transform-origin: left center;   }
     .align-right  .receipt-line-text { transform-origin: right center;  }
+    .receipt-linked-line {
+      width: 100%;
+      margin: 0;
+      justify-content: flex-start;
+      text-align: left;
+    }
+    .receipt-linked-line .receipt-line-text {
+      white-space: normal;
+      overflow-wrap: break-word;
+      word-break: normal;
+      transform: none;
+      transform-origin: left center;
+    }
     .receipt-image-line {
       width: 100%;
       min-height: var(--image-line-height, 84px);
@@ -500,7 +519,7 @@ var snapshotTemplate = template.Must(template.New("receipt-snapshot").Parse(`<!d
 <body>
   <main data-snapshot-id="{{.ID}}">
     <section class="receipt-preview">
-      <article class="receipt-paper" style="--paper-chars: {{.PaperChars}};">{{- if .PendingNotice -}}<p class="notice">Этот слепок создан, но печать еще не подтверждена.</p>{{- end -}}{{- range .Lines -}}{{- if .QRCode -}}<div class="receipt-line receipt-qr-line align-{{.Alignment}} role-{{.Role}}">{{- if .QRDataURL -}}<img class="receipt-qr" src="{{.QRDataURL}}" alt="{{.QRCode}}">{{- else -}}<span class="receipt-line-text">{{.QRCode}}</span>{{- end -}}</div>{{- else if .ImageSrc -}}<div class="receipt-line receipt-image-line align-{{.Alignment}} role-{{.Role}}" style="--image-line-height: {{.ImageLineHeight}}px;"><img class="receipt-image" src="{{.ImageSrc}}" alt="" style="width: {{.ImagePreviewWidth}}px; height: {{.ImagePreviewHeight}}px;"></div>{{- else -}}<div class="receipt-line align-{{.Alignment}} role-{{.Role}}" style="--line-size: {{.LineSize}}px; --line-scale-x: {{.ScaleX}}; --line-scale-y: {{.ScaleY}};">{{- if .Link -}}<span class="receipt-link-row">{{- if .ShowSummaryButton -}}<button class="summary-button" type="button" data-summary-button data-summary-line-index="{{.LineIndex}}" title="Сделать summary" aria-label="Сделать summary"><span aria-hidden="true">✦</span></button>{{- end -}}<a class="receipt-line-text" href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</a></span>{{- else -}}<span class="receipt-line-text">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</span>{{- end -}}</div>{{- end -}}{{- end -}}</article>
+      <article class="receipt-paper" style="--paper-chars: {{.PaperChars}};">{{- if .PendingNotice -}}<p class="notice">Этот слепок создан, но печать еще не подтверждена.</p>{{- end -}}{{- range .Lines -}}{{- if .QRCode -}}<div class="receipt-line receipt-qr-line align-{{.Alignment}} role-{{.Role}}">{{- if .QRDataURL -}}<img class="receipt-qr" src="{{.QRDataURL}}" alt="{{.QRCode}}">{{- else -}}<span class="receipt-line-text">{{.QRCode}}</span>{{- end -}}</div>{{- else if .ImageSrc -}}<div class="receipt-line receipt-image-line align-{{.Alignment}} role-{{.Role}}" style="--image-line-height: {{.ImageLineHeight}}px;"><img class="receipt-image" src="{{.ImageSrc}}" alt="" style="width: {{.ImagePreviewWidth}}px; height: {{.ImagePreviewHeight}}px;"></div>{{- else -}}<div class="receipt-line{{if .Link}} receipt-linked-line{{end}} align-{{.Alignment}} role-{{.Role}}" style="--line-size: {{.LineSize}}px; --line-scale-x: {{.ScaleX}}; --line-scale-y: {{.ScaleY}};">{{- if .Link -}}<span class="receipt-link-row">{{- if .ShowSummaryButton -}}<button class="summary-button" type="button" data-summary-button data-summary-line-index="{{.LineIndex}}" title="Сделать summary" aria-label="Сделать summary"><span aria-hidden="true">✦</span></button>{{- else -}}<span class="summary-button-spacer" aria-hidden="true"></span>{{- end -}}<a class="receipt-line-text" href="{{.Link}}" target="_blank" rel="noopener noreferrer">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</a></span>{{- else -}}<span class="receipt-line-text">{{if .Text}}{{.Text}}{{else}}&nbsp;{{end}}</span>{{- end -}}</div>{{- end -}}{{- end -}}</article>
     </section>
     <div class="summary-modal" data-summary-modal hidden>
       <div class="summary-backdrop" data-summary-close></div>
