@@ -94,6 +94,9 @@ func TestDailyReceiptRendersTranslatedDenisTrendWithOriginalPlain(t *testing.T) 
 	if lines[originalIndex].Font <= lines[translatedIndex].Font {
 		t.Fatalf("expected original trend title to use smaller font, got translated=%#v original=%#v", lines[translatedIndex], lines[originalIndex])
 	}
+	if lines[originalIndex].Alignment != AlignmentCenter {
+		t.Fatalf("expected original trend title to keep normal alignment, got %#v", lines[originalIndex])
+	}
 }
 
 func linkForText(lines []Line, text string) string {

@@ -100,9 +100,11 @@ func (s StyleSettings) temperatureLineStyle() lineStyle {
 }
 
 func (s StyleSettings) originalLineStyle() lineStyle {
+	normalized := s.Normalized()
 	return lineStyle{
-		Role: RoleOriginal,
-		Font: 1,
+		Role:      RoleOriginal,
+		Font:      1,
+		Alignment: normalized.NormalAlignment,
 	}
 }
 

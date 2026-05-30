@@ -340,6 +340,9 @@ func TestDailyReceiptPrintsTranslatedNewsWithOriginalInSmallerFont(t *testing.T)
 	if lines[originalIndex].Font <= lines[translatedIndex].Font {
 		t.Fatalf("expected original title to use smaller receipt font, got translated=%#v original=%#v", lines[translatedIndex], lines[originalIndex])
 	}
+	if lines[originalIndex].Alignment != AlignmentCenter {
+		t.Fatalf("expected original title to keep normal alignment, got %#v", lines[originalIndex])
+	}
 }
 
 func TestDailyReceiptSetsLinkOnEveryWrappedNewsTitleLineOnly(t *testing.T) {
