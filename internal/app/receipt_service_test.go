@@ -1342,11 +1342,49 @@ func TestReceiptServiceBuildsDenisTrendsBlockWhenEnabled(t *testing.T) {
 	if !provider.now.Equal(fixedClock()) {
 		t.Fatalf("expected provider to receive service clock, got %v", provider.now)
 	}
+	if provider.mode != denistrends.ModeAuto {
+		t.Fatalf("expected default Denis Trends mode auto, got %q", provider.mode)
+	}
 	if !lineTextsContain(lines, "Denis Trends") || !lineTextsContain(lines, "Hacker News: HN title") {
 		t.Fatalf("expected Denis Trends receipt lines, got %#v", lines)
 	}
 	if link := receiptLinkForText(lines, "Hacker News: HN title"); link != "https://example.com/hn" {
 		t.Fatalf("expected trend link on receipt line, got %q", link)
+	}
+}
+
+func TestReceiptServicePassesConfiguredDenisTrendsMode(t *testing.T) {
+	store := &fakeStore{
+		denisTrends: denistrends.DefaultSettings(),
+	}
+	provider := &fakeDenisTrendsProvider{
+		sections: []denistrends.Section{
+			{
+				Period: denistrends.PeriodNow,
+				Title:  "Top now",
+				Items:  []denistrends.Item{{Title: "Now title", SourceName: "GitHub", Link: "https://example.com/now"}},
+			},
+		},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithDenisTrendsProvider(provider),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	_, err := service.BuildDailyReceiptWithContent(context.Background(), receipt.ContentSettings{
+		Configured:      true,
+		ShowDenisTrends: true,
+		DenisTrendsMode: receipt.DenisTrendsModeNow,
+	})
+	if err != nil {
+		t.Fatalf("build receipt: %v", err)
+	}
+
+	if provider.mode != denistrends.ModeNow {
+		t.Fatalf("expected provider to receive forced now mode, got %q", provider.mode)
 	}
 }
 
@@ -1863,10 +1901,12 @@ func (p *fakeNewsProvider) Current(context.Context, news.Settings) ([]news.Item,
 type fakeDenisTrendsProvider struct {
 	sections []denistrends.Section
 	now      time.Time
+	mode     denistrends.Mode
 }
 
-func (p *fakeDenisTrendsProvider) Current(_ context.Context, _ denistrends.Settings, now time.Time) ([]denistrends.Section, error) {
+func (p *fakeDenisTrendsProvider) CurrentForMode(_ context.Context, _ denistrends.Settings, now time.Time, mode denistrends.Mode) ([]denistrends.Section, error) {
 	p.now = now
+	p.mode = mode
 	return p.sections, nil
 }
 

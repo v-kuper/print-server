@@ -30,6 +30,14 @@ const (
 	PeriodMonth Period = "month"
 )
 
+type Mode string
+
+const (
+	ModeAuto Mode = "auto"
+	ModeNow  Mode = "now"
+	ModeDay  Mode = "day"
+)
+
 type Source string
 
 const (
@@ -115,17 +123,30 @@ func (s Settings) Validate() error {
 }
 
 func (s Settings) ActivePeriods(now time.Time) []Period {
+	return s.ActivePeriodsForMode(now, ModeAuto)
+}
+
+func (s Settings) ActivePeriodsForMode(now time.Time, mode Mode) []Period {
 	normalized := s.Normalized()
 	location, err := time.LoadLocation(DefaultTimezone)
 	if err != nil {
 		location = time.FixedZone(DefaultTimezone, 3*60*60)
 	}
 	local := now.In(location)
-	if local.Hour() < 12 {
+	switch mode {
+	case ModeNow:
 		if normalized.Periods[PeriodNow].Enabled {
 			return []Period{PeriodNow}
 		}
 		return nil
+	case ModeDay:
+	default:
+		if local.Hour() < 12 {
+			if normalized.Periods[PeriodNow].Enabled {
+				return []Period{PeriodNow}
+			}
+			return nil
+		}
 	}
 	isMonthEnd := local.AddDate(0, 0, 1).Day() == 1
 	var result []Period
@@ -183,6 +204,10 @@ func NewProvider(client *http.Client) *Provider {
 }
 
 func (p *Provider) Current(ctx context.Context, settings Settings, now time.Time) ([]Section, error) {
+	return p.CurrentForMode(ctx, settings, now, ModeAuto)
+}
+
+func (p *Provider) CurrentForMode(ctx context.Context, settings Settings, now time.Time, mode Mode) ([]Section, error) {
 	normalized := settings.Normalized()
 	if err := settings.Validate(); err != nil {
 		return nil, err
@@ -190,7 +215,7 @@ func (p *Provider) Current(ctx context.Context, settings Settings, now time.Time
 
 	var result []Section
 	var failures []error
-	for _, period := range normalized.ActivePeriods(now) {
+	for _, period := range normalized.ActivePeriodsForMode(now, mode) {
 		items, err := p.fetch(ctx, normalized, period)
 		if err != nil {
 			failures = append(failures, err)

@@ -325,11 +325,12 @@ func TestRuntimeAssetsServedWithoutCache(t *testing.T) {
 func TestBootstrapEndpointReturnsInitialClientState(t *testing.T) {
 	translateTitles := false
 	intervalContent := receipt.ContentSettings{
-		Configured:     true,
-		ShowWeather:    true,
-		ShowUsdBynRate: true,
-		ShowBankRates:  true,
-		ShowNews:       true,
+		Configured:      true,
+		ShowWeather:     true,
+		ShowUsdBynRate:  true,
+		ShowBankRates:   true,
+		ShowNews:        true,
+		DenisTrendsMode: receipt.DenisTrendsModeAuto,
 	}
 	store := &fakeStore{
 		config:   printer.Config{Host: "192.168.0.118", Port: 5555},
@@ -719,7 +720,7 @@ func TestSaveReceiptContentEndpointPersistsContent(t *testing.T) {
 	store := &fakeStore{}
 	server := NewServer(store, &fakePrinter{}, fixedClock)
 
-	body := bytes.NewBufferString(`{"configured":true,"showWeather":false,"showWeatherAdvice":false,"showMotivationQuote":true,"showTonPortfolio":false,"showUsdBynRate":true,"showBankRates":false,"showMail":true,"showCalendar":false,"showHistory":true,"showNews":true}`)
+	body := bytes.NewBufferString(`{"configured":true,"showWeather":false,"showWeatherAdvice":false,"showMotivationQuote":true,"showTonPortfolio":false,"showUsdBynRate":true,"showBankRates":false,"showMail":true,"showCalendar":false,"showHistory":true,"showNews":true,"showDenisTrends":true,"denisTrendsMode":"now"}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/settings/receipt-content", body)
 	response := httptest.NewRecorder()
 
@@ -737,7 +738,9 @@ func TestSaveReceiptContentEndpointPersistsContent(t *testing.T) {
 		!store.receiptContent.ShowUsdBynRate ||
 		!store.receiptContent.ShowMail ||
 		!store.receiptContent.ShowHistory ||
-		!store.receiptContent.ShowNews {
+		!store.receiptContent.ShowNews ||
+		!store.receiptContent.ShowDenisTrends ||
+		store.receiptContent.DenisTrendsMode != receipt.DenisTrendsModeNow {
 		t.Fatalf("expected saved receipt content toggles, got %#v", store.receiptContent)
 	}
 }

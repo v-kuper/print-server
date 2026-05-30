@@ -65,6 +65,26 @@ func TestActivePeriodsUseEuropeMinskCalendarRules(t *testing.T) {
 	}
 }
 
+func TestActivePeriodsCanBeForcedToNowOrDay(t *testing.T) {
+	settings := DefaultSettings()
+	location := time.FixedZone("Europe/Minsk", 3*60*60)
+	sundayMonthEndMorning := time.Date(2026, 5, 31, 9, 0, 0, 0, location)
+	weekdayEvening := time.Date(2026, 5, 29, 18, 0, 0, 0, location)
+
+	if got := settings.ActivePeriodsForMode(weekdayEvening, ModeNow); len(got) != 1 || got[0] != PeriodNow {
+		t.Fatalf("expected forced now to include now only, got %#v", got)
+	}
+	if got := settings.ActivePeriodsForMode(sundayMonthEndMorning, ModeDay); len(got) != 3 || got[0] != PeriodDay || got[1] != PeriodWeek || got[2] != PeriodMonth {
+		t.Fatalf("expected forced day to include day/week/month on Sunday month-end, got %#v", got)
+	}
+
+	disabled := DefaultSettings()
+	disabled.Periods[PeriodDay] = PeriodSettings{Enabled: false, MaxItems: 20}
+	if got := disabled.ActivePeriodsForMode(sundayMonthEndMorning, ModeDay); len(got) != 2 || got[0] != PeriodWeek || got[1] != PeriodMonth {
+		t.Fatalf("expected forced day to respect disabled day and keep calendar additions, got %#v", got)
+	}
+}
+
 func TestProviderParsesRSSItemsInRankOrderAndUsesPeriodEndpoints(t *testing.T) {
 	var requested []string
 	client := &http.Client{Transport: trendsRoundTripFunc(func(request *http.Request) (*http.Response, error) {

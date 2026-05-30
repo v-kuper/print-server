@@ -67,6 +67,11 @@ const denisTrendPeriods = [
   { key: "week", label: "Top week" },
   { key: "month", label: "Top month" }
 ];
+const denisTrendModeOptions = [
+  { key: "auto", label: "Авто" },
+  { key: "now", label: "Top now" },
+  { key: "day", label: "Top day" }
+];
 
 
 async function loadBootstrap() {
@@ -193,9 +198,34 @@ function renderScheduleContentGroups(container, content, keyAttribute) {
       checkbox.checked = Boolean(customContent[option.key]);
       label.append(checkbox, document.createTextNode(option.label));
       col.appendChild(label);
+      if (option.key === "showDenisTrends") {
+        col.appendChild(renderDenisTrendsModeControl(customContent.denisTrendsMode, keyAttribute));
+      }
     }
     container.appendChild(col);
   }
+}
+
+function renderDenisTrendsModeControl(value, keyAttribute) {
+  const label = document.createElement("label");
+  label.className = "content-mode-label";
+  label.textContent = "Режим";
+  const select = document.createElement("select");
+  select.dataset.denisTrendsMode = "";
+  if (keyAttribute === "intervalContentKey") {
+    select.dataset.intervalDenisTrendsMode = "";
+  } else {
+    select.dataset.scheduleDenisTrendsMode = "";
+  }
+  for (const option of denisTrendModeOptions) {
+    const item = document.createElement("option");
+    item.value = option.key;
+    item.textContent = option.label;
+    select.appendChild(item);
+  }
+  select.value = denisTrendsMode(value);
+  label.appendChild(select);
+  return label;
 }
 
 function renderIntervalContent(content) {
@@ -267,7 +297,7 @@ function renderDenisTrendsSettings(settings) {
 
   const hint = document.createElement("p");
   hint.className = "helper-text";
-  hint.textContent = "Denis Trends: до 12:00 печатается Top now, после 12:00 - Top day, по воскресеньям добавляется Top week, в последний день месяца - Top month.";
+  hint.textContent = "Denis Trends: режим Top now / Top day выбирается в составе чека и расписании. Авто оставляет правило до 12:00 Top now, после 12:00 Top day.";
   denisTrendsSettingsEl.appendChild(hint);
 
   denisTrendPeriods.forEach(period => {
@@ -333,6 +363,7 @@ function applyBootstrap(data) {
   setChecked("#content-history", content.showHistory);
   setChecked("#content-news", content.showNews);
   setChecked("#content-denis-trends", content.showDenisTrends);
+  setValue("#content-denis-trends-mode", denisTrendsMode(content.denisTrendsMode));
 
   const weather = data.weather || {};
   setValue("#weather-name", weather.name);
@@ -984,7 +1015,8 @@ function readReceiptContentSettings() {
     showCalendar: checked("#content-calendar"),
     showHistory: checked("#content-history"),
     showNews: checked("#content-news"),
-    showDenisTrends: checked("#content-denis-trends")
+    showDenisTrends: checked("#content-denis-trends"),
+    denisTrendsMode: denisTrendsMode(document.querySelector("#content-denis-trends-mode")?.value)
   };
 }
 
@@ -1040,8 +1072,16 @@ function scheduleContentFromSettings(settings) {
     showCalendar: Boolean(content.showCalendar),
     showHistory: Boolean(content.showHistory),
     showNews: Boolean(content.showNews),
-    showDenisTrends: Boolean(content.showDenisTrends)
+    showDenisTrends: Boolean(content.showDenisTrends),
+    denisTrendsMode: denisTrendsMode(content.denisTrendsMode)
   };
+}
+
+function denisTrendsMode(value) {
+  if (value === "now" || value === "day") {
+    return value;
+  }
+  return "auto";
 }
 
 function scheduleRunFromValue(value) {
@@ -1062,6 +1102,7 @@ function scheduleRowContent(row) {
   row.querySelectorAll("[data-schedule-content-key]").forEach(input => {
     content[input.dataset.scheduleContentKey] = input.checked;
   });
+  content.denisTrendsMode = row.querySelector("[data-schedule-denis-trends-mode]")?.value || "auto";
   return scheduleContentFromSettings(content);
 }
 
@@ -1070,6 +1111,7 @@ function readIntervalContentSettings() {
   document.querySelectorAll("[data-interval-content-key]").forEach(input => {
     content[input.dataset.intervalContentKey] = input.checked;
   });
+  content.denisTrendsMode = document.querySelector("[data-interval-denis-trends-mode]")?.value || "auto";
   return scheduleContentFromSettings(content);
 }
 
