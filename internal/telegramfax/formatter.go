@@ -8,6 +8,8 @@ import (
 	"atol-server/internal/receipt"
 )
 
+const faxBottomSeparator = "--------------------------------"
+
 func FormatReceiptLines(message Message, location *time.Location) []receipt.Line {
 	if location == nil {
 		location = time.Local
@@ -47,6 +49,11 @@ func FormatReceiptLines(message Message, location *time.Location) []receipt.Line
 			Role:      receipt.RoleNormal,
 		})
 	}
+	lines = append(lines, receipt.Line{
+		Text:      faxBottomSeparator,
+		Alignment: receipt.AlignmentCenter,
+		Role:      receipt.RoleNormal,
+	})
 	return lines
 }
 

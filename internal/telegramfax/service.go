@@ -158,7 +158,8 @@ func (s *Service) processUpdate(ctx context.Context, update Update) error {
 	if message.From == nil || message.From.IsBot {
 		return nil
 	}
-	if strings.TrimSpace(message.Text) == "" {
+	photo, hasPhoto := bestPhotoSize(message.Photo)
+	if strings.TrimSpace(message.Text) == "" && !hasPhoto {
 		return nil
 	}
 	if len(s.config.AllowedSenderIDs) > 0 && !s.config.AllowedSenderIDs.Contains(message.From.ID) {
@@ -169,6 +170,15 @@ func (s *Service) processUpdate(ctx context.Context, update Update) error {
 		return err
 	}
 	if !ok || !s.config.OwnerIDs.Contains(ownerID) {
+		return nil
+	}
+	if message.From.ID == ownerID {
+		return nil
+	}
+	if hasPhoto {
+		if err := s.printPhotoMessage(ctx, *message, photo, ownerID); err != nil {
+			s.logf("telegram fax photo print failed: %v", err)
+		}
 		return nil
 	}
 	if err := s.printMessage(ctx, *message, ownerID); err != nil {
@@ -233,6 +243,63 @@ func (s *Service) printMessage(ctx context.Context, message Message, ownerID int
 		}
 	}
 	return printErr
+}
+
+func (s *Service) printPhotoMessage(ctx context.Context, message Message, photo PhotoSize, ownerID int64) error {
+	config, err := s.printerConfig.LoadPrinter()
+	if err != nil {
+		return fmt.Errorf("load printer config: %w", err)
+	}
+	request := map[string]any{
+		"source":               "telegram_business",
+		"contentType":          "photo",
+		"businessConnectionId": message.BusinessConnectionID,
+		"businessOwnerId":      ownerID,
+		"messageId":            message.MessageID,
+		"senderId":             message.From.ID,
+		"sender":               senderDisplayName(message.From),
+		"caption":              message.Caption,
+		"telegramFileId":       photo.FileID,
+		"telegramFileUniqueId": photo.FileUniqueID,
+		"telegramPhotoWidth":   photo.Width,
+		"telegramPhotoHeight":  photo.Height,
+		"telegramFileSize":     photo.FileSize,
+	}
+	jobID := ""
+	if s.printJobs != nil {
+		var err error
+		jobID, err = s.printJobs.StartPrintJob("telegram_fax", request)
+		if err != nil {
+			return fmt.Errorf("start telegram fax photo print job: %w", err)
+		}
+	}
+
+	printErr := s.downloadAndPrintPhoto(ctx, config, message, photo)
+	if s.printJobs != nil && jobID != "" {
+		if err := s.printJobs.FinishPrintJob(jobID, printErr); err != nil {
+			return fmt.Errorf("finish telegram fax photo print job: %w", err)
+		}
+	}
+	return printErr
+}
+
+func (s *Service) downloadAndPrintPhoto(ctx context.Context, config printer.Config, message Message, photo PhotoSize) error {
+	file, err := s.client.GetFile(ctx, photo.FileID)
+	if err != nil {
+		return fmt.Errorf("get Telegram photo file: %w", err)
+	}
+	if strings.TrimSpace(file.FilePath) == "" {
+		return fmt.Errorf("Telegram photo file path is empty")
+	}
+	data, err := s.client.DownloadFile(ctx, file.FilePath)
+	if err != nil {
+		return fmt.Errorf("download Telegram photo file: %w", err)
+	}
+	buffer, err := PhotoBytesToPixelBuffer(data)
+	if err != nil {
+		return fmt.Errorf("render Telegram photo: %w", err)
+	}
+	return s.printer.PrintReceipt(ctx, config, FormatPhotoReceiptLines(message, buffer, s.location))
 }
 
 func (s *Service) logf(format string, args ...any) {

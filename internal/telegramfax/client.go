@@ -14,9 +14,13 @@ import (
 
 var ErrBusinessConnectionNotFound = errors.New("telegram business connection not found")
 
+const maxTelegramFileDownloadBytes = 20 << 20
+
 type Client interface {
 	GetUpdates(context.Context, GetUpdatesRequest) ([]Update, error)
 	GetBusinessConnection(context.Context, string) (BusinessConnection, error)
+	GetFile(context.Context, string) (File, error)
+	DownloadFile(context.Context, string) ([]byte, error)
 }
 
 type HTTPClient struct {
@@ -48,6 +52,36 @@ func (c *HTTPClient) GetBusinessConnection(ctx context.Context, id string) (Busi
 	return doTelegram[BusinessConnection](ctx, c, "getBusinessConnection", map[string]string{
 		"business_connection_id": id,
 	})
+}
+
+func (c *HTTPClient) GetFile(ctx context.Context, fileID string) (File, error) {
+	return doTelegram[File](ctx, c, "getFile", map[string]string{
+		"file_id": fileID,
+	})
+}
+
+func (c *HTTPClient) DownloadFile(ctx context.Context, filePath string) ([]byte, error) {
+	url := c.baseURL + "/file/bot" + c.token + "/" + strings.TrimLeft(filePath, "/")
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxTelegramFileDownloadBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, telegramAPIError("downloadFile", response.StatusCode, data)
+	}
+	if len(data) > maxTelegramFileDownloadBytes {
+		return nil, fmt.Errorf("telegram file is larger than %d bytes", maxTelegramFileDownloadBytes)
+	}
+	return data, nil
 }
 
 type telegramResponse[T any] struct {

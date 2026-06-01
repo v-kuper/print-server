@@ -18,11 +18,28 @@ type User struct {
 }
 
 type Message struct {
-	MessageID            int64  `json:"message_id"`
-	Date                 int64  `json:"date"`
-	BusinessConnectionID string `json:"business_connection_id,omitempty"`
-	From                 *User  `json:"from,omitempty"`
-	Text                 string `json:"text,omitempty"`
+	MessageID            int64       `json:"message_id"`
+	Date                 int64       `json:"date"`
+	BusinessConnectionID string      `json:"business_connection_id,omitempty"`
+	From                 *User       `json:"from,omitempty"`
+	Text                 string      `json:"text,omitempty"`
+	Caption              string      `json:"caption,omitempty"`
+	Photo                []PhotoSize `json:"photo,omitempty"`
+}
+
+type PhotoSize struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id,omitempty"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	FileSize     int64  `json:"file_size,omitempty"`
+}
+
+type File struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id,omitempty"`
+	FileSize     int64  `json:"file_size,omitempty"`
+	FilePath     string `json:"file_path,omitempty"`
 }
 
 type BusinessConnection struct {

@@ -32,6 +32,7 @@ func TestFormatReceiptLinesPreservesTelegramMessageText(t *testing.T) {
 		{Text: "Вторая строка", Alignment: receipt.AlignmentLeft, Role: receipt.RoleNormal},
 		{Text: "", Alignment: receipt.AlignmentLeft, Role: receipt.RoleNormal},
 		{Text: "Третья строка", Alignment: receipt.AlignmentLeft, Role: receipt.RoleNormal},
+		{Text: "--------------------------------", Alignment: receipt.AlignmentCenter, Role: receipt.RoleNormal},
 	}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("expected %#v, got %#v", want, lines)
