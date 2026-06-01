@@ -63,9 +63,9 @@ var weatherAdviceOptions = ollamaOptions{
 }
 
 var calendarAdviceOptions = ollamaOptions{
-	Temperature:   0.7,
-	TopP:          0.86,
-	RepeatPenalty: 1.08,
+	Temperature:   0.55,
+	TopP:          0.82,
+	RepeatPenalty: 1.12,
 	RepeatLastN:   96,
 }
 
