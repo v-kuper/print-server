@@ -95,3 +95,7 @@ DELETE /api/image-editor/image
 ```bash
 GOCACHE="$(pwd)/.gocache" go test ./...
 ```
+
+Перед рефакторингом серверного кода используй quality gate из
+`docs/server-quality-gate.md`: `go test ./...`, `go vet ./...` и
+`go test -cover ./...`.

@@ -237,7 +237,7 @@ func TestOllamaProviderBuildsCalendarAdvicePrompt(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"День плотный, держи паузы между встречами."}}`))
+		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"До синка проверь статус релиза; завтра планирование лучше подготовить сегодня."}}`))
 	}))
 	defer server.Close()
 
@@ -270,7 +270,7 @@ func TestOllamaProviderBuildsCalendarAdvicePrompt(t *testing.T) {
 		t.Fatalf("generate calendar advice: %v", err)
 	}
 
-	if advice.Text != "День плотный, держи паузы между встречами." {
+	if advice.Text != "До синка проверь статус релиза; завтра планирование лучше подготовить сегодня." {
 		t.Fatalf("expected sanitized calendar advice, got %q", advice.Text)
 	}
 	prompt := requestPayload.Messages[0].Content
@@ -282,7 +282,15 @@ func TestOllamaProviderBuildsCalendarAdvicePrompt(t *testing.T) {
 		"Синк по релизу",
 		"Завтра",
 		"Планирование",
-		"загруженности",
+		"конструктивную рекомендацию",
+		"спокойный и деловой",
+		"без слащавой поддержки",
+		"без гипербол",
+		"Оцени загрузку по фактам",
+		"Если день перегружен",
+		"Если загрузка умеренная или низкая",
+		"Если событий нет",
+		"не советуй отдых ради отдыха",
 		"Не выдумывай",
 		"1-2 короткие строки",
 		"без markdown",
@@ -290,6 +298,14 @@ func TestOllamaProviderBuildsCalendarAdvicePrompt(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("expected calendar prompt to contain %q, got %q", want, prompt)
 		}
+	}
+	for _, unwanted := range []string{"милый", "бодрый"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("expected calendar prompt to avoid %q, got %q", unwanted, prompt)
+		}
+	}
+	if requestPayload.Options.Temperature > 0.6 || requestPayload.Options.TopP > 0.84 || requestPayload.Options.RepeatPenalty < 1.1 {
+		t.Fatalf("expected grounded calendar advice options, got %#v", requestPayload.Options)
 	}
 }
 
