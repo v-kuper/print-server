@@ -240,6 +240,62 @@ http://<IP Windows-машины>:8080/oauth/google/callback
    - `Изображение на чек` печатает сохраненный pixel buffer 384 px;
    - `Текст на чек` печатает заметку с выбранными шрифтами и выравниванием.
 
+### Опционально: Telegram Business fax bot
+
+Этот режим превращает кассу в личный fax-принтер для Telegram Business.
+Сервер печатает только `business_message` от разрешенных отправителей и только
+для разрешенного Business-владельца.
+
+1. Создай бота через `@BotFather`.
+2. Включи для бота Business/Secretary mode в `@BotFather`, если пункт доступен.
+3. В Telegram Premium аккаунте открой `Settings -> Telegram Business ->
+   Chatbots` и подключи бота.
+4. До запуска сервера попроси владельца и доверенных отправителей написать
+   любое сообщение боту, затем открой в браузере:
+
+   ```text
+   https://api.telegram.org/bot<TELEGRAM_FAX_BOT_TOKEN>/getUpdates
+   ```
+
+   Нужные значения находятся в `message.from.id`. Твой ID нужен для
+   `TELEGRAM_FAX_OWNER_IDS`.
+
+   `TELEGRAM_FAX_ALLOWED_SENDER_IDS` можно оставить пустым: тогда сервер
+   доверяет списку выбранных чатов в Telegram Business. Если заполнить список,
+   он будет дополнительным локальным фильтром.
+5. Создай локальный `.env` рядом с `docker-compose.yml`:
+
+   ```powershell
+   Copy-Item .env.example .env
+   notepad .env
+   ```
+
+   Заполни `.env` реальными значениями:
+
+   ```dotenv
+   TELEGRAM_FAX_BOT_TOKEN=123456:replace-with-bot-token
+   TELEGRAM_FAX_OWNER_IDS=111111111
+   TELEGRAM_FAX_ALLOWED_SENDER_IDS=
+   TELEGRAM_FAX_POLL_TIMEOUT_SECONDS=25
+   ```
+
+   `.env` не коммить: он уже в `.gitignore`. Коммить можно только
+   `.env.example`.
+
+6. Пересоздай контейнер. Docker Compose автоматически подхватит `.env`:
+
+   ```powershell
+   docker compose up -d --force-recreate atol-server
+   ```
+
+7. Проверь логи:
+
+   ```powershell
+   docker compose logs --tail=120 atol-server
+   ```
+
+   Должна быть строка `Telegram Business fax bot enabled`.
+
 ## 11. Обновить релиз после git pull
 
 Этот сценарий используй на Windows-машине после того, как изменения уже

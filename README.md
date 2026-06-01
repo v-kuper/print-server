@@ -45,6 +45,67 @@ Google `credentials.json` по-прежнему нужно положить в `
 Для Windows-машины с кассой используй подробный чеклист:
 `WINDOWS_DOCKER_CHECKLIST.md`.
 
+## Telegram Business fax bot
+
+Сервер может работать как персональный fax-принтер для Telegram Business:
+разрешенный человек пишет в личный чат, Telegram передает `business_message`
+подключенному боту, а сервер печатает это сообщение как нефискальный чек.
+
+В v1 бот:
+- читает только Telegram Business updates, обычные личные сообщения боту не
+  печатаются;
+- печатает сразу, без подтверждения;
+- не отвечает собеседнику в Telegram;
+- печатает только если разрешен и Business-владелец, и отправитель.
+
+Настройка:
+
+1. Создай бота через `@BotFather`.
+2. Включи для него Business/Secretary mode в `@BotFather`, если этот пункт
+   доступен в твоей версии Telegram.
+3. В Telegram аккаунте с Premium открой `Settings -> Telegram Business ->
+   Chatbots` и подключи бота к личным чатам, которые можно передавать боту.
+4. До запуска сервера получи Telegram user IDs. Самый простой официальный
+   способ: попросить каждого человека написать любое сообщение боту и открыть:
+
+   ```text
+   https://api.telegram.org/bot<TELEGRAM_FAX_BOT_TOKEN>/getUpdates
+   ```
+
+   В ответе нужны поля `message.from.id`. Твой ID идет в
+   `TELEGRAM_FAX_OWNER_IDS`.
+
+   `TELEGRAM_FAX_ALLOWED_SENDER_IDS` можно оставить пустым: тогда сервер
+   печатает всех отправителей, чьи чаты ты разрешил в Telegram Business.
+   Если заполнить список, он станет дополнительным локальным фильтром.
+5. Создай локальный файл `.env` рядом с `docker-compose.yml`. Можно начать с
+   примера:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Заполни `.env` реальными значениями:
+
+   ```dotenv
+   TELEGRAM_FAX_BOT_TOKEN=123456:replace-with-bot-token
+   TELEGRAM_FAX_OWNER_IDS=111111111
+   TELEGRAM_FAX_ALLOWED_SENDER_IDS=
+   TELEGRAM_FAX_POLL_TIMEOUT_SECONDS=25
+   ```
+
+   `.env` игнорируется git-ом. Коммитить можно только `.env.example`.
+
+6. Пересоздай контейнер. Docker Compose автоматически подхватит `.env`:
+
+   ```bash
+   docker compose up -d --force-recreate atol-server
+   ```
+
+В логах должно появиться `Telegram Business fax bot enabled`. Последний
+обработанный Telegram update хранится в Postgres, поэтому после рестарта старые
+сообщения не печатаются повторно.
+
 ## Проверка
 
 1. Введи IP кассы, например `192.168.0.118`.

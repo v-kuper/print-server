@@ -18,6 +18,7 @@ import (
 	schedulerruntime "atol-server/internal/scheduler"
 	"atol-server/internal/settings"
 	"atol-server/internal/storage"
+	"atol-server/internal/telegramfax"
 	"atol-server/internal/web"
 )
 
@@ -73,6 +74,27 @@ func main() {
 	)
 	scheduler := schedulerruntime.NewService(store, receiptService, time.Now)
 	go scheduler.Start(ctx)
+
+	telegramFaxConfig, telegramFaxEnabled, err := telegramfax.ConfigFromEnv(os.Getenv)
+	if err != nil {
+		log.Fatalf("Telegram fax configuration failed: %v", err)
+	}
+	if telegramFaxEnabled {
+		telegramFaxService := telegramfax.NewService(
+			telegramFaxConfig,
+			telegramfax.NewHTTPClient(telegramFaxConfig.Token, telegramFaxConfig.APIBaseURL, nil),
+			telegramfax.NewPostgresStateStore(pool, store.WorkspaceID()),
+			store,
+			store,
+			gateway,
+			time.Now,
+			telegramfax.WithLogger(log.Default()),
+		)
+		go telegramFaxService.Start(ctx)
+		log.Printf("Telegram Business fax bot enabled, polling %s", telegramFaxConfig.APIBaseURL)
+	} else {
+		log.Printf("Telegram Business fax bot disabled")
+	}
 
 	server := web.NewServer(
 		store,
