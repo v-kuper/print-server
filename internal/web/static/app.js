@@ -2,6 +2,9 @@ const toastRootEl = document.querySelector("#toast-root");
 const previewEl = document.querySelector("#receipt-preview");
 const fontMetricsEl = document.querySelector("#font-metrics");
 const schedulerStatusEl = document.querySelector("#scheduler-status");
+const versionBadgeEl = document.querySelector("#app-version-badge");
+const versionSummaryEl = document.querySelector("[data-version-summary]");
+const versionDetailsEl = document.querySelector("[data-version-details]");
 const motivationStatusEl = document.querySelector("#motivation-status");
 const googleStatusEl = document.querySelector("#google-status");
 const googleCredentialsPathEl = document.querySelector("#google-credentials-path");
@@ -80,6 +83,42 @@ async function loadBootstrap() {
     throw new Error(payload.error || "Не удалось загрузить начальные настройки.");
   }
   return payload.data || {};
+}
+
+async function loadVersionInfo() {
+  const response = await fetch("/api/version");
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.error || "Не удалось загрузить версию приложения.");
+  }
+  return payload.data || {};
+}
+
+function shortCommit(commit) {
+  const value = String(commit || "").trim();
+  if (!value || value === "unknown") {
+    return "unknown";
+  }
+  return value.slice(0, 7);
+}
+
+function renderVersionBadge(info) {
+  if (!versionBadgeEl || !versionSummaryEl || !versionDetailsEl) {
+    return;
+  }
+
+  const version = valueOrEmpty(info.version || "dev");
+  const commit = valueOrEmpty(info.commit || "unknown");
+  const branch = valueOrEmpty(info.branch || "local");
+  const buildTime = valueOrEmpty(info.buildTime || "unknown");
+
+  versionSummaryEl.textContent = version + " | " + shortCommit(commit);
+  versionDetailsEl.textContent = [
+    "Version: " + version,
+    "Commit: " + commit,
+    "Branch: " + branch,
+    "Built: " + buildTime
+  ].join("\n");
 }
 
 function valueOrEmpty(value) {
@@ -2825,6 +2864,15 @@ async function loadFontMetrics() {
 }
 
 function bindEventListeners() {
+  versionBadgeEl?.addEventListener("click", () => {
+    if (!versionDetailsEl) {
+      return;
+    }
+    const nextHidden = !versionDetailsEl.hidden;
+    versionDetailsEl.hidden = nextHidden;
+    versionBadgeEl.setAttribute("aria-expanded", String(!nextHidden));
+  });
+
   document.querySelector('[data-action="check"]').addEventListener("click", () => {
     runAction("/api/printer/check", "");
   });
@@ -3024,6 +3072,11 @@ async function initializeApp() {
   loadGoogleStatus().catch(error => {
     setGoogleStatus("error", error.message);
   });
+  loadVersionInfo()
+    .then(renderVersionBadge)
+    .catch(() => {
+      renderVersionBadge({ version: "dev", commit: "unknown", branch: "local", buildTime: "unknown" });
+    });
 }
 
 initializeApp().catch(error => {

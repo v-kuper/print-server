@@ -87,9 +87,14 @@ Workflow делает:
 
 1. `git pull --ff-only` в `ATOL_DEPLOY_DIR`;
 2. `go test ./...`;
-3. `docker compose build atol-server`;
-4. `docker compose up -d --force-recreate atol-server`;
-5. проверку `http://localhost:8080/healthz`.
+3. записывает build metadata (`build-<run_number>`, commit, branch, build time);
+4. `docker compose build atol-server`;
+5. `docker compose up -d --force-recreate atol-server`;
+6. проверку `http://localhost:8080/healthz`.
+
+Текущий build отображается в правом нижнем углу UI. По клику на бейдж
+раскрываются commit, branch и время сборки. Те же данные доступны через
+`GET /api/version`.
 
 Секреты не передаются в GitHub Actions. Docker Compose читает локальный `.env`
 рядом с `docker-compose.yml` на Windows-машине, поэтому Telegram token и другие
@@ -192,6 +197,7 @@ RSS по умолчанию:
 
 ```text
 GET  /healthz
+GET  /api/version
 POST /api/settings/printer
 POST /api/settings/weather
 POST /api/settings/finance

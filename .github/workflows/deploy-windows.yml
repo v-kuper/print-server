@@ -73,6 +73,15 @@ jobs:
           Set-Location $env:ATOL_DEPLOY_DIR
           go test ./...
 
+      - name: Set build metadata
+        shell: powershell
+        run: |
+          $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_VERSION=build-$env:GITHUB_RUN_NUMBER"
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_COMMIT=$env:GITHUB_SHA"
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_BRANCH=$env:GITHUB_REF_NAME"
+          Add-Content -Path $env:GITHUB_ENV -Value "APP_BUILD_TIME=$buildTime"
+
       - name: Build Docker image
         shell: powershell
         run: |

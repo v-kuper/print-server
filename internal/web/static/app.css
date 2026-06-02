@@ -88,6 +88,47 @@ body {
   border-left-color: var(--primary);
 }
 
+.version-badge {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 250;
+  max-width: min(340px, calc(100vw - 32px));
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--muted);
+  box-shadow: var(--shadow);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+
+.version-badge:hover,
+.version-badge:focus-visible {
+  color: var(--text);
+  border-color: var(--primary);
+}
+
+.version-summary {
+  display: block;
+  white-space: nowrap;
+}
+
+.version-details {
+  display: block;
+  margin-top: 6px;
+  white-space: pre-line;
+  color: var(--text);
+}
+
+.version-details[hidden] {
+  display: none !important;
+}
+
 .toast-icon {
   width: 16px;
   height: 16px;

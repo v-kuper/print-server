@@ -9,7 +9,13 @@ RUN go mod download
 COPY . ./
 
 ENV CGO_ENABLED=1
-RUN go build -trimpath -o /out/atol-server ./cmd/atol-server
+ARG APP_VERSION=dev
+ARG APP_COMMIT=unknown
+ARG APP_BRANCH=local
+ARG APP_BUILD_TIME=unknown
+RUN go build -trimpath \
+    -ldflags="-X atol-server/internal/version.Version=${APP_VERSION} -X atol-server/internal/version.Commit=${APP_COMMIT} -X atol-server/internal/version.Branch=${APP_BRANCH} -X atol-server/internal/version.BuildTime=${APP_BUILD_TIME}" \
+    -o /out/atol-server ./cmd/atol-server
 
 FROM --platform=linux/amd64 debian:bookworm-slim AS runtime-base
 

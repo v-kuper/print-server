@@ -19,6 +19,7 @@ import (
 	"atol-server/internal/receiptsnapshot"
 	"atol-server/internal/schedule"
 	schedulerruntime "atol-server/internal/scheduler"
+	"atol-server/internal/version"
 	"atol-server/internal/weather"
 )
 
@@ -161,6 +162,7 @@ type Server struct {
 	clock                  func() time.Time
 	assetsPath             string
 	imageEditorPath        string
+	versionInfo            version.Info
 }
 
 const defaultAssetsPath = "/opt/atol-server/assets"
@@ -252,6 +254,12 @@ func WithScheduler(scheduler Scheduler) ServerOption {
 	}
 }
 
+func WithVersionInfo(info version.Info) ServerOption {
+	return func(s *Server) {
+		s.versionInfo = info
+	}
+}
+
 func NewServer(store SettingsStore, gateway PrinterGateway, clock func() time.Time, options ...ServerOption) *Server {
 	if clock == nil {
 		clock = time.Now
@@ -269,6 +277,7 @@ func NewServer(store SettingsStore, gateway PrinterGateway, clock func() time.Ti
 		clock:                  clock,
 		assetsPath:             defaultAssetsPath,
 		imageEditorPath:        defaultImageEditorPath,
+		versionInfo:            version.Current(),
 	}
 	for _, option := range options {
 		option(server)
@@ -300,6 +309,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /static/app.js", handleAppJS)
 	mux.Handle("GET /assets/", noStore(http.StripPrefix("/assets/", http.FileServer(http.Dir(s.assetsPathOrDefault())))))
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.HandleFunc("GET /api/bootstrap", s.handleBootstrap)
 	mux.HandleFunc("POST /api/settings/printer", s.handleSavePrinter)
 	mux.HandleFunc("POST /api/settings/weather", s.handleSaveWeather)

@@ -27,6 +27,7 @@ import (
 	"atol-server/internal/receiptsnapshot"
 	"atol-server/internal/schedule"
 	schedulerruntime "atol-server/internal/scheduler"
+	"atol-server/internal/version"
 	"atol-server/internal/weather"
 )
 
@@ -182,6 +183,9 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`id="calendar-double-width"`,
 		`data-action="weather"`,
 		`Напечатать превью`,
+		`id="app-version-badge"`,
+		`data-version-summary`,
+		`data-version-details`,
 	} {
 		if !bytes.Contains([]byte(body), []byte(want)) {
 			t.Fatalf("expected static client shell to contain %q", want)
@@ -234,6 +238,8 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`.toast-notification.error`,
 				`font-size: 16px;`,
 				`.primary-print {`,
+				`.version-badge {`,
+				`.version-details[hidden]`,
 			},
 			unwanted: []string{
 				`.app-status`,
@@ -257,6 +263,9 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`function wrapTextPrintLine`,
 				`function effectiveTextPrintLineLength`,
 				`wrapTextPrintLine(lineText, effectiveTextPrintLineLength(block.font, block.doubleWidth))`,
+				`fetch("/api/version")`,
+				`function renderVersionBadge`,
+				`data-version-details`,
 				`showHistory`,
 				`showDailyQuests`,
 				`data-schedule-content-key`,
@@ -312,6 +321,49 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				t.Fatalf("expected %s not to contain %q", asset.path, unwanted)
 			}
 		}
+	}
+}
+
+func TestVersionEndpointReturnsBuildMetadata(t *testing.T) {
+	server := NewServer(
+		&fakeStore{config: printer.DefaultConfig()},
+		&fakePrinter{},
+		fixedClock,
+		WithVersionInfo(version.Info{
+			Version:   "build-42",
+			Commit:    "70e7a0e75da8e08e37306bde4fdaca19eca58531",
+			Branch:    "main",
+			BuildTime: "2026-06-02T19:23:00Z",
+		}),
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected version response to disable browser cache, got %q", got)
+	}
+
+	var payload struct {
+		OK   bool         `json:"ok"`
+		Data version.Info `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode version response: %v", err)
+	}
+	if !payload.OK {
+		t.Fatalf("expected ok response, got %#v", payload)
+	}
+	if payload.Data.Version != "build-42" ||
+		payload.Data.Commit != "70e7a0e75da8e08e37306bde4fdaca19eca58531" ||
+		payload.Data.Branch != "main" ||
+		payload.Data.BuildTime != "2026-06-02T19:23:00Z" {
+		t.Fatalf("unexpected version data: %#v", payload.Data)
 	}
 }
 
