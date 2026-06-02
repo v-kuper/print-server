@@ -22,7 +22,6 @@ jobs:
 
     env:
       ATOL_DEPLOY_DIR: ${{ vars.ATOL_DEPLOY_DIR }}
-      GOCACHE: ${{ runner.temp }}\go-build-cache
 
     steps:
       - name: Setup Go
