@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"atol-server/internal/printcoord"
 	"atol-server/internal/printer"
 	"atol-server/internal/receipt"
 )
@@ -29,7 +30,12 @@ type PrintJobStore interface {
 }
 
 type Printer interface {
+	CheckConnection(context.Context, printer.Config) (string, error)
 	PrintReceipt(context.Context, printer.Config, []receipt.Line) error
+}
+
+type PrintCoordinator interface {
+	TryRunFax(context.Context, func(context.Context) error) (bool, error)
 }
 
 type Logger interface {
@@ -43,9 +49,12 @@ type Service struct {
 	printerConfig    PrinterConfigStore
 	printJobs        PrintJobStore
 	printer          Printer
+	queueStore       QueueStore
+	printCoordinator PrintCoordinator
 	clock            func() time.Time
 	location         *time.Location
 	retryDelay       time.Duration
+	queueRetryDelay  time.Duration
 	logger           Logger
 	connectionOwners map[string]int64
 }
@@ -74,6 +83,30 @@ func WithRetryDelay(delay time.Duration) Option {
 	}
 }
 
+func WithQueueRetryDelay(delay time.Duration) Option {
+	return func(s *Service) {
+		if delay > 0 {
+			s.queueRetryDelay = delay
+		}
+	}
+}
+
+func WithQueueStore(store QueueStore) Option {
+	return func(s *Service) {
+		if store != nil {
+			s.queueStore = store
+		}
+	}
+}
+
+func WithPrintCoordinator(coordinator PrintCoordinator) Option {
+	return func(s *Service) {
+		if coordinator != nil {
+			s.printCoordinator = coordinator
+		}
+	}
+}
+
 func NewService(
 	config Config,
 	client Client,
@@ -95,8 +128,11 @@ func NewService(
 		printJobs:        printJobs,
 		printer:          printerGateway,
 		clock:            clock,
+		queueStore:       newMemoryQueueStore(clock),
+		printCoordinator: printcoord.New(),
 		location:         time.Local,
 		retryDelay:       5 * time.Second,
+		queueRetryDelay:  time.Minute,
 		connectionOwners: make(map[string]int64),
 	}
 	for _, option := range options {
@@ -106,6 +142,7 @@ func NewService(
 }
 
 func (s *Service) Start(ctx context.Context) {
+	go s.retryQueuedFaxes(ctx)
 	for ctx.Err() == nil {
 		if err := s.PollOnce(ctx); err != nil && ctx.Err() == nil {
 			s.logf("telegram fax polling failed: %v", err)
@@ -115,6 +152,21 @@ func (s *Service) Start(ctx context.Context) {
 				timer.Stop()
 				return
 			case <-timer.C:
+			}
+		}
+	}
+}
+
+func (s *Service) retryQueuedFaxes(ctx context.Context) {
+	ticker := time.NewTicker(s.queueRetryDelay)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.FlushPending(ctx); err != nil && ctx.Err() == nil {
+				s.logf("telegram fax queue flush failed: %v", err)
 			}
 		}
 	}
@@ -142,6 +194,11 @@ func (s *Service) PollOnce(ctx context.Context) error {
 		}
 		if err := s.stateStore.Save(ctx, state); err != nil {
 			return fmt.Errorf("save telegram fax state: %w", err)
+		}
+	}
+	if len(updates) > 0 {
+		if err := s.FlushPending(ctx); err != nil {
+			return fmt.Errorf("flush telegram fax queue: %w", err)
 		}
 	}
 	return nil
@@ -183,15 +240,22 @@ func (s *Service) processBusinessMessage(ctx context.Context, message Message) e
 		return nil
 	}
 	if hasPhoto {
-		if err := s.printPhotoMessage(ctx, message, photo, ownerID); err != nil {
-			s.logf("telegram fax photo print failed: %v", err)
-		}
-		return nil
+		return s.enqueueMessage(ctx, QueueItem{
+			DedupeKey:       businessDedupeKey(message),
+			Source:          "telegram_business",
+			ContentType:     "photo",
+			Message:         message,
+			BusinessOwnerID: ownerID,
+			Photo:           photo,
+		})
 	}
-	if err := s.printMessage(ctx, message, ownerID); err != nil {
-		s.logf("telegram fax print failed: %v", err)
-	}
-	return nil
+	return s.enqueueMessage(ctx, QueueItem{
+		DedupeKey:       businessDedupeKey(message),
+		Source:          "telegram_business",
+		ContentType:     "text",
+		Message:         message,
+		BusinessOwnerID: ownerID,
+	})
 }
 
 func (s *Service) processDirectMessage(ctx context.Context, message Message) error {
@@ -210,13 +274,29 @@ func (s *Service) processDirectMessage(ctx context.Context, message Message) err
 		return nil
 	}
 	if hasPhoto {
-		if err := s.printDirectPhotoMessage(ctx, message, photo); err != nil {
-			s.logf("telegram direct fax photo print failed: %v", err)
-		}
-		return nil
+		return s.enqueueMessage(ctx, QueueItem{
+			DedupeKey:   directDedupeKey(message),
+			Source:      "telegram_bot_direct",
+			ContentType: "photo",
+			Message:     message,
+			Photo:       photo,
+		})
 	}
-	if err := s.printDirectMessage(ctx, message); err != nil {
-		s.logf("telegram direct fax print failed: %v", err)
+	return s.enqueueMessage(ctx, QueueItem{
+		DedupeKey:   directDedupeKey(message),
+		Source:      "telegram_bot_direct",
+		ContentType: "text",
+		Message:     message,
+	})
+}
+
+func (s *Service) enqueueMessage(ctx context.Context, item QueueItem) error {
+	if s.queueStore == nil {
+		s.queueStore = newMemoryQueueStore(s.clock)
+	}
+	_, _, err := s.queueStore.Enqueue(ctx, item)
+	if err != nil {
+		return fmt.Errorf("enqueue telegram fax: %w", err)
 	}
 	return nil
 }
@@ -246,6 +326,137 @@ func (s *Service) ownerIDForMessage(ctx context.Context, message Message) (int64
 	s.rememberConnection(connection)
 	ownerID, ok := s.connectionOwners[connectionID]
 	return ownerID, ok, nil
+}
+
+func (s *Service) FlushPending(ctx context.Context) error {
+	if s.queueStore == nil {
+		return nil
+	}
+	item, ok, err := s.queueStore.NextPending(ctx, s.clock())
+	if err != nil {
+		return fmt.Errorf("load pending telegram fax: %w", err)
+	}
+	if !ok {
+		return nil
+	}
+	config, err := s.printerConfig.LoadPrinter()
+	if err != nil {
+		return fmt.Errorf("load printer config: %w", err)
+	}
+	if _, err := s.printer.CheckConnection(ctx, config); err != nil {
+		s.logf("telegram fax printer is unavailable, queued faxes retained: %v", err)
+		return nil
+	}
+	for ctx.Err() == nil {
+		ran, printErr := s.printCoordinator.TryRunFax(ctx, func(ctx context.Context) error {
+			return s.printQueuedItem(ctx, config, item)
+		})
+		if printErr != nil {
+			nextAttemptAt := s.nextAttemptAt(item)
+			if err := s.queueStore.MarkFailed(ctx, item.ID, printErr, nextAttemptAt); err != nil {
+				return fmt.Errorf("mark telegram fax failed: %w", err)
+			}
+			s.logf("telegram queued fax print failed: %v", printErr)
+			item, ok, err = s.queueStore.NextPending(ctx, s.clock())
+			if err != nil {
+				return fmt.Errorf("load pending telegram fax: %w", err)
+			}
+			if !ok {
+				return nil
+			}
+			continue
+		}
+		if !ran {
+			return nil
+		}
+		if err := s.queueStore.MarkPrinted(ctx, item.ID); err != nil {
+			return fmt.Errorf("mark telegram fax printed: %w", err)
+		}
+		item, ok, err = s.queueStore.NextPending(ctx, s.clock())
+		if err != nil {
+			return fmt.Errorf("load pending telegram fax: %w", err)
+		}
+		if !ok {
+			return nil
+		}
+	}
+	return ctx.Err()
+}
+
+func (s *Service) printQueuedItem(ctx context.Context, config printer.Config, item QueueItem) error {
+	request := printJobRequestForQueueItem(item)
+	jobID := ""
+	if s.printJobs != nil {
+		var err error
+		jobID, err = s.printJobs.StartPrintJob("telegram_fax", request)
+		if err != nil {
+			return fmt.Errorf("start telegram fax print job: %w", err)
+		}
+	}
+	var printErr error
+	if item.ContentType == "photo" {
+		printErr = s.downloadAndPrintPhoto(ctx, config, item.Message, item.Photo)
+	} else {
+		printErr = s.printer.PrintReceipt(ctx, config, FormatReceiptLines(item.Message, s.location))
+	}
+	if s.printJobs != nil && jobID != "" {
+		if err := s.printJobs.FinishPrintJob(jobID, printErr); err != nil {
+			s.logf("finish telegram fax print job failed: %v", err)
+		}
+	}
+	return printErr
+}
+
+func (s *Service) nextAttemptAt(item QueueItem) time.Time {
+	delay := time.Duration(item.Attempts+1) * time.Minute
+	if delay > 5*time.Minute {
+		delay = 5 * time.Minute
+	}
+	return s.clock().Add(delay)
+}
+
+func businessDedupeKey(message Message) string {
+	return fmt.Sprintf("business:%s:%d", strings.TrimSpace(message.BusinessConnectionID), message.MessageID)
+}
+
+func directDedupeKey(message Message) string {
+	chatID := int64(0)
+	if message.Chat != nil {
+		chatID = message.Chat.ID
+	}
+	return fmt.Sprintf("direct:%d:%d", chatID, message.MessageID)
+}
+
+func printJobRequestForQueueItem(item QueueItem) map[string]any {
+	request := map[string]any{
+		"queueId":     item.ID,
+		"dedupeKey":   item.DedupeKey,
+		"attempt":     item.Attempts + 1,
+		"source":      item.Source,
+		"contentType": item.ContentType,
+		"messageId":   item.Message.MessageID,
+		"sender":      senderDisplayName(item.Message.From),
+	}
+	if item.Message.From != nil {
+		request["senderId"] = item.Message.From.ID
+	}
+	if item.Source == "telegram_business" {
+		request["businessConnectionId"] = item.Message.BusinessConnectionID
+		request["businessOwnerId"] = item.BusinessOwnerID
+	} else if item.Message.Chat != nil {
+		request["chatId"] = item.Message.Chat.ID
+	}
+	if item.ContentType == "photo" {
+		request["caption"] = item.Message.Caption
+		request["telegramFileId"] = item.Photo.FileID
+		request["telegramFileUniqueId"] = item.Photo.FileUniqueID
+		request["telegramPhotoWidth"] = item.Photo.Width
+		request["telegramPhotoHeight"] = item.Photo.Height
+		request["telegramFileSize"] = item.Photo.FileSize
+	} else {
+		request["text"] = item.Message.Text
+	}
+	return request
 }
 
 func (s *Service) printMessage(ctx context.Context, message Message, ownerID int64) error {

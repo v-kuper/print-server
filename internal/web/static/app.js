@@ -115,7 +115,7 @@ function renderVersionBadge(info) {
   versionSummaryEl.textContent = version + " | " + shortCommit(commit);
   versionDetailsEl.textContent = [
     "Version: " + version,
-    "Commit: " + commit,
+    "Commit: " + shortCommit(commit),
     "Branch: " + branch,
     "Built: " + buildTime
   ].join("\n");

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -115,7 +116,9 @@ func (s *Server) handleImageEditorPrint(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
-	printErr := s.printer.PrintPixelBuffer(r.Context(), config, buffer)
+	printErr := s.printCoordinator.RunUserPrint(r.Context(), func(ctx context.Context) error {
+		return s.printer.PrintPixelBuffer(ctx, config, buffer)
+	})
 	finishErr := s.finishPrintJob(jobID, printErr)
 	if printErr != nil {
 		writeJSON(w, http.StatusBadGateway, imageEditorResponse{

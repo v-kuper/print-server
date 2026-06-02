@@ -75,6 +75,26 @@ func TestPrinterCheckEndpointUsesSavedConfig(t *testing.T) {
 	}
 }
 
+func TestPrinterCheckEndpointTriggersTelegramFaxQueueFlush(t *testing.T) {
+	store := &fakeStore{config: printer.Config{Host: "192.168.0.118", Port: 5555}}
+	flusher := &fakeTelegramFaxFlusher{calls: make(chan struct{}, 1)}
+	server := NewServer(store, &fakePrinter{}, fixedClock, WithTelegramFaxQueueFlusher(flusher))
+
+	request := httptest.NewRequest(http.MethodPost, "/api/printer/check", nil)
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	select {
+	case <-flusher.calls:
+	case <-time.After(time.Second):
+		t.Fatalf("expected successful printer check to trigger Telegram fax queue flush")
+	}
+}
+
 func TestPrinterFontsEndpointReturnsAtolFontMetrics(t *testing.T) {
 	store := &fakeStore{config: printer.Config{Host: "192.168.0.118", Port: 5555}}
 	gateway := &fakePrinter{fontMetrics: []printer.FontMetric{
@@ -265,6 +285,7 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`wrapTextPrintLine(lineText, effectiveTextPrintLineLength(block.font, block.doubleWidth))`,
 				`fetch("/api/version")`,
 				`function renderVersionBadge`,
+				`"Commit: " + shortCommit(commit)`,
 				`data-version-details`,
 				`showHistory`,
 				`showDailyQuests`,
@@ -2220,6 +2241,15 @@ func (s *fakeScheduler) ResetFromNow(context.Context) error {
 
 func (s *fakeScheduler) Status() (schedulerruntime.Status, error) {
 	return s.status, nil
+}
+
+type fakeTelegramFaxFlusher struct {
+	calls chan struct{}
+}
+
+func (f *fakeTelegramFaxFlusher) FlushPending(context.Context) error {
+	f.calls <- struct{}{}
+	return nil
 }
 
 type fakePrinter struct {
