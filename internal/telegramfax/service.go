@@ -209,9 +209,6 @@ func (s *Service) processDirectMessage(ctx context.Context, message Message) err
 	if strings.HasPrefix(text, "/") {
 		return nil
 	}
-	if !s.directSenderAllowed(message.From.ID) {
-		return nil
-	}
 	if hasPhoto {
 		if err := s.printDirectPhotoMessage(ctx, message, photo); err != nil {
 			s.logf("telegram direct fax photo print failed: %v", err)
@@ -222,10 +219,6 @@ func (s *Service) processDirectMessage(ctx context.Context, message Message) err
 		s.logf("telegram direct fax print failed: %v", err)
 	}
 	return nil
-}
-
-func (s *Service) directSenderAllowed(senderID int64) bool {
-	return s.config.OwnerIDs.Contains(senderID) || s.config.AllowedSenderIDs.Contains(senderID)
 }
 
 func (s *Service) rememberConnection(connection BusinessConnection) {

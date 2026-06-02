@@ -270,7 +270,7 @@ func TestPollOncePrintsAllowedDirectMessageAndAdvancesOffset(t *testing.T) {
 	}
 }
 
-func TestPollOncePrintsOwnerDirectMessageWhenSenderAllowlistIsEmpty(t *testing.T) {
+func TestPollOncePrintsAnyDirectMessageWhenSenderAllowlistIsEmpty(t *testing.T) {
 	config := testConfig()
 	config.AllowedSenderIDs = nil
 	client := &fakeTelegramClient{
@@ -278,9 +278,9 @@ func TestPollOncePrintsOwnerDirectMessageWhenSenderAllowlistIsEmpty(t *testing.T
 			{
 				UpdateID: 82,
 				Message: &Message{
-					From: &User{ID: 1001, FirstName: "Owner"},
-					Chat: &Chat{ID: 1001, Type: "private"},
-					Text: "Owner direct print",
+					From: &User{ID: 9999, FirstName: "Unknown"},
+					Chat: &Chat{ID: 9999, Type: "private"},
+					Text: "Public direct print",
 				},
 			},
 		},
@@ -292,8 +292,8 @@ func TestPollOncePrintsOwnerDirectMessageWhenSenderAllowlistIsEmpty(t *testing.T
 		t.Fatalf("poll once: %v", err)
 	}
 
-	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "Owner direct print" {
-		t.Fatalf("expected owner direct message to print, got %#v", gateway.printedLines)
+	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "Public direct print" {
+		t.Fatalf("expected any direct message to print, got %#v", gateway.printedLines)
 	}
 }
 
@@ -304,17 +304,6 @@ func TestPollOnceSkipsUnsafeDirectMessages(t *testing.T) {
 		name   string
 		update Update
 	}{
-		{
-			name: "non allowed sender",
-			update: Update{
-				UpdateID: 90,
-				Message: &Message{
-					From: &User{ID: 9999, FirstName: "Unknown"},
-					Chat: &Chat{ID: 9999, Type: "private"},
-					Text: "spam print",
-				},
-			},
-		},
 		{
 			name: "group chat",
 			update: Update{
