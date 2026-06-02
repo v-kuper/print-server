@@ -133,6 +133,37 @@ func TestClientExchangeCodeSavesTokenToConfiguredStore(t *testing.T) {
 	}
 }
 
+func TestClientExchangeCodePreservesExistingRefreshTokenWhenResponseOmitsIt(t *testing.T) {
+	dir := t.TempDir()
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"access-new","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	credentialsPath := filepath.Join(dir, "credentials.json")
+	writeCredentials(t, credentialsPath, "https://accounts.example/auth", tokenServer.URL)
+	tokenStore := &memoryTokenStore{saved: Token{
+		AccessToken:  "access-old",
+		RefreshToken: "refresh-old",
+		TokenType:    "Bearer",
+		Expiry:       time.Date(2026, 5, 25, 10, 0, 0, 0, time.UTC),
+	}}
+	client := NewClient(Config{
+		CredentialsPath: credentialsPath,
+		TokenStore:      tokenStore,
+		Clock:           func() time.Time { return time.Date(2026, 5, 25, 11, 0, 0, 0, time.UTC) },
+	})
+
+	if err := client.ExchangeCode(context.Background(), "auth-code", "http://localhost:8080/oauth/google/callback"); err != nil {
+		t.Fatalf("exchange code: %v", err)
+	}
+
+	if tokenStore.saved.AccessToken != "access-new" || tokenStore.saved.RefreshToken != "refresh-old" {
+		t.Fatalf("expected existing refresh token to be preserved, got %#v", tokenStore.saved)
+	}
+}
+
 func TestClientCurrentReturnsTokenStoreErrors(t *testing.T) {
 	dir := t.TempDir()
 	credentialsPath := filepath.Join(dir, "credentials.json")

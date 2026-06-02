@@ -88,6 +88,12 @@ True
 http://localhost:8080/oauth/google/callback
 ```
 
+Чтобы Google-авторизация не слетала каждую неделю, проверь в Google Cloud
+Console -> `APIs & Services` -> `OAuth consent screen`, что publishing status
+переведен из `Testing` в `In production`. В `Testing` Google выдает refresh
+token примерно на 7 дней. После переключения в production авторизуй Google в UI
+еще один раз, чтобы получить новый refresh token.
+
 Важно: `data\` локальная папка, её нельзя отправлять в публичный репозиторий.
 
 ## 5. Собрать Docker image без cache

@@ -42,6 +42,35 @@ http://localhost:8080
 импортируются в БД один раз при первом запуске и остаются как backup.
 Google `credentials.json` по-прежнему нужно положить в `data/google/credentials.json`.
 
+### Google OAuth без еженедельной повторной авторизации
+
+Сервер хранит Google OAuth token в Postgres и автоматически обновляет access
+token через refresh token. Если авторизация слетает примерно раз в неделю,
+проверь Google Cloud: для External OAuth consent screen в статусе `Testing`
+Google выдает refresh token с истечением через 7 дней.
+
+Чтобы авторизация жила дольше:
+
+1. Открой Google Cloud Console -> `APIs & Services` -> `OAuth consent screen`.
+2. Переведи publishing status из `Testing` в `In production`.
+3. Убедись, что OAuth client содержит redirect URI:
+
+   ```text
+   http://localhost:8080/oauth/google/callback
+   ```
+
+4. Если заходишь не с Windows-машины, добавь LAN redirect URI:
+
+   ```text
+   http://<IP Windows-машины>:8080/oauth/google/callback
+   ```
+
+5. После изменения статуса авторизуй Google в UI еще один раз, чтобы получить
+   новый refresh token уже не из Testing-режима.
+
+Не нажимай `Отключить`, не удаляй `data/` и не сбрасывай таблицу
+`google_tokens`, если не хочешь принудительно сбросить авторизацию.
+
 Для Windows-машины с кассой используй подробный чеклист:
 `WINDOWS_DOCKER_CHECKLIST.md`.
 

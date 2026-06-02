@@ -222,6 +222,13 @@ func (c *Client) ExchangeCode(ctx context.Context, code string, redirectURI stri
 	if token.AccessToken == "" {
 		return fmt.Errorf("Google OAuth token response has no access token")
 	}
+	if token.RefreshToken == "" {
+		existing, err := c.loadToken(ctx)
+		if err != nil && !errors.Is(err, ErrNotAuthorized) {
+			return fmt.Errorf("load existing Google OAuth token: %w", err)
+		}
+		token.RefreshToken = existing.RefreshToken
+	}
 	return c.saveToken(ctx, token)
 }
 
