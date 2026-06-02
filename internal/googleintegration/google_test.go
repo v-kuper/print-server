@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -190,14 +191,14 @@ func TestClientLoadsUnreadMailAndTodayCalendarEvents(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/gmail/v1/users/me/messages":
-			if r.URL.Query().Get("q") != "is:unread" || r.URL.Query().Get("maxResults") != "5" {
+			if r.URL.Query().Get("q") != "" || !reflect.DeepEqual(r.URL.Query()["labelIds"], []string{"INBOX", "UNREAD"}) || r.URL.Query().Get("maxResults") != "5" {
 				t.Fatalf("unexpected gmail list query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`{"messages":[{"id":"m1"},{"id":"m2"}]}`))
 		case r.URL.Path == "/gmail/v1/users/me/messages/m1":
-			_, _ = w.Write([]byte(`{"payload":{"headers":[{"name":"From","value":"Alice <alice@example.com>"},{"name":"Subject","value":"Morning update"}]}}`))
+			_, _ = w.Write([]byte(`{"labelIds":["INBOX","UNREAD"],"payload":{"headers":[{"name":"From","value":"Alice <alice@example.com>"},{"name":"Subject","value":"Morning update"}]}}`))
 		case r.URL.Path == "/gmail/v1/users/me/messages/m2":
-			_, _ = w.Write([]byte(`{"payload":{"headers":[{"name":"From","value":"Bob <bob@example.com>"},{"name":"Subject","value":"Invoice"}]}}`))
+			_, _ = w.Write([]byte(`{"labelIds":["INBOX"],"payload":{"headers":[{"name":"From","value":"Bob <bob@example.com>"},{"name":"Subject","value":"Invoice"}]}}`))
 		case r.URL.Path == "/calendar/v3/users/me/calendarList":
 			if r.URL.Query().Get("minAccessRole") != "reader" {
 				t.Fatalf("unexpected calendar list query: %s", r.URL.RawQuery)
@@ -242,7 +243,7 @@ func TestClientLoadsUnreadMailAndTodayCalendarEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load current google summary: %v", err)
 	}
-	if len(summary.Mail) != 2 || summary.Mail[0].From != "Alice" || summary.Mail[0].Subject != "Morning update" {
+	if len(summary.Mail) != 1 || summary.Mail[0].From != "Alice" || summary.Mail[0].Subject != "Morning update" {
 		t.Fatalf("unexpected mail summary: %#v", summary.Mail)
 	}
 	if len(summary.Events) != 3 ||
@@ -272,7 +273,7 @@ func TestClientCurrentSelectedLoadsOnlyRequestedSections(t *testing.T) {
 			case "/gmail/v1/users/me/messages":
 				_, _ = w.Write([]byte(`{"messages":[{"id":"m1"}]}`))
 			case "/gmail/v1/users/me/messages/m1":
-				_, _ = w.Write([]byte(`{"payload":{"headers":[{"name":"From","value":"Alice <alice@example.com>"},{"name":"Subject","value":"Morning update"}]}}`))
+				_, _ = w.Write([]byte(`{"labelIds":["INBOX","UNREAD"],"payload":{"headers":[{"name":"From","value":"Alice <alice@example.com>"},{"name":"Subject","value":"Morning update"}]}}`))
 			default:
 				t.Fatalf("unexpected Gmail path: %s", r.URL.Path)
 			}

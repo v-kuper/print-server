@@ -59,11 +59,9 @@ Google выдает refresh token с истечением через 7 дней.
    http://localhost:8080/oauth/google/callback
    ```
 
-4. Если заходишь не с Windows-машины, добавь LAN redirect URI:
-
-   ```text
-   http://<IP Windows-машины>:8080/oauth/google/callback
-   ```
+4. Авторизуй Google через `http://localhost:8080` в браузере на той же машине,
+   где запущен сервер. Google OAuth не принимает private LAN IP вроде
+   `http://192.168.x.x:8080/oauth/google/callback` как redirect URI.
 
 5. После изменения статуса авторизуй Google в UI еще один раз, чтобы получить
    новый refresh token уже не из Testing-режима.

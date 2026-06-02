@@ -222,14 +222,16 @@ http://192.168.0.25:8080/
 - на роутере не включена изоляция Wi-Fi клиентов.
 
 Если проходишь Google-авторизацию не на Windows-машине, а с Mac или телефона,
-добавь в Google Cloud OAuth client redirect URI с LAN-адресом:
+не используй LAN-адрес для OAuth. Google OAuth не принимает private IP вроде
+`http://192.168.x.x:8080/oauth/google/callback` как redirect URI. Авторизацию
+нужно пройти в браузере на Windows-машине через:
 
 ```text
-http://<IP Windows-машины>:8080/oauth/google/callback
+http://localhost:8080/
 ```
 
-`http://localhost:8080/oauth/google/callback` продолжает работать только при
-авторизации прямо на Windows-машине.
+После успешной авторизации token сохранится на сервере, и интерфейс снова можно
+открывать с Mac или телефона по LAN-адресу.
 
 ## 10. Настроить и проверить в UI
 
@@ -464,13 +466,9 @@ docker compose down
 http://localhost:8080/oauth/google/callback
 ```
 
-Если авторизуешься с Mac или телефона по LAN-адресу, добавь также:
-
-```text
-http://<IP Windows-машины>:8080/oauth/google/callback
-```
-
-После изменения в Google Cloud заново нажми `Авторизовать` в UI.
+Если ты открыл UI с Mac или телефона по LAN-адресу, кнопка `Авторизовать`
+сформирует private-IP callback и Google отклонит его. Открой UI на
+Windows-машине через `http://localhost:8080/` и нажми `Авторизовать` там.
 
 ### docker compose пишет `no configuration file provided`
 

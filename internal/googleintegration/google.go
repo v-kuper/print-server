@@ -363,7 +363,8 @@ func (c *Client) refreshToken(ctx context.Context, refreshToken string) (Token, 
 func (c *Client) unreadMail(ctx context.Context, token Token) ([]MailMessage, error) {
 	baseURL := strings.TrimRight(c.config.GmailBaseURL, "/")
 	values := url.Values{}
-	values.Set("q", "is:unread")
+	values.Add("labelIds", "INBOX")
+	values.Add("labelIds", "UNREAD")
 	values.Set("maxResults", fmt.Sprintf("%d", defaultMaxMail))
 	listURL := baseURL + "/users/me/messages?" + values.Encode()
 
@@ -387,7 +388,8 @@ func (c *Client) unreadMail(ctx context.Context, token Token) ([]MailMessage, er
 		detailValues.Add("metadataHeaders", "Subject")
 		detailURL := baseURL + "/users/me/messages/" + url.PathEscape(item.ID) + "?" + detailValues.Encode()
 		var detail struct {
-			Payload struct {
+			LabelIDs []string `json:"labelIds"`
+			Payload  struct {
 				Headers []struct {
 					Name  string `json:"name"`
 					Value string `json:"value"`
@@ -396,6 +398,9 @@ func (c *Client) unreadMail(ctx context.Context, token Token) ([]MailMessage, er
 		}
 		if err := c.getJSON(ctx, token, detailURL, &detail); err != nil {
 			return nil, fmt.Errorf("load Gmail message %s: %w", item.ID, err)
+		}
+		if !hasGoogleLabel(detail.LabelIDs, "INBOX") || !hasGoogleLabel(detail.LabelIDs, "UNREAD") {
+			continue
 		}
 		message := MailMessage{
 			From:    cleanSender(headerValue(detail.Payload.Headers, "From")),
@@ -407,6 +412,15 @@ func (c *Client) unreadMail(ctx context.Context, token Token) ([]MailMessage, er
 		messages = append(messages, message)
 	}
 	return messages, nil
+}
+
+func hasGoogleLabel(labels []string, target string) bool {
+	for _, label := range labels {
+		if label == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) todayEvents(ctx context.Context, token Token) ([]CalendarEvent, error) {
