@@ -72,6 +72,35 @@ Google выдает refresh token с истечением через 7 дней.
 Для Windows-машины с кассой используй подробный чеклист:
 `WINDOWS_DOCKER_CHECKLIST.md`.
 
+### CI/CD на Windows через GitHub Actions
+
+В репозитории есть workflow `.github/workflows/deploy-windows.yml`. Он
+запускается при `push` в `main` или `master`, а также вручную через
+`workflow_dispatch`.
+
+Workflow рассчитан на self-hosted GitHub Actions runner на той же
+Windows-машине, где установлен Docker Desktop и запускается ATOL server. В
+GitHub repository variables нужно задать `ATOL_DEPLOY_DIR` — абсолютный путь к
+папке `server` на Windows, где лежат `docker-compose.yml`, `.env` и `data/`.
+
+Workflow делает:
+
+1. `git pull --ff-only` в `ATOL_DEPLOY_DIR`;
+2. `go test ./...`;
+3. `docker compose build atol-server`;
+4. `docker compose up -d --force-recreate atol-server`;
+5. проверку `http://localhost:8080/healthz`.
+
+Секреты не передаются в GitHub Actions. Docker Compose читает локальный `.env`
+рядом с `docker-compose.yml` на Windows-машине, поэтому Telegram token и другие
+локальные значения остаются вне git.
+
+Важно: self-hosted runner выполняет код из репозитория на твоей Windows-машине.
+Используй такую схему только для приватного репозитория или полностью доверенных
+contributors.
+
+Настройка runner описана в `WINDOWS_DOCKER_CHECKLIST.md`.
+
 ## Telegram fax bot
 
 Сервер может работать как персональный fax-принтер для Telegram:

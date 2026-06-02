@@ -1,0 +1,109 @@
+name: Deploy Windows
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: atol-windows-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and restart ATOL server
+    runs-on:
+      - self-hosted
+      - Windows
+      - X64
+    timeout-minutes: 30
+
+    env:
+      ATOL_DEPLOY_DIR: ${{ vars.ATOL_DEPLOY_DIR }}
+      GOCACHE: ${{ runner.temp }}\go-build-cache
+
+    steps:
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.x
+          cache: false
+
+      - name: Validate deploy directory
+        shell: powershell
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ATOL_DEPLOY_DIR)) {
+            throw "Set GitHub repository variable ATOL_DEPLOY_DIR to the Windows path of the server directory."
+          }
+
+          if (-not (Test-Path $env:ATOL_DEPLOY_DIR)) {
+            throw "ATOL_DEPLOY_DIR does not exist: $env:ATOL_DEPLOY_DIR"
+          }
+
+          $composePath = Join-Path $env:ATOL_DEPLOY_DIR "docker-compose.yml"
+          if (-not (Test-Path $composePath)) {
+            throw "docker-compose.yml was not found in ATOL_DEPLOY_DIR: $env:ATOL_DEPLOY_DIR"
+          }
+
+          $envPath = Join-Path $env:ATOL_DEPLOY_DIR ".env"
+          if (-not (Test-Path $envPath)) {
+            Write-Warning ".env was not found in ATOL_DEPLOY_DIR; Docker Compose will use default empty env values."
+          }
+
+      - name: Pull latest code
+        shell: powershell
+        run: |
+          Set-Location $env:ATOL_DEPLOY_DIR
+          git fetch --prune origin
+          git checkout $env:GITHUB_REF_NAME
+          git pull --ff-only origin $env:GITHUB_REF_NAME
+
+      - name: Show tool versions
+        shell: powershell
+        run: |
+          Set-Location $env:ATOL_DEPLOY_DIR
+          go version
+          docker version
+          docker compose version
+
+      - name: Run Go tests
+        shell: powershell
+        run: |
+          Set-Location $env:ATOL_DEPLOY_DIR
+          go test ./...
+
+      - name: Build Docker image
+        shell: powershell
+        run: |
+          Set-Location $env:ATOL_DEPLOY_DIR
+          docker compose build atol-server
+
+      - name: Restart Docker service
+        shell: powershell
+        run: |
+          Set-Location $env:ATOL_DEPLOY_DIR
+          docker compose up -d --force-recreate atol-server
+
+      - name: Check server health
+        shell: powershell
+        run: |
+          Set-Location $env:ATOL_DEPLOY_DIR
+          $deadline = (Get-Date).AddSeconds(60)
+
+          do {
+            try {
+              $response = Invoke-WebRequest -Uri "http://localhost:8080/healthz" -UseBasicParsing -TimeoutSec 5
+              if ($response.StatusCode -eq 200) {
+                $response.Content
+                exit 0
+              }
+            } catch {
+              Start-Sleep -Seconds 2
+            }
+          } while ((Get-Date) -lt $deadline)
+
+          docker compose ps
+          docker compose logs --tail=120 atol-server
+          throw "ATOL server did not pass health check within 60 seconds"

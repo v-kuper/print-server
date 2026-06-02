@@ -386,7 +386,129 @@ http://<IP Windows-машины>:8080/
 Сервер отдает HTML/CSS/JS с `Cache-Control: no-store`, поэтому обычно
 достаточно перезагрузки вкладки.
 
-## 12. Команды на каждый день
+## 12. Настроить автодеплой через GitHub Actions
+
+Этот шаг нужен один раз. После него каждый `push` в `main` или `master` будет
+автоматически запускать сборку и перезапуск `atol-server` на этой Windows-машине.
+
+Предварительно проверь, что на Windows уже работают:
+
+```powershell
+docker version
+docker compose version
+Test-Path .\.env
+Test-Path .\docker-compose.yml
+```
+
+`.env` должен лежать рядом с `docker-compose.yml`. GitHub Actions его не
+коммитит и не скачивает из GitHub; Docker Compose читает этот локальный файл во
+время деплоя.
+
+В GitHub repository variables нужно задать путь к этой папке:
+
+```text
+ATOL_DEPLOY_DIR=C:\path\to\server
+```
+
+Настраивается здесь:
+
+```text
+Settings -> Secrets and variables -> Actions -> Variables -> New repository variable
+```
+
+`ATOL_DEPLOY_DIR` не секрет, это просто локальный путь на Windows. Токены и
+пароли остаются в `.env`.
+
+Важно: self-hosted runner выполняет код из репозитория на этой Windows-машине.
+Используй автодеплой только для приватного репозитория или полностью доверенных
+contributors.
+
+### 12.1. Добавить self-hosted runner в GitHub
+
+1. Открой репозиторий на GitHub.
+2. Перейди в `Settings -> Actions -> Runners`.
+3. Нажми `New self-hosted runner`.
+4. Выбери `Windows` и `x64`.
+5. GitHub покажет команды скачивания и настройки runner. Выполняй их на
+   Windows-машине в отдельной папке, например:
+
+   ```powershell
+   New-Item -ItemType Directory -Force C:\actions-runner\atol-server | Out-Null
+   cd C:\actions-runner\atol-server
+   ```
+
+   Дальше вставь команды, которые покажет GitHub. Токен регистрации runner
+   временный; его нельзя коммитить.
+
+При настройке оставь стандартные labels. Workflow ищет runner по labels:
+
+```text
+self-hosted, Windows, X64
+```
+
+### 12.2. Первый тест runner
+
+Перед установкой сервиса лучше проверить runner в интерактивном режиме:
+
+```powershell
+.\run.cmd
+```
+
+Оставь это окно открытым и в GitHub запусти workflow вручную:
+
+1. `Actions -> Deploy Windows`.
+2. `Run workflow`.
+3. Выбери ветку `main` или `master`.
+4. Нажми `Run workflow`.
+
+Если workflow прошел, контейнер уже пересобран и перезапущен.
+
+Проверь локально:
+
+```powershell
+cd C:\path\to\server
+docker compose ps atol-server
+Invoke-WebRequest http://localhost:8080/healthz -UseBasicParsing
+```
+
+Остановить интерактивный runner можно через `Ctrl+C`.
+
+### 12.3. Запустить runner постоянно
+
+Для постоянной работы можно оставить `.\run.cmd` открытым, но удобнее поставить
+runner как Windows service. На странице GitHub runner есть официальные команды
+для service-режима. После установки проверь:
+
+```powershell
+Get-Service "actions.runner.*"
+```
+
+Если service-режим не видит Docker Desktop, используй интерактивный
+`.\run.cmd` под тем же Windows-пользователем, где открыт Docker Desktop. Это
+нормальный вариант для локального кассового сервера.
+
+### 12.4. Как понять, что автодеплой работает
+
+После merge или push в `main`/`master` открой `Actions -> Deploy Windows`.
+Успешный run должен пройти шаги:
+
+```text
+Run Go tests
+Build Docker image
+Restart Docker service
+Check server health
+```
+
+Если job висит в очереди, runner не подключен или выключена Windows-машина.
+Если job упал на Docker, открой логи прямо в GitHub Actions и затем проверь на
+Windows:
+
+```powershell
+docker compose ps atol-server
+docker compose logs --tail=120 atol-server
+```
+
+## 13. Команды на каждый день
 
 Запустить:
 
@@ -420,7 +542,7 @@ docker compose logs -f --tail=80 atol-server
 
 Остановить просмотр логов: `Ctrl+C`.
 
-## 13. Если меняешь weather icons
+## 14. Если меняешь weather icons
 
 Готовые для кассы иконки лежат здесь:
 
@@ -444,7 +566,7 @@ docker compose build --no-cache atol-server
 docker compose up -d --force-recreate atol-server
 ```
 
-## 14. Частые проблемы
+## 15. Частые проблемы
 
 ### Порт 8080 занят
 
