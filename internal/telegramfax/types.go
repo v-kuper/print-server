@@ -22,9 +22,18 @@ type Message struct {
 	Date                 int64       `json:"date"`
 	BusinessConnectionID string      `json:"business_connection_id,omitempty"`
 	From                 *User       `json:"from,omitempty"`
+	Chat                 *Chat       `json:"chat,omitempty"`
 	Text                 string      `json:"text,omitempty"`
 	Caption              string      `json:"caption,omitempty"`
 	Photo                []PhotoSize `json:"photo,omitempty"`
+}
+
+type Chat struct {
+	ID        int64  `json:"id"`
+	Type      string `json:"type"`
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+	Username  string `json:"username,omitempty"`
 }
 
 type PhotoSize struct {

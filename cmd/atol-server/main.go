@@ -91,9 +91,9 @@ func main() {
 			telegramfax.WithLogger(log.Default()),
 		)
 		go telegramFaxService.Start(ctx)
-		log.Printf("Telegram Business fax bot enabled, polling %s", telegramFaxConfig.APIBaseURL)
+		log.Printf("Telegram fax bot enabled, polling %s", telegramFaxConfig.APIBaseURL)
 	} else {
-		log.Printf("Telegram Business fax bot disabled")
+		log.Printf("Telegram fax bot disabled")
 	}
 
 	server := web.NewServer(

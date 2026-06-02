@@ -45,18 +45,22 @@ Google `credentials.json` по-прежнему нужно положить в `
 Для Windows-машины с кассой используй подробный чеклист:
 `WINDOWS_DOCKER_CHECKLIST.md`.
 
-## Telegram Business fax bot
+## Telegram fax bot
 
-Сервер может работать как персональный fax-принтер для Telegram Business:
+Сервер может работать как персональный fax-принтер для Telegram:
 разрешенный человек пишет в личный чат, Telegram передает `business_message`
-подключенному боту, а сервер печатает это сообщение как нефискальный чек.
+или обычный `message` подключенному боту, а сервер печатает это сообщение как
+нефискальный чек.
 
 В v1 бот:
-- читает только Telegram Business updates, обычные личные сообщения боту не
-  печатаются;
+- читает Telegram Business updates и обычные личные сообщения боту;
+- игнорирует групповые чаты и команды вроде `/start`;
 - печатает сразу, без подтверждения;
 - не отвечает собеседнику в Telegram;
-- печатает только если разрешен и Business-владелец, и отправитель.
+- для Telegram Business проверяет разрешенного Business-владельца, а sender
+  allowlist можно оставить пустым и доверять выбранным чатам в Telegram;
+- для обычной лички бота печатает только от `TELEGRAM_FAX_OWNER_IDS` и
+  `TELEGRAM_FAX_ALLOWED_SENDER_IDS`.
 
 Настройка:
 
@@ -75,9 +79,12 @@ Google `credentials.json` по-прежнему нужно положить в `
    В ответе нужны поля `message.from.id`. Твой ID идет в
    `TELEGRAM_FAX_OWNER_IDS`.
 
-   `TELEGRAM_FAX_ALLOWED_SENDER_IDS` можно оставить пустым: тогда сервер
-   печатает всех отправителей, чьи чаты ты разрешил в Telegram Business.
-   Если заполнить список, он станет дополнительным локальным фильтром.
+   `TELEGRAM_FAX_ALLOWED_SENDER_IDS` можно оставить пустым для Telegram
+   Business: тогда сервер печатает всех отправителей, чьи чаты ты разрешил в
+   Telegram Business. Для обычной лички бота пустой sender allowlist означает,
+   что печатать могут только ID из `TELEGRAM_FAX_OWNER_IDS`. Чтобы доверенный
+   человек мог писать прямо боту, добавь его числовой ID в
+   `TELEGRAM_FAX_ALLOWED_SENDER_IDS`.
 5. Создай локальный файл `.env` рядом с `docker-compose.yml`. Можно начать с
    примера:
 
@@ -102,7 +109,7 @@ Google `credentials.json` по-прежнему нужно положить в `
    docker compose up -d --force-recreate atol-server
    ```
 
-В логах должно появиться `Telegram Business fax bot enabled`. Последний
+В логах должно появиться `Telegram fax bot enabled`. Последний
 обработанный Telegram update хранится в Postgres, поэтому после рестарта старые
 сообщения не печатаются повторно.
 

@@ -11,7 +11,8 @@ import (
 	"atol-server/internal/receipt"
 )
 
-var businessAllowedUpdates = []string{
+var telegramFaxAllowedUpdates = []string{
+	"message",
 	"business_connection",
 	"business_message",
 	"edited_business_message",
@@ -127,7 +128,7 @@ func (s *Service) PollOnce(ctx context.Context) error {
 	updates, err := s.client.GetUpdates(ctx, GetUpdatesRequest{
 		Offset:         state.NextUpdateOffset,
 		Timeout:        int(s.config.PollTimeout / time.Second),
-		AllowedUpdates: append([]string(nil), businessAllowedUpdates...),
+		AllowedUpdates: append([]string(nil), telegramFaxAllowedUpdates...),
 	})
 	if err != nil {
 		return fmt.Errorf("get Telegram updates: %w", err)
@@ -151,10 +152,16 @@ func (s *Service) processUpdate(ctx context.Context, update Update) error {
 		s.rememberConnection(*update.BusinessConnection)
 		return nil
 	}
-	if update.BusinessMessage == nil {
-		return nil
+	if update.BusinessMessage != nil {
+		return s.processBusinessMessage(ctx, *update.BusinessMessage)
 	}
-	message := update.BusinessMessage
+	if update.Message != nil {
+		return s.processDirectMessage(ctx, *update.Message)
+	}
+	return nil
+}
+
+func (s *Service) processBusinessMessage(ctx context.Context, message Message) error {
 	if message.From == nil || message.From.IsBot {
 		return nil
 	}
@@ -165,7 +172,7 @@ func (s *Service) processUpdate(ctx context.Context, update Update) error {
 	if len(s.config.AllowedSenderIDs) > 0 && !s.config.AllowedSenderIDs.Contains(message.From.ID) {
 		return nil
 	}
-	ownerID, ok, err := s.ownerIDForMessage(ctx, *message)
+	ownerID, ok, err := s.ownerIDForMessage(ctx, message)
 	if err != nil {
 		return err
 	}
@@ -176,15 +183,49 @@ func (s *Service) processUpdate(ctx context.Context, update Update) error {
 		return nil
 	}
 	if hasPhoto {
-		if err := s.printPhotoMessage(ctx, *message, photo, ownerID); err != nil {
+		if err := s.printPhotoMessage(ctx, message, photo, ownerID); err != nil {
 			s.logf("telegram fax photo print failed: %v", err)
 		}
 		return nil
 	}
-	if err := s.printMessage(ctx, *message, ownerID); err != nil {
+	if err := s.printMessage(ctx, message, ownerID); err != nil {
 		s.logf("telegram fax print failed: %v", err)
 	}
 	return nil
+}
+
+func (s *Service) processDirectMessage(ctx context.Context, message Message) error {
+	if message.From == nil || message.From.IsBot {
+		return nil
+	}
+	if message.Chat == nil || message.Chat.Type != "private" {
+		return nil
+	}
+	photo, hasPhoto := bestPhotoSize(message.Photo)
+	text := strings.TrimSpace(message.Text)
+	if text == "" && !hasPhoto {
+		return nil
+	}
+	if strings.HasPrefix(text, "/") {
+		return nil
+	}
+	if !s.directSenderAllowed(message.From.ID) {
+		return nil
+	}
+	if hasPhoto {
+		if err := s.printDirectPhotoMessage(ctx, message, photo); err != nil {
+			s.logf("telegram direct fax photo print failed: %v", err)
+		}
+		return nil
+	}
+	if err := s.printDirectMessage(ctx, message); err != nil {
+		s.logf("telegram direct fax print failed: %v", err)
+	}
+	return nil
+}
+
+func (s *Service) directSenderAllowed(senderID int64) bool {
+	return s.config.OwnerIDs.Contains(senderID) || s.config.AllowedSenderIDs.Contains(senderID)
 }
 
 func (s *Service) rememberConnection(connection BusinessConnection) {
@@ -245,6 +286,37 @@ func (s *Service) printMessage(ctx context.Context, message Message, ownerID int
 	return printErr
 }
 
+func (s *Service) printDirectMessage(ctx context.Context, message Message) error {
+	config, err := s.printerConfig.LoadPrinter()
+	if err != nil {
+		return fmt.Errorf("load printer config: %w", err)
+	}
+	request := map[string]any{
+		"source":      "telegram_bot_direct",
+		"contentType": "text",
+		"messageId":   message.MessageID,
+		"senderId":    message.From.ID,
+		"sender":      senderDisplayName(message.From),
+		"chatId":      message.Chat.ID,
+		"text":        message.Text,
+	}
+	jobID := ""
+	if s.printJobs != nil {
+		var err error
+		jobID, err = s.printJobs.StartPrintJob("telegram_fax", request)
+		if err != nil {
+			return fmt.Errorf("start telegram direct fax print job: %w", err)
+		}
+	}
+	printErr := s.printer.PrintReceipt(ctx, config, FormatReceiptLines(message, s.location))
+	if s.printJobs != nil && jobID != "" {
+		if err := s.printJobs.FinishPrintJob(jobID, printErr); err != nil {
+			return fmt.Errorf("finish telegram direct fax print job: %w", err)
+		}
+	}
+	return printErr
+}
+
 func (s *Service) printPhotoMessage(ctx context.Context, message Message, photo PhotoSize, ownerID int64) error {
 	config, err := s.printerConfig.LoadPrinter()
 	if err != nil {
@@ -278,6 +350,43 @@ func (s *Service) printPhotoMessage(ctx context.Context, message Message, photo 
 	if s.printJobs != nil && jobID != "" {
 		if err := s.printJobs.FinishPrintJob(jobID, printErr); err != nil {
 			return fmt.Errorf("finish telegram fax photo print job: %w", err)
+		}
+	}
+	return printErr
+}
+
+func (s *Service) printDirectPhotoMessage(ctx context.Context, message Message, photo PhotoSize) error {
+	config, err := s.printerConfig.LoadPrinter()
+	if err != nil {
+		return fmt.Errorf("load printer config: %w", err)
+	}
+	request := map[string]any{
+		"source":               "telegram_bot_direct",
+		"contentType":          "photo",
+		"messageId":            message.MessageID,
+		"senderId":             message.From.ID,
+		"sender":               senderDisplayName(message.From),
+		"chatId":               message.Chat.ID,
+		"caption":              message.Caption,
+		"telegramFileId":       photo.FileID,
+		"telegramFileUniqueId": photo.FileUniqueID,
+		"telegramPhotoWidth":   photo.Width,
+		"telegramPhotoHeight":  photo.Height,
+		"telegramFileSize":     photo.FileSize,
+	}
+	jobID := ""
+	if s.printJobs != nil {
+		var err error
+		jobID, err = s.printJobs.StartPrintJob("telegram_fax", request)
+		if err != nil {
+			return fmt.Errorf("start telegram direct fax photo print job: %w", err)
+		}
+	}
+
+	printErr := s.downloadAndPrintPhoto(ctx, config, message, photo)
+	if s.printJobs != nil && jobID != "" {
+		if err := s.printJobs.FinishPrintJob(jobID, printErr); err != nil {
+			return fmt.Errorf("finish telegram direct fax photo print job: %w", err)
 		}
 	}
 	return printErr

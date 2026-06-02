@@ -240,11 +240,11 @@ http://<IP Windows-машины>:8080/oauth/google/callback
    - `Изображение на чек` печатает сохраненный pixel buffer 384 px;
    - `Текст на чек` печатает заметку с выбранными шрифтами и выравниванием.
 
-### Опционально: Telegram Business fax bot
+### Опционально: Telegram fax bot
 
-Этот режим превращает кассу в личный fax-принтер для Telegram Business.
-Сервер печатает только `business_message` от разрешенных отправителей и только
-для разрешенного Business-владельца.
+Этот режим превращает кассу в личный fax-принтер для Telegram. Сервер печатает
+`business_message` из Telegram Business и обычные `message` из лички бота.
+Групповые чаты и команды вроде `/start` игнорируются.
 
 1. Создай бота через `@BotFather`.
 2. Включи для бота Business/Secretary mode в `@BotFather`, если пункт доступен.
@@ -260,9 +260,11 @@ http://<IP Windows-машины>:8080/oauth/google/callback
    Нужные значения находятся в `message.from.id`. Твой ID нужен для
    `TELEGRAM_FAX_OWNER_IDS`.
 
-   `TELEGRAM_FAX_ALLOWED_SENDER_IDS` можно оставить пустым: тогда сервер
-   доверяет списку выбранных чатов в Telegram Business. Если заполнить список,
-   он будет дополнительным локальным фильтром.
+   `TELEGRAM_FAX_ALLOWED_SENDER_IDS` можно оставить пустым для Telegram
+   Business: тогда сервер доверяет списку выбранных чатов в Telegram Business.
+   Для обычной лички бота пустой sender allowlist означает, что печатать могут
+   только ID из `TELEGRAM_FAX_OWNER_IDS`. Чтобы доверенный человек мог писать
+   прямо боту, добавь его числовой ID в `TELEGRAM_FAX_ALLOWED_SENDER_IDS`.
 5. Создай локальный `.env` рядом с `docker-compose.yml`:
 
    ```powershell
@@ -294,7 +296,7 @@ http://<IP Windows-машины>:8080/oauth/google/callback
    docker compose logs --tail=120 atol-server
    ```
 
-   Должна быть строка `Telegram Business fax bot enabled`.
+   Должна быть строка `Telegram fax bot enabled`.
 
 ## 11. Обновить релиз после git pull
 

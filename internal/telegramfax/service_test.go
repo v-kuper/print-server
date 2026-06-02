@@ -53,7 +53,7 @@ func TestPollOncePrintsAllowedBusinessMessageAndAdvancesOffset(t *testing.T) {
 	if client.requests[0].Offset != 7 {
 		t.Fatalf("expected offset 7, got %d", client.requests[0].Offset)
 	}
-	if !reflect.DeepEqual(client.requests[0].AllowedUpdates, businessAllowedUpdates) {
+	if !reflect.DeepEqual(client.requests[0].AllowedUpdates, telegramFaxAllowedUpdates) {
 		t.Fatalf("expected business allowed updates, got %#v", client.requests[0].AllowedUpdates)
 	}
 	if state.state.NextUpdateOffset != 12 {
@@ -225,6 +225,135 @@ func TestPollOnceStillFiltersSendersWhenSenderAllowlistIsConfigured(t *testing.T
 
 	if len(gateway.printedLines) != 0 {
 		t.Fatalf("expected configured sender allowlist to skip sender, got %#v", gateway.printedLines)
+	}
+}
+
+func TestPollOncePrintsAllowedDirectMessageAndAdvancesOffset(t *testing.T) {
+	state := &fakeStateStore{state: State{NextUpdateOffset: 80}}
+	client := &fakeTelegramClient{
+		updates: []Update{
+			{
+				UpdateID: 80,
+				Message: &Message{
+					MessageID: 88,
+					Date:      time.Date(2026, 6, 2, 10, 20, 0, 0, time.UTC).Unix(),
+					From:      &User{ID: 2001, FirstName: "Direct", Username: "direct_user"},
+					Chat:      &Chat{ID: 2001, Type: "private"},
+					Text:      "Print this from bot DM",
+				},
+			},
+		},
+	}
+	jobs := &fakePrintJobStore{}
+	gateway := &fakeTelegramFaxPrinter{}
+	service := NewService(testConfig(), client, state, &fakePrinterConfigStore{}, jobs, gateway, fixedFaxClock, WithLocation(time.UTC))
+
+	if err := service.PollOnce(context.Background()); err != nil {
+		t.Fatalf("poll once: %v", err)
+	}
+
+	if !reflect.DeepEqual(client.requests[0].AllowedUpdates, telegramFaxAllowedUpdates) {
+		t.Fatalf("unexpected allowed updates: %#v", client.requests[0].AllowedUpdates)
+	}
+	if state.state.NextUpdateOffset != 81 {
+		t.Fatalf("expected next offset 81, got %d", state.state.NextUpdateOffset)
+	}
+	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "Print this from bot DM" {
+		t.Fatalf("expected direct message to print, got %#v", gateway.printedLines)
+	}
+	if jobs.startedKind != "telegram_fax" || jobs.finishedID != "job-1" || jobs.finishedErr != "" {
+		t.Fatalf("unexpected direct print job state: %#v", jobs)
+	}
+	request, ok := jobs.startedRequest.(map[string]any)
+	if !ok || request["source"] != "telegram_bot_direct" || request["contentType"] != "text" || request["senderId"] != int64(2001) {
+		t.Fatalf("unexpected direct print job request: %#v", jobs.startedRequest)
+	}
+}
+
+func TestPollOncePrintsOwnerDirectMessageWhenSenderAllowlistIsEmpty(t *testing.T) {
+	config := testConfig()
+	config.AllowedSenderIDs = nil
+	client := &fakeTelegramClient{
+		updates: []Update{
+			{
+				UpdateID: 82,
+				Message: &Message{
+					From: &User{ID: 1001, FirstName: "Owner"},
+					Chat: &Chat{ID: 1001, Type: "private"},
+					Text: "Owner direct print",
+				},
+			},
+		},
+	}
+	gateway := &fakeTelegramFaxPrinter{}
+	service := NewService(config, client, &fakeStateStore{}, &fakePrinterConfigStore{}, &fakePrintJobStore{}, gateway, fixedFaxClock, WithLocation(time.UTC))
+
+	if err := service.PollOnce(context.Background()); err != nil {
+		t.Fatalf("poll once: %v", err)
+	}
+
+	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "Owner direct print" {
+		t.Fatalf("expected owner direct message to print, got %#v", gateway.printedLines)
+	}
+}
+
+func TestPollOnceSkipsUnsafeDirectMessages(t *testing.T) {
+	config := testConfig()
+	config.AllowedSenderIDs = nil
+	for _, test := range []struct {
+		name   string
+		update Update
+	}{
+		{
+			name: "non allowed sender",
+			update: Update{
+				UpdateID: 90,
+				Message: &Message{
+					From: &User{ID: 9999, FirstName: "Unknown"},
+					Chat: &Chat{ID: 9999, Type: "private"},
+					Text: "spam print",
+				},
+			},
+		},
+		{
+			name: "group chat",
+			update: Update{
+				UpdateID: 91,
+				Message: &Message{
+					From: &User{ID: 1001, FirstName: "Owner"},
+					Chat: &Chat{ID: -100, Type: "group"},
+					Text: "group print",
+				},
+			},
+		},
+		{
+			name: "bot command",
+			update: Update{
+				UpdateID: 92,
+				Message: &Message{
+					From: &User{ID: 1001, FirstName: "Owner"},
+					Chat: &Chat{ID: 1001, Type: "private"},
+					Text: "/start",
+				},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := &fakeStateStore{}
+			gateway := &fakeTelegramFaxPrinter{}
+			service := NewService(config, &fakeTelegramClient{updates: []Update{test.update}}, state, &fakePrinterConfigStore{}, &fakePrintJobStore{}, gateway, fixedFaxClock, WithLocation(time.UTC))
+
+			if err := service.PollOnce(context.Background()); err != nil {
+				t.Fatalf("poll once: %v", err)
+			}
+
+			if len(gateway.printedLines) != 0 {
+				t.Fatalf("expected no print, got %#v", gateway.printedLines)
+			}
+			if state.state.NextUpdateOffset != test.update.UpdateID+1 {
+				t.Fatalf("expected offset %d, got %d", test.update.UpdateID+1, state.state.NextUpdateOffset)
+			}
+		})
 	}
 }
 

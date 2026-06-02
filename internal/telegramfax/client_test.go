@@ -74,7 +74,7 @@ func TestPollOnceWithHTTPClientFakeTelegramAPI(t *testing.T) {
 	if getUpdatesRequest.Offset != 5 {
 		t.Fatalf("expected offset 5, got %d", getUpdatesRequest.Offset)
 	}
-	if !reflect.DeepEqual(getUpdatesRequest.AllowedUpdates, businessAllowedUpdates) {
+	if !reflect.DeepEqual(getUpdatesRequest.AllowedUpdates, telegramFaxAllowedUpdates) {
 		t.Fatalf("unexpected allowed updates: %#v", getUpdatesRequest.AllowedUpdates)
 	}
 	if state.state.NextUpdateOffset != 7 {
@@ -82,6 +82,73 @@ func TestPollOnceWithHTTPClientFakeTelegramAPI(t *testing.T) {
 	}
 	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "HTTP client fax" {
 		t.Fatalf("expected fake Telegram message to print, got %#v", gateway.printedLines)
+	}
+}
+
+func TestPollOncePrintsDirectMessageWithHTTPClientFakeTelegramAPI(t *testing.T) {
+	var getUpdatesRequest GetUpdatesRequest
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/bot123:abc/getUpdates" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&getUpdatesRequest); err != nil {
+			t.Fatalf("decode getUpdates request: %v", err)
+		}
+		writeTelegramTestJSON(w, map[string]any{
+			"ok": true,
+			"result": []any{
+				map[string]any{
+					"update_id": 7,
+					"message": map[string]any{
+						"message_id": 101,
+						"date":       time.Date(2026, 6, 2, 10, 20, 0, 0, time.UTC).Unix(),
+						"from": map[string]any{
+							"id":         2001,
+							"first_name": "Direct",
+							"username":   "direct_user",
+						},
+						"chat": map[string]any{
+							"id":         2001,
+							"type":       "private",
+							"first_name": "Direct",
+							"username":   "direct_user",
+						},
+						"text": "HTTP direct fax",
+					},
+				},
+			},
+		})
+	}))
+	defer api.Close()
+
+	state := &fakeStateStore{state: State{NextUpdateOffset: 7}}
+	gateway := &fakeTelegramFaxPrinter{}
+	service := NewService(
+		testConfig(),
+		NewHTTPClient("123:abc", api.URL, api.Client()),
+		state,
+		&fakePrinterConfigStore{},
+		&fakePrintJobStore{},
+		gateway,
+		fixedFaxClock,
+		WithLocation(time.UTC),
+	)
+
+	if err := service.PollOnce(context.Background()); err != nil {
+		t.Fatalf("poll once: %v", err)
+	}
+
+	if !reflect.DeepEqual(getUpdatesRequest.AllowedUpdates, telegramFaxAllowedUpdates) {
+		t.Fatalf("unexpected allowed updates: %#v", getUpdatesRequest.AllowedUpdates)
+	}
+	if state.state.NextUpdateOffset != 8 {
+		t.Fatalf("expected next offset 8, got %d", state.state.NextUpdateOffset)
+	}
+	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "HTTP direct fax" {
+		t.Fatalf("expected fake Telegram direct message to print, got %#v", gateway.printedLines)
 	}
 }
 
