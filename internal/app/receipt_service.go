@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"net/http"
-	"sync"
 	"time"
 
 	"atol-server/internal/bankrates"
@@ -14,6 +13,7 @@ import (
 	"atol-server/internal/history"
 	"atol-server/internal/motivation"
 	"atol-server/internal/news"
+	"atol-server/internal/printcoord"
 	"atol-server/internal/printer"
 	"atol-server/internal/receipt"
 	"atol-server/internal/receiptsnapshot"
@@ -35,6 +35,10 @@ type SettingsStore interface {
 
 type Printer interface {
 	PrintReceipt(context.Context, printer.Config, []receipt.Line) error
+}
+
+type PrintCoordinator interface {
+	RunUserPrint(context.Context, func(context.Context) error) error
 }
 
 type ReceiptSnapshotStore interface {
@@ -114,9 +118,9 @@ type ReceiptService struct {
 	googleProvider      GoogleProvider
 	motivationProvider  MotivationProvider
 	snapshotStore       ReceiptSnapshotStore
+	printCoordinator    PrintCoordinator
 	generatedAssetsPath string
 	clock               func() time.Time
-	printMu             sync.Mutex
 }
 
 type dailyReceiptBuild struct {
@@ -228,6 +232,14 @@ func WithReceiptSnapshotStore(store ReceiptSnapshotStore) ReceiptServiceOption {
 	}
 }
 
+func WithPrintCoordinator(coordinator PrintCoordinator) ReceiptServiceOption {
+	return func(s *ReceiptService) {
+		if coordinator != nil {
+			s.printCoordinator = coordinator
+		}
+	}
+}
+
 func NewReceiptService(store SettingsStore, printerGateway Printer, clock func() time.Time, options ...ReceiptServiceOption) *ReceiptService {
 	if clock == nil {
 		clock = time.Now
@@ -247,6 +259,7 @@ func NewReceiptService(store SettingsStore, printerGateway Printer, clock func()
 		denisTrendsProvider: denistrends.NewProvider(nil),
 		historyProvider:     history.NewProvider(nil),
 		motivationProvider:  motivation.NewOllamaProvider(nil),
+		printCoordinator:    printcoord.New(),
 		generatedAssetsPath: defaultGeneratedAssetsPath,
 		clock:               clock,
 	}
@@ -557,10 +570,9 @@ func (s *ReceiptService) PrintDailyReceiptWithContentAtAndWarnings(ctx context.C
 	warnings := append([]string(nil), build.Warnings...)
 	warnings = append(warnings, snapshotWarnings...)
 
-	s.printMu.Lock()
-	defer s.printMu.Unlock()
-
-	if err := s.printer.PrintReceipt(ctx, config, lines); err != nil {
+	if err := s.printCoordinator.RunUserPrint(ctx, func(ctx context.Context) error {
+		return s.printer.PrintReceipt(ctx, config, lines)
+	}); err != nil {
 		if snapshotID != "" && s.snapshotStore != nil {
 			_ = s.snapshotStore.Fail(ctx, snapshotID, err)
 		}

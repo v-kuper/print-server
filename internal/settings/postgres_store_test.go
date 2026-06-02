@@ -209,6 +209,7 @@ func resetPostgresStoreTestDatabase(t *testing.T, ctx context.Context, pool stor
 		receipt_snapshots,
 		legacy_imports,
 		audit_events,
+		telegram_fax_queue,
 		print_jobs,
 		google_tokens,
 		image_editor_state,

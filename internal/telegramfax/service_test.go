@@ -8,9 +8,11 @@ import (
 	"image/color"
 	"image/png"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
+	"atol-server/internal/printcoord"
 	"atol-server/internal/printer"
 	"atol-server/internal/receipt"
 )
@@ -476,6 +478,182 @@ func TestPollOnceRecordsFailedPrintJobAndAdvancesOffset(t *testing.T) {
 	}
 }
 
+func TestPollOnceQueuesFaxWhenPrinterConnectionFailsAndFlushesLater(t *testing.T) {
+	state := &fakeStateStore{}
+	client := &fakeTelegramClient{
+		updates: []Update{
+			{UpdateID: 40, BusinessConnection: &BusinessConnection{ID: "bc-1", User: User{ID: 1001}}},
+			{UpdateID: 41, BusinessMessage: &Message{BusinessConnectionID: "bc-1", MessageID: 42, From: &User{ID: 2001}, Text: "print me later"}},
+		},
+	}
+	queue := newFakeQueueStore()
+	jobs := &fakePrintJobStore{}
+	gateway := &fakeTelegramFaxPrinter{checkErr: errors.New("printer offline")}
+	service := NewService(
+		testConfig(),
+		client,
+		state,
+		&fakePrinterConfigStore{},
+		jobs,
+		gateway,
+		fixedFaxClock,
+		WithLocation(time.UTC),
+		WithQueueStore(queue),
+		WithPrintCoordinator(printcoord.New()),
+	)
+
+	if err := service.PollOnce(context.Background()); err != nil {
+		t.Fatalf("poll once: %v", err)
+	}
+
+	if state.state.NextUpdateOffset != 42 {
+		t.Fatalf("expected offset 42 after queueing update, got %d", state.state.NextUpdateOffset)
+	}
+	if len(gateway.printedLines) != 0 {
+		t.Fatalf("printer is offline, fax must remain queued; got printed lines %#v", gateway.printedLines)
+	}
+	if jobs.startedKind != "" {
+		t.Fatalf("print job must not start before printer is reachable, got %#v", jobs)
+	}
+	pending := queue.pendingItems()
+	if len(pending) != 1 {
+		t.Fatalf("expected one pending fax, got %#v", pending)
+	}
+	if pending[0].DedupeKey != "business:bc-1:42" || pending[0].ContentType != "text" {
+		t.Fatalf("unexpected queued fax: %#v", pending[0])
+	}
+
+	gateway.checkErr = nil
+	if err := service.FlushPending(context.Background()); err != nil {
+		t.Fatalf("flush pending: %v", err)
+	}
+
+	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "print me later" {
+		t.Fatalf("expected queued fax to print after reconnect, got %#v", gateway.printedLines)
+	}
+	if jobs.startedKind != "telegram_fax" || jobs.finishedID != "job-1" || jobs.finishedErr != "" {
+		t.Fatalf("unexpected print job state after flush: %#v", jobs)
+	}
+	if len(queue.pendingItems()) != 0 {
+		t.Fatalf("expected queue to be empty after successful print, got %#v", queue.pendingItems())
+	}
+}
+
+func TestFlushPendingStopsWhenFaxCoordinatorIsBusy(t *testing.T) {
+	queue := newFakeQueueStore()
+	_, inserted, err := queue.Enqueue(context.Background(), QueueItem{
+		DedupeKey:   "direct:2001:7",
+		Source:      "telegram_bot_direct",
+		ContentType: "text",
+		Message: Message{
+			MessageID: 7,
+			Date:      time.Date(2026, 6, 2, 10, 20, 0, 0, time.UTC).Unix(),
+			From:      &User{ID: 2001, FirstName: "Direct"},
+			Chat:      &Chat{ID: 2001, Type: "private"},
+			Text:      "wait behind user print",
+		},
+	})
+	if err != nil || !inserted {
+		t.Fatalf("enqueue fake fax: inserted=%v err=%v", inserted, err)
+	}
+	coordinator := &fakeFaxCoordinator{run: false}
+	gateway := &fakeTelegramFaxPrinter{}
+	service := NewService(
+		testConfig(),
+		&fakeTelegramClient{},
+		&fakeStateStore{},
+		&fakePrinterConfigStore{},
+		&fakePrintJobStore{},
+		gateway,
+		fixedFaxClock,
+		WithLocation(time.UTC),
+		WithQueueStore(queue),
+		WithPrintCoordinator(coordinator),
+	)
+
+	if err := service.FlushPending(context.Background()); err != nil {
+		t.Fatalf("flush pending: %v", err)
+	}
+
+	if coordinator.calls != 1 {
+		t.Fatalf("expected coordinator to be consulted once, got %d", coordinator.calls)
+	}
+	if len(gateway.printedLines) != 0 {
+		t.Fatalf("fax must not print while coordinator refuses it, got %#v", gateway.printedLines)
+	}
+	if len(queue.pendingItems()) != 1 {
+		t.Fatalf("fax must remain pending, got %#v", queue.pendingItems())
+	}
+}
+
+func TestMemoryQueueStoreDeduplicatesAndReturnsPendingFIFO(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
+	store := newMemoryQueueStore(func() time.Time { return now })
+
+	first, inserted, err := store.Enqueue(ctx, QueueItem{
+		DedupeKey:   "direct:1:1",
+		Source:      "telegram_bot_direct",
+		ContentType: "text",
+		Message:     Message{MessageID: 1, From: &User{ID: 1}, Chat: &Chat{ID: 1, Type: "private"}, Text: "first"},
+	})
+	if err != nil || !inserted {
+		t.Fatalf("enqueue first: inserted=%v err=%v", inserted, err)
+	}
+	duplicate, inserted, err := store.Enqueue(ctx, QueueItem{
+		DedupeKey:   "direct:1:1",
+		Source:      "telegram_bot_direct",
+		ContentType: "text",
+		Message:     Message{MessageID: 1, From: &User{ID: 1}, Chat: &Chat{ID: 1, Type: "private"}, Text: "duplicate"},
+	})
+	if err != nil || inserted {
+		t.Fatalf("enqueue duplicate: inserted=%v err=%v", inserted, err)
+	}
+	if duplicate.ID != first.ID {
+		t.Fatalf("expected duplicate enqueue to return first item, got %#v vs %#v", duplicate, first)
+	}
+	if _, _, err := store.Enqueue(ctx, QueueItem{
+		DedupeKey:   "direct:1:2",
+		Source:      "telegram_bot_direct",
+		ContentType: "text",
+		Message:     Message{MessageID: 2, From: &User{ID: 1}, Chat: &Chat{ID: 1, Type: "private"}, Text: "second"},
+	}); err != nil {
+		t.Fatalf("enqueue second: %v", err)
+	}
+
+	next, ok, err := store.NextPending(ctx, now)
+	if err != nil || !ok {
+		t.Fatalf("next pending first: ok=%v err=%v", ok, err)
+	}
+	if next.ID != first.ID {
+		t.Fatalf("expected FIFO first item, got %#v", next)
+	}
+	if err := store.MarkPrinted(ctx, next.ID); err != nil {
+		t.Fatalf("mark printed: %v", err)
+	}
+	next, ok, err = store.NextPending(ctx, now)
+	if err != nil || !ok {
+		t.Fatalf("next pending second: ok=%v err=%v", ok, err)
+	}
+	if next.Message.Text != "second" {
+		t.Fatalf("expected second item, got %#v", next)
+	}
+	retryAt := now.Add(time.Minute)
+	if err := store.MarkFailed(ctx, next.ID, errors.New("printer offline"), retryAt); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+	if _, ok, err := store.NextPending(ctx, now); err != nil || ok {
+		t.Fatalf("failed item must wait until next attempt, ok=%v err=%v", ok, err)
+	}
+	next, ok, err = store.NextPending(ctx, retryAt)
+	if err != nil || !ok {
+		t.Fatalf("failed item should be retryable, ok=%v err=%v", ok, err)
+	}
+	if next.Attempts != 1 || next.LastError != "printer offline" {
+		t.Fatalf("expected failed attempt metadata, got %#v", next)
+	}
+}
+
 func testConfig() Config {
 	return Config{
 		Token:            "123:abc",
@@ -581,11 +759,97 @@ func (s *fakePrintJobStore) FinishPrintJob(id string, printErr error) error {
 type fakeTelegramFaxPrinter struct {
 	printedLines []receipt.Line
 	printErr     error
+	checkErr     error
+	checks       int
+}
+
+func (p *fakeTelegramFaxPrinter) CheckConnection(context.Context, printer.Config) (string, error) {
+	p.checks++
+	if p.checkErr != nil {
+		return "", p.checkErr
+	}
+	return "Подключено", nil
 }
 
 func (p *fakeTelegramFaxPrinter) PrintReceipt(_ context.Context, _ printer.Config, lines []receipt.Line) error {
 	p.printedLines = append([]receipt.Line(nil), lines...)
 	return p.printErr
+}
+
+type fakeFaxCoordinator struct {
+	run   bool
+	calls int
+}
+
+func (c *fakeFaxCoordinator) TryRunFax(ctx context.Context, fn func(context.Context) error) (bool, error) {
+	c.calls++
+	if !c.run {
+		return false, nil
+	}
+	return true, fn(ctx)
+}
+
+type fakeQueueStore struct {
+	nextID int
+	items  []QueueItem
+}
+
+func newFakeQueueStore() *fakeQueueStore {
+	return &fakeQueueStore{}
+}
+
+func (s *fakeQueueStore) Enqueue(_ context.Context, item QueueItem) (QueueItem, bool, error) {
+	for _, existing := range s.items {
+		if existing.DedupeKey == item.DedupeKey {
+			return existing, false, nil
+		}
+	}
+	s.nextID++
+	item.ID = "queue-" + strconv.Itoa(s.nextID)
+	item.Status = QueueStatusPending
+	s.items = append(s.items, item)
+	return item, true, nil
+}
+
+func (s *fakeQueueStore) NextPending(_ context.Context, now time.Time) (QueueItem, bool, error) {
+	for _, item := range s.items {
+		if item.Status == QueueStatusPending && !item.NextAttemptAt.After(now) {
+			return item, true, nil
+		}
+	}
+	return QueueItem{}, false, nil
+}
+
+func (s *fakeQueueStore) MarkPrinted(_ context.Context, id string) error {
+	for i := range s.items {
+		if s.items[i].ID == id {
+			s.items[i].Status = QueueStatusPrinted
+			return nil
+		}
+	}
+	return errors.New("queue item not found")
+}
+
+func (s *fakeQueueStore) MarkFailed(_ context.Context, id string, err error, nextAttemptAt time.Time) error {
+	for i := range s.items {
+		if s.items[i].ID == id {
+			s.items[i].Attempts++
+			s.items[i].LastError = err.Error()
+			s.items[i].NextAttemptAt = nextAttemptAt
+			return nil
+		}
+	}
+	return errors.New("queue item not found")
+}
+
+func (s *fakeQueueStore) pendingItems() []QueueItem {
+	var pending []QueueItem
+	for _, item := range s.items {
+		if item.Status == QueueStatusPending {
+			pending = append(pending, item)
+		}
+	}
+	return pending
 }
 
 func testTelegramPhotoPNG(t *testing.T, width int, height int) []byte {

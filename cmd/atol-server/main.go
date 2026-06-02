@@ -13,6 +13,7 @@ import (
 	"atol-server/internal/app"
 	"atol-server/internal/googleintegration"
 	"atol-server/internal/imageeditor"
+	"atol-server/internal/printcoord"
 	"atol-server/internal/printer"
 	"atol-server/internal/receiptsnapshot"
 	schedulerruntime "atol-server/internal/scheduler"
@@ -63,6 +64,7 @@ func main() {
 	}
 	googleConfig.TokenStore = googleTokenStore
 	gateway := printer.NewGateway(libraryPath, assetsPath)
+	printCoordinator := printcoord.New()
 	googleClient := googleintegration.NewClient(googleConfig)
 	receiptService := app.NewReceiptService(
 		store,
@@ -71,6 +73,7 @@ func main() {
 		app.WithGeneratedAssetsPath(assetsPath),
 		app.WithGoogleProvider(googleClient),
 		app.WithReceiptSnapshotStore(receiptSnapshotStore),
+		app.WithPrintCoordinator(printCoordinator),
 	)
 	scheduler := schedulerruntime.NewService(store, receiptService, time.Now)
 	go scheduler.Start(ctx)
@@ -79,6 +82,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Telegram fax configuration failed: %v", err)
 	}
+	var telegramFaxFlusher web.TelegramFaxQueueFlusher
 	if telegramFaxEnabled {
 		telegramFaxService := telegramfax.NewService(
 			telegramFaxConfig,
@@ -89,7 +93,10 @@ func main() {
 			gateway,
 			time.Now,
 			telegramfax.WithLogger(log.Default()),
+			telegramfax.WithQueueStore(telegramfax.NewPostgresQueueStore(pool, store.WorkspaceID())),
+			telegramfax.WithPrintCoordinator(printCoordinator),
 		)
+		telegramFaxFlusher = telegramFaxService
 		go telegramFaxService.Start(ctx)
 		log.Printf("Telegram fax bot enabled, polling %s", telegramFaxConfig.APIBaseURL)
 	} else {
@@ -107,6 +114,8 @@ func main() {
 		web.WithReceiptSnapshotStore(receiptSnapshotStore),
 		web.WithGoogleClient(googleClient),
 		web.WithScheduler(scheduler),
+		web.WithPrintCoordinator(printCoordinator),
+		web.WithTelegramFaxQueueFlusher(telegramFaxFlusher),
 	)
 
 	log.Printf("ATOL Go Server listening on %s", addr)

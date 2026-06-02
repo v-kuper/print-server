@@ -14,6 +14,7 @@ import (
 	"atol-server/internal/imageeditor"
 	"atol-server/internal/motivation"
 	"atol-server/internal/news"
+	"atol-server/internal/printcoord"
 	"atol-server/internal/printer"
 	"atol-server/internal/receipt"
 	"atol-server/internal/receiptsnapshot"
@@ -137,6 +138,14 @@ type PrintJobStore interface {
 	FinishPrintJob(id string, printErr error) error
 }
 
+type PrintCoordinator interface {
+	RunUserPrint(context.Context, func(context.Context) error) error
+}
+
+type TelegramFaxQueueFlusher interface {
+	FlushPending(context.Context) error
+}
+
 type Scheduler interface {
 	ResetFromNow(context.Context) error
 	Status() (schedulerruntime.Status, error)
@@ -158,6 +167,8 @@ type Server struct {
 	receiptService         DailyReceiptService
 	snapshotStore          ReceiptSnapshotStore
 	scheduler              Scheduler
+	printCoordinator       PrintCoordinator
+	telegramFaxFlusher     TelegramFaxQueueFlusher
 	imageStore             ImageEditorStore
 	clock                  func() time.Time
 	assetsPath             string
@@ -254,6 +265,20 @@ func WithScheduler(scheduler Scheduler) ServerOption {
 	}
 }
 
+func WithPrintCoordinator(coordinator PrintCoordinator) ServerOption {
+	return func(s *Server) {
+		if coordinator != nil {
+			s.printCoordinator = coordinator
+		}
+	}
+}
+
+func WithTelegramFaxQueueFlusher(flusher TelegramFaxQueueFlusher) ServerOption {
+	return func(s *Server) {
+		s.telegramFaxFlusher = flusher
+	}
+}
+
 func WithVersionInfo(info version.Info) ServerOption {
 	return func(s *Server) {
 		s.versionInfo = info
@@ -274,6 +299,7 @@ func NewServer(store SettingsStore, gateway PrinterGateway, clock func() time.Ti
 		newsProvider:           news.NewProvider(nil),
 		motivationProvider:     motivation.NewOllamaProvider(nil),
 		articleSummaryProvider: articlesummary.NewProvider(nil),
+		printCoordinator:       printcoord.New(),
 		clock:                  clock,
 		assetsPath:             defaultAssetsPath,
 		imageEditorPath:        defaultImageEditorPath,
@@ -295,6 +321,7 @@ func NewServer(store SettingsStore, gateway PrinterGateway, clock func() time.Ti
 			app.WithGoogleProvider(server.googleClient),
 			app.WithMotivationProvider(server.motivationProvider),
 			app.WithReceiptSnapshotStore(server.snapshotStore),
+			app.WithPrintCoordinator(server.printCoordinator),
 		)
 	}
 	return server

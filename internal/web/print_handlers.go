@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,6 +71,7 @@ func (s *Server) handlePrinterCheck(w http.ResponseWriter, r *http.Request) {
 		OK:      true,
 		Message: message,
 	})
+	s.flushTelegramFaxQueue()
 }
 
 func (s *Server) handlePrinterFonts(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +118,9 @@ func (s *Server) handlePrintTest(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	printErr := s.printer.PrintReceipt(r.Context(), config, receipt.TestReceipt(s.clock()))
+	printErr := s.printCoordinator.RunUserPrint(r.Context(), func(ctx context.Context) error {
+		return s.printer.PrintReceipt(ctx, config, receipt.TestReceipt(s.clock()))
+	})
 	finishErr := s.finishPrintJob(jobID, printErr)
 	if printErr != nil {
 		writeJSON(w, http.StatusBadGateway, statusResponse{
@@ -174,7 +178,9 @@ func (s *Server) handlePrintText(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	printErr := s.printer.PrintReceipt(r.Context(), config, lines)
+	printErr := s.printCoordinator.RunUserPrint(r.Context(), func(ctx context.Context) error {
+		return s.printer.PrintReceipt(ctx, config, lines)
+	})
 	finishErr := s.finishPrintJob(jobID, printErr)
 	if printErr != nil {
 		writeJSON(w, http.StatusBadGateway, statusResponse{
@@ -288,6 +294,15 @@ func (s *Server) finishPrintJob(id string, printErr error) error {
 		return nil
 	}
 	return store.FinishPrintJob(id, printErr)
+}
+
+func (s *Server) flushTelegramFaxQueue() {
+	if s.telegramFaxFlusher == nil {
+		return
+	}
+	go func() {
+		_ = s.telegramFaxFlusher.FlushPending(context.Background())
+	}()
 }
 
 func textPrintLines(request textPrintRequest) ([]receipt.Line, error) {
