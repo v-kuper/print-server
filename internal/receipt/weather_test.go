@@ -213,6 +213,54 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 	}
 }
 
+func TestDailyReceiptPrintsUnavailableSectionPlaceholders(t *testing.T) {
+	lines := DailyReceipt(DailyReceiptData{
+		HideWeather: true,
+		UnavailableSections: UnavailableSections{
+			Weather:      true,
+			TonPortfolio: true,
+			OilPrice:     true,
+			USDBYNRate:   true,
+			BankRates:    true,
+			Calendar:     true,
+			History:      true,
+			News:         true,
+			DenisTrends:  true,
+		},
+	})
+
+	got := texts(lines)
+	for _, section := range []string{
+		"Погода",
+		"Календарь",
+		"TON",
+		"Цена нефти",
+		"Курс доллара",
+		"В банках",
+		"История дня",
+		"Коротко о мире:",
+		"Denis Trends",
+	} {
+		index := indexOfText(got, section)
+		if index < 0 {
+			t.Fatalf("expected unavailable section %q, got %#v", section, got)
+		}
+		if index+1 >= len(got) || got[index+1] != "Нет данных" {
+			t.Fatalf("expected %q placeholder after %q, got %#v", "Нет данных", section, got)
+		}
+	}
+	if indexOfText(got, "Погода") > indexOfText(got, "Календарь") ||
+		indexOfText(got, "Календарь") > indexOfText(got, "TON") ||
+		indexOfText(got, "TON") > indexOfText(got, "Цена нефти") ||
+		indexOfText(got, "Цена нефти") > indexOfText(got, "Курс доллара") ||
+		indexOfText(got, "Курс доллара") > indexOfText(got, "В банках") ||
+		indexOfText(got, "В банках") > indexOfText(got, "История дня") ||
+		indexOfText(got, "История дня") > indexOfText(got, "Коротко о мире:") ||
+		indexOfText(got, "Коротко о мире:") > indexOfText(got, "Denis Trends") {
+		t.Fatalf("unexpected placeholder order: %#v", got)
+	}
+}
+
 func TestDailyReceiptPrintsCalendarBeforeFinanceAndHistoryBeforeNews(t *testing.T) {
 	lines := DailyReceipt(DailyReceiptData{
 		Weather: weather.Snapshot{

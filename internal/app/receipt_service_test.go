@@ -387,8 +387,9 @@ func TestReceiptServiceContinuesWhenTonPriceFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build daily receipt must survive TON price failure: %v", err)
 	}
-	if lineTextsContain(lines, "TON") {
-		t.Fatalf("expected TON block to be skipped when price is unavailable, got %#v", lines)
+	requireUnavailableSection(t, lines, "TON")
+	if lineTextsContainSubstring(lines, "TON $") {
+		t.Fatalf("expected TON price line to be omitted when price is unavailable, got %#v", lines)
 	}
 	if !containsWarning(warnings, "TON недоступен") {
 		t.Fatalf("expected TON warning, got %#v", warnings)
@@ -620,9 +621,7 @@ func TestReceiptServiceContinuesWhenOilPriceFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build daily receipt must survive oil price failure: %v", err)
 	}
-	if lineTextsContain(lines, "Цена нефти") {
-		t.Fatalf("expected oil block to be skipped when price is unavailable, got %#v", lines)
-	}
+	requireUnavailableSection(t, lines, "Цена нефти")
 	if !containsWarning(warnings, "нефть недоступна") {
 		t.Fatalf("expected oil warning, got %#v", warnings)
 	}
@@ -712,11 +711,256 @@ func TestReceiptServiceContinuesWhenBankRatesFail(t *testing.T) {
 	if !lineTextsContain(lines, "Курс доллара") {
 		t.Fatalf("expected official USD/BYN block to remain, got %#v", lines)
 	}
-	if lineTextsContain(lines, "В банках") {
-		t.Fatalf("expected bank rates block to be omitted on failure, got %#v", lines)
-	}
+	requireUnavailableSection(t, lines, "В банках")
 	if !containsWarning(warnings, "банковские курсы") {
 		t.Fatalf("expected bank rates warning, got %#v", warnings)
+	}
+}
+
+func TestReceiptServiceContinuesWhenWeatherProviderFails(t *testing.T) {
+	store := &fakeStore{
+		location: weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         true,
+			ShowWeatherAdvice:   true,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowOilPrice:        false,
+			ShowUsdBynRate:      true,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        false,
+			ShowHistory:         false,
+			ShowNews:            false,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: false},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithWeatherProvider(&fakeWeatherProvider{err: errors.New("open-meteo timeout")}),
+		WithFiatRateProvider(&fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt must survive weather failure: %v", err)
+	}
+	requireUnavailableSection(t, lines, "Погода")
+	if !lineTextsContain(lines, "Курс доллара") {
+		t.Fatalf("expected receipt to continue after weather failure, got %#v", lines)
+	}
+	if !containsWarning(warnings, "погода недоступна") {
+		t.Fatalf("expected weather warning, got %#v", warnings)
+	}
+}
+
+func TestReceiptServiceContinuesWhenUsdBynRateFails(t *testing.T) {
+	store := &fakeStore{
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowOilPrice:        false,
+			ShowUsdBynRate:      true,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        false,
+			ShowHistory:         false,
+			ShowNews:            false,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: false},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithFiatRateProvider(&fakeFiatProvider{err: errors.New("NBRB timeout")}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt must survive USD/BYN failure: %v", err)
+	}
+	requireUnavailableSection(t, lines, "Курс доллара")
+	if !containsWarning(warnings, "USD/BYN недоступен") {
+		t.Fatalf("expected USD/BYN warning, got %#v", warnings)
+	}
+}
+
+func TestReceiptServiceContinuesWhenNewsProviderFails(t *testing.T) {
+	store := &fakeStore{
+		newsSettings: news.Settings{Sources: []news.SourceSettings{
+			{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+		}},
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowOilPrice:        false,
+			ShowUsdBynRate:      false,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        false,
+			ShowHistory:         false,
+			ShowNews:            true,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: false},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithNewsProvider(&fakeNewsProvider{err: errors.New("rss timeout")}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt must survive news failure: %v", err)
+	}
+	requireUnavailableSection(t, lines, "Коротко о мире:")
+	if !containsWarning(warnings, "новости недоступны") {
+		t.Fatalf("expected news warning, got %#v", warnings)
+	}
+}
+
+func TestReceiptServiceContinuesWhenDenisTrendsProviderFails(t *testing.T) {
+	store := &fakeStore{
+		denisTrends: denistrends.DefaultSettings(),
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowOilPrice:        false,
+			ShowUsdBynRate:      false,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        false,
+			ShowHistory:         false,
+			ShowNews:            false,
+			ShowDenisTrends:     true,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: false},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithDenisTrendsProvider(&fakeDenisTrendsProvider{err: errors.New("trends timeout")}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt must survive Denis Trends failure: %v", err)
+	}
+	requireUnavailableSection(t, lines, "Denis Trends")
+	if !containsWarning(warnings, "Denis Trends недоступны") {
+		t.Fatalf("expected Denis Trends warning, got %#v", warnings)
+	}
+}
+
+func TestReceiptServiceContinuesWhenGoogleCalendarFails(t *testing.T) {
+	store := &fakeStore{
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowOilPrice:        false,
+			ShowUsdBynRate:      false,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        true,
+			ShowHistory:         false,
+			ShowNews:            false,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: false},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithGoogleProvider(&fakeGoogleProvider{err: errors.New("google offline")}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt must survive Google calendar failure: %v", err)
+	}
+	requireUnavailableSection(t, lines, "Календарь")
+	if !containsWarning(warnings, "Google недоступен") {
+		t.Fatalf("expected Google warning, got %#v", warnings)
+	}
+}
+
+func TestReceiptServiceDoesNotMaskReceiptContentLoadFailure(t *testing.T) {
+	service := NewReceiptService(
+		&fakeStore{receiptContentErr: errors.New("settings database offline")},
+		&fakePrinter{},
+		fixedClock,
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err == nil {
+		t.Fatal("expected receipt content load error")
+	}
+	if lines != nil || warnings != nil {
+		t.Fatalf("expected no lines or warnings on infrastructure error, got lines=%#v warnings=%#v", lines, warnings)
+	}
+	if !strings.Contains(err.Error(), "settings database offline") {
+		t.Fatalf("expected original error to be returned, got %v", err)
+	}
+}
+
+func TestReceiptServiceDoesNotMaskReceiptStyleLoadFailure(t *testing.T) {
+	store := &fakeStore{
+		receiptStyleErr: errors.New("style database offline"),
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowOilPrice:        false,
+			ShowUsdBynRate:      false,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        false,
+			ShowHistory:         false,
+			ShowNews:            false,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: false},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err == nil {
+		t.Fatal("expected receipt style load error")
+	}
+	if lines != nil || warnings != nil {
+		t.Fatalf("expected no lines or warnings on infrastructure error, got lines=%#v warnings=%#v", lines, warnings)
+	}
+	if !strings.Contains(err.Error(), "style database offline") {
+		t.Fatalf("expected original error to be returned, got %v", err)
 	}
 }
 
@@ -1062,9 +1306,7 @@ func TestReceiptServiceHistoryFailureDoesNotBreakReceipt(t *testing.T) {
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "История дня недоступна: wikimedia offline") {
 		t.Fatalf("expected history warning, got %#v", warnings)
 	}
-	if lineTextsContain(lines, "История дня") {
-		t.Fatalf("expected history block to be omitted, got %#v", lines)
-	}
+	requireUnavailableSection(t, lines, "История дня")
 	if motivationProvider.historyFactCalls != 0 {
 		t.Fatalf("expected AI to be skipped when history API fails, got %d calls", motivationProvider.historyFactCalls)
 	}
@@ -2217,7 +2459,9 @@ type fakeStore struct {
 	newsSettings            news.Settings
 	denisTrends             denistrends.Settings
 	receiptStyle            receipt.StyleSettings
+	receiptStyleErr         error
 	receiptContent          receipt.ContentSettings
+	receiptContentErr       error
 	receiptContentLoadCalls int
 	snapshotSettings        receiptsnapshot.Settings
 	motivationSettings      motivation.Settings
@@ -2247,6 +2491,9 @@ func (s *fakeStore) LoadDenisTrends() (denistrends.Settings, error) {
 }
 
 func (s *fakeStore) LoadReceiptStyle() (receipt.StyleSettings, error) {
+	if s.receiptStyleErr != nil {
+		return receipt.StyleSettings{}, s.receiptStyleErr
+	}
 	if s.receiptStyle == (receipt.StyleSettings{}) {
 		return receipt.DefaultStyleSettings(), nil
 	}
@@ -2255,6 +2502,9 @@ func (s *fakeStore) LoadReceiptStyle() (receipt.StyleSettings, error) {
 
 func (s *fakeStore) LoadReceiptContent() (receipt.ContentSettings, error) {
 	s.receiptContentLoadCalls++
+	if s.receiptContentErr != nil {
+		return receipt.ContentSettings{}, s.receiptContentErr
+	}
 	content := s.receiptContent.Normalized()
 	if s.receiptContent == (receipt.ContentSettings{}) {
 		content.ShowOilPrice = false
@@ -2347,9 +2597,13 @@ func (s *fakeReceiptSnapshotStore) Fail(_ context.Context, id string, err error)
 
 type fakeWeatherProvider struct {
 	snapshot weather.Snapshot
+	err      error
 }
 
 func (p *fakeWeatherProvider) Current(context.Context, weather.Location) (weather.Snapshot, error) {
+	if p.err != nil {
+		return weather.Snapshot{}, p.err
+	}
 	return p.snapshot, nil
 }
 
@@ -2378,11 +2632,15 @@ func (p *fakeTonMarketChartProvider) MarketChart(context.Context) (finance.TonMa
 
 type fakeFiatProvider struct {
 	rate  finance.FiatRate
+	err   error
 	calls int
 }
 
 func (p *fakeFiatProvider) CurrentRate(context.Context) (finance.FiatRate, error) {
 	p.calls++
+	if p.err != nil {
+		return finance.FiatRate{}, p.err
+	}
 	return p.rate, nil
 }
 
@@ -2434,10 +2692,14 @@ func (p *fakeBankRatesProvider) Current(context.Context) (bankrates.Summary, err
 type fakeNewsProvider struct {
 	items    []news.Item
 	settings news.Settings
+	err      error
 }
 
 func (p *fakeNewsProvider) Current(_ context.Context, settings news.Settings) ([]news.Item, error) {
 	p.settings = settings
+	if p.err != nil {
+		return nil, p.err
+	}
 	return p.items, nil
 }
 
@@ -2445,11 +2707,15 @@ type fakeDenisTrendsProvider struct {
 	sections []denistrends.Section
 	now      time.Time
 	settings denistrends.Settings
+	err      error
 }
 
 func (p *fakeDenisTrendsProvider) Current(_ context.Context, settings denistrends.Settings, now time.Time) ([]denistrends.Section, error) {
 	p.settings = settings
 	p.now = now
+	if p.err != nil {
+		return nil, p.err
+	}
 	return p.sections, nil
 }
 
@@ -2617,6 +2883,17 @@ func indexOfLineText(lines []receipt.Line, want string) int {
 		}
 	}
 	return -1
+}
+
+func requireUnavailableSection(t *testing.T, lines []receipt.Line, section string) {
+	t.Helper()
+	index := indexOfLineText(lines, section)
+	if index < 0 {
+		t.Fatalf("expected unavailable section %q, got %#v", section, lines)
+	}
+	if index+1 >= len(lines) || lines[index+1].Text != "Нет данных" {
+		t.Fatalf("expected placeholder after %q, got %#v", section, lines)
+	}
 }
 
 func receiptLinesContainImage(lines []receipt.Line, path string) bool {

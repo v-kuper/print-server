@@ -46,25 +46,38 @@ var russianWeekdays = []string{
 }
 
 type DailyReceiptData struct {
-	Weather            weather.Snapshot
-	HideWeather        bool
-	WeatherAdvice      *motivation.WeatherAdvice
-	MotivationQuote    *motivation.Quote
-	DailyQuests        []dailyquest.DailyQuest
-	TonPortfolio       *finance.TonPortfolioSummary
-	TonChartImage      *Image
-	OilPrice           *finance.OilPrice
-	OilChartImage      *Image
-	USDBYNRate         *finance.FiatRate
-	USDBYNChartImage   *Image
-	BankRates          *bankrates.Summary
-	MailMessages       []googleintegration.MailMessage
-	CalendarEvents     []googleintegration.CalendarEvent
-	CalendarSections   []CalendarSection
-	CalendarAdvice     *motivation.CalendarAdvice
-	HistoryFacts       []motivation.HistoryFact
-	NewsItems          []news.Item
-	DenisTrendSections []denistrends.Section
+	Weather             weather.Snapshot
+	HideWeather         bool
+	UnavailableSections UnavailableSections
+	WeatherAdvice       *motivation.WeatherAdvice
+	MotivationQuote     *motivation.Quote
+	DailyQuests         []dailyquest.DailyQuest
+	TonPortfolio        *finance.TonPortfolioSummary
+	TonChartImage       *Image
+	OilPrice            *finance.OilPrice
+	OilChartImage       *Image
+	USDBYNRate          *finance.FiatRate
+	USDBYNChartImage    *Image
+	BankRates           *bankrates.Summary
+	MailMessages        []googleintegration.MailMessage
+	CalendarEvents      []googleintegration.CalendarEvent
+	CalendarSections    []CalendarSection
+	CalendarAdvice      *motivation.CalendarAdvice
+	HistoryFacts        []motivation.HistoryFact
+	NewsItems           []news.Item
+	DenisTrendSections  []denistrends.Section
+}
+
+type UnavailableSections struct {
+	Weather      bool
+	TonPortfolio bool
+	OilPrice     bool
+	USDBYNRate   bool
+	BankRates    bool
+	Calendar     bool
+	History      bool
+	News         bool
+	DenisTrends  bool
 }
 
 type CalendarSection struct {
@@ -135,7 +148,9 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 	normalStyle := styleSettings.Normalized().normalLineStyle()
 	originalStyle := styleSettings.Normalized().originalLineStyle()
 	result := make([]Line, 0, 32)
-	if !data.HideWeather {
+	if data.UnavailableSections.Weather {
+		result = appendUnavailableSection(result, "Погода", normalStyle)
+	} else if !data.HideWeather {
 		result = append(result, WeatherReceiptWithStyle(data.Weather, styleSettings)...)
 	}
 	if data.WeatherAdvice != nil && strings.TrimSpace(data.WeatherAdvice.Text) != "" {
@@ -169,6 +184,8 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 			result = append(result, blankLine(normalStyle))
 			result = append(result, wrappedAligned(data.CalendarAdvice.Text, normalStyle)...)
 		}
+	} else if data.UnavailableSections.Calendar {
+		result = appendUnavailableSection(result, "Календарь", normalStyle)
 	}
 	if data.TonPortfolio != nil {
 		result = appendSectionHeader(result, "TON", normalStyle)
@@ -177,6 +194,8 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 		if data.TonChartImage != nil {
 			result = append(result, imageLine(*data.TonChartImage, normalStyle))
 		}
+	} else if data.UnavailableSections.TonPortfolio {
+		result = appendUnavailableSection(result, "TON", normalStyle)
 	}
 	if data.OilPrice != nil {
 		result = appendSectionHeader(result, "Цена нефти", normalStyle)
@@ -184,6 +203,8 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 		if data.OilChartImage != nil {
 			result = append(result, imageLine(*data.OilChartImage, normalStyle))
 		}
+	} else if data.UnavailableSections.OilPrice {
+		result = appendUnavailableSection(result, "Цена нефти", normalStyle)
 	}
 	if data.USDBYNRate != nil {
 		result = appendSectionHeader(result, "Курс доллара", normalStyle)
@@ -191,6 +212,8 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 		if data.USDBYNChartImage != nil {
 			result = append(result, imageLine(*data.USDBYNChartImage, normalStyle))
 		}
+	} else if data.UnavailableSections.USDBYNRate {
+		result = appendUnavailableSection(result, "Курс доллара", normalStyle)
 	}
 	if data.BankRates != nil && (data.BankRates.SellUSD != nil || data.BankRates.BuyUSD != nil) {
 		result = appendSectionHeader(result, "В банках", normalStyle)
@@ -208,6 +231,8 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 		if !data.BankRates.UpdatedAt.IsZero() {
 			result = append(result, wrappedAligned(formatBankRatesUpdate(data.BankRates.UpdatedAt, data.Weather.TimeLocation()), normalStyle)...)
 		}
+	} else if data.UnavailableSections.BankRates {
+		result = appendUnavailableSection(result, "В банках", normalStyle)
 	}
 	if len(data.MailMessages) > 0 {
 		result = appendSectionHeader(result, "Почта", normalStyle)
@@ -232,6 +257,8 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 			}
 			result = append(result, wrappedAligned(formatHistoryFact(fact.Year, text), normalStyle)...)
 		}
+	} else if data.UnavailableSections.History {
+		result = appendUnavailableSection(result, "История дня", normalStyle)
 	}
 	if len(data.NewsItems) > 0 {
 		result = appendSectionHeader(result, "Коротко о мире:", normalStyle)
@@ -259,6 +286,8 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 				result = append(result, blankLine(normalStyle))
 			}
 		}
+	} else if data.UnavailableSections.News {
+		result = appendUnavailableSection(result, "Коротко о мире:", normalStyle)
 	}
 	if len(data.DenisTrendSections) > 0 {
 		result = appendSectionHeader(result, "Denis Trends", normalStyle)
@@ -297,6 +326,8 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 				result = append(result, blankLine(normalStyle))
 			}
 		}
+	} else if data.UnavailableSections.DenisTrends {
+		result = appendUnavailableSection(result, "Denis Trends", normalStyle)
 	}
 	return result
 }
@@ -346,6 +377,11 @@ func appendSectionHeader(lines []Line, title string, style lineStyle) []Line {
 	lines = append(lines, blankLine(style))
 	lines = append(lines, separator(style))
 	return append(lines, center(title, style))
+}
+
+func appendUnavailableSection(lines []Line, title string, style lineStyle) []Line {
+	lines = appendSectionHeader(lines, title, style)
+	return append(lines, center("Нет данных", style))
 }
 
 func formatTonPortfolioLine(summary finance.TonPortfolioSummary) string {

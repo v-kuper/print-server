@@ -367,11 +367,14 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		effectiveTime = s.clock()
 	}
 	content = content.Normalized()
+	unavailableSections := receipt.UnavailableSections{}
 
 	snapshot := weather.Snapshot{
 		Timezone:   motivation.DefaultTimezone,
 		ObservedAt: s.clock(),
 	}
+	weatherAvailable := true
+	var weatherWarning string
 	if content.ShowWeather || content.ShowWeatherAdvice {
 		location, err := s.store.LoadWeather()
 		if err != nil {
@@ -380,14 +383,18 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 
 		snapshot, err = s.weatherProvider.Current(ctx, location)
 		if err != nil {
-			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
+			weatherAvailable = false
+			weatherWarning = "погода недоступна: " + err.Error()
+			if content.ShowWeather {
+				unavailableSections.Weather = true
+			}
 		}
 	}
 
 	weatherAdvice, motivationQuote, dailyQuests, motivationWarning, err := s.resolveMotivationContent(
 		ctx,
 		snapshot,
-		content.ShowWeatherAdvice,
+		content.ShowWeatherAdvice && weatherAvailable,
 		content.ShowMotivationQuote,
 		content.ShowDailyQuests,
 		effectiveTime,
@@ -408,6 +415,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		tonPrice, err := s.tonPriceProvider.CurrentPrice(ctx)
 		if err != nil {
 			tonPriceWarning = "TON недоступен: " + err.Error()
+			unavailableSections.TonPortfolio = true
 		} else {
 			summary := portfolio.ValueAt(tonPrice)
 			tonSummary = &summary
@@ -417,6 +425,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 
 	var usdBynRate *finance.FiatRate
 	var usdBynChartImage *receipt.Image
+	var usdBynRateWarning string
 	var usdBynChartWarning string
 	var oilPrice *finance.OilPrice
 	var oilChartImage *receipt.Image
@@ -426,6 +435,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		price, err := s.oilPriceProvider.CurrentPrice(ctx)
 		if err != nil {
 			oilPriceWarning = "нефть недоступна: " + err.Error()
+			unavailableSections.OilPrice = true
 		} else {
 			oilPrice = &price
 			oilChartImage, oilChartWarning = s.resolveOilChartImage(ctx)
@@ -435,22 +445,30 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 	if content.ShowUsdBynRate {
 		rate, err := s.fiatRateProvider.CurrentRate(ctx)
 		if err != nil {
-			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
+			unavailableSections.USDBYNRate = true
+			usdBynRateWarning = "USD/BYN недоступен: " + err.Error()
+		} else {
+			usdBynRate = &rate
+			usdBynChartImage, usdBynChartWarning = s.resolveUsdBynChartImage(ctx)
 		}
-		usdBynRate = &rate
-		usdBynChartImage, usdBynChartWarning = s.resolveUsdBynChartImage(ctx)
 	}
 
 	var bankRatesSummary *bankrates.Summary
 	var bankRatesWarning string
 	if content.ShowBankRates {
 		bankRatesSummary, bankRatesWarning = s.resolveBankRatesSummary(ctx)
+		if bankRatesWarning != "" {
+			unavailableSections.BankRates = true
+		}
 	}
 
 	var googleSummary googleintegration.Summary
 	var googleWarning string
 	if content.ShowMail || content.ShowCalendar {
 		googleSummary, googleWarning = s.resolveGoogleSummary(ctx, content.ShowMail, content.ShowCalendar)
+		if googleWarning != "" && content.ShowCalendar {
+			unavailableSections.Calendar = true
+		}
 	}
 	if !content.ShowMail {
 		googleSummary.Mail = nil
@@ -459,7 +477,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		googleSummary.Events = nil
 	}
 	calendarSections := buildCalendarSections(googleSummary.Events, s.clock())
-	calendarAdvice, calendarAdviceWarning, err := s.resolveCalendarAdvice(ctx, content.ShowCalendar, calendarSections)
+	calendarAdvice, calendarAdviceWarning, err := s.resolveCalendarAdvice(ctx, content.ShowCalendar && !unavailableSections.Calendar, calendarSections)
 	if err != nil {
 		return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
 	}
@@ -467,6 +485,9 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 	historyFacts, historyWarning, err := s.resolveHistoryFacts(ctx, content.ShowHistory)
 	if err != nil {
 		return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
+	}
+	if historyWarning != "" && content.ShowHistory && len(historyFacts) == 0 {
+		unavailableSections.History = true
 	}
 
 	var newsItems []news.Item
@@ -495,11 +516,13 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		}
 		newsItems, err = s.newsProvider.Current(ctx, newsSettings)
 		if err != nil {
-			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
-		}
-		newsItems, newsTranslationWarning, err = s.translateNewsItems(ctx, newsSettings, newsItems)
-		if err != nil {
-			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
+			newsTranslationWarning = "новости недоступны: " + err.Error()
+			unavailableSections.News = true
+		} else {
+			newsItems, newsTranslationWarning, err = s.translateNewsItems(ctx, newsSettings, newsItems)
+			if err != nil {
+				return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
+			}
 		}
 	}
 
@@ -512,13 +535,15 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		}
 		denisTrendSections, err = s.denisTrendsProvider.Current(ctx, trendsSettings, effectiveTime)
 		if err != nil {
-			return dailyReceiptBuild{}, buildError(http.StatusBadGateway, err)
+			denisTrendsTranslationWarning = "Denis Trends недоступны: " + err.Error()
+			unavailableSections.DenisTrends = true
+		} else {
+			newsSettings, err := resolveNewsSettings()
+			if err != nil {
+				return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
+			}
+			denisTrendSections, denisTrendsTranslationWarning = s.translateDenisTrendSections(ctx, newsSettings, denisTrendSections)
 		}
-		newsSettings, err := resolveNewsSettings()
-		if err != nil {
-			return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
-		}
-		denisTrendSections, denisTrendsTranslationWarning = s.translateDenisTrendSections(ctx, newsSettings, denisTrendSections)
 	}
 
 	receiptStyle, err := s.store.LoadReceiptStyle()
@@ -527,26 +552,27 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 	}
 
 	lines := receipt.DailyReceiptWithStyle(receipt.DailyReceiptData{
-		HideWeather:        !content.ShowWeather,
-		Weather:            snapshot,
-		WeatherAdvice:      weatherAdvice,
-		MotivationQuote:    motivationQuote,
-		DailyQuests:        dailyQuests,
-		TonPortfolio:       tonSummary,
-		TonChartImage:      tonChartImage,
-		OilPrice:           oilPrice,
-		OilChartImage:      oilChartImage,
-		USDBYNRate:         usdBynRate,
-		USDBYNChartImage:   usdBynChartImage,
-		BankRates:          bankRatesSummary,
-		MailMessages:       googleSummary.Mail,
-		CalendarSections:   calendarSections,
-		CalendarAdvice:     calendarAdvice,
-		HistoryFacts:       historyFacts,
-		NewsItems:          newsItems,
-		DenisTrendSections: denisTrendSections,
+		HideWeather:         !content.ShowWeather,
+		UnavailableSections: unavailableSections,
+		Weather:             snapshot,
+		WeatherAdvice:       weatherAdvice,
+		MotivationQuote:     motivationQuote,
+		DailyQuests:         dailyQuests,
+		TonPortfolio:        tonSummary,
+		TonChartImage:       tonChartImage,
+		OilPrice:            oilPrice,
+		OilChartImage:       oilChartImage,
+		USDBYNRate:          usdBynRate,
+		USDBYNChartImage:    usdBynChartImage,
+		BankRates:           bankRatesSummary,
+		MailMessages:        googleSummary.Mail,
+		CalendarSections:    calendarSections,
+		CalendarAdvice:      calendarAdvice,
+		HistoryFacts:        historyFacts,
+		NewsItems:           newsItems,
+		DenisTrendSections:  denisTrendSections,
 	}, receiptStyle)
-	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, oilPriceWarning, oilChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning, denisTrendsTranslationWarning)
+	warnings := optionalWarnings(weatherWarning, motivationWarning, tonPriceWarning, tonChartWarning, oilPriceWarning, oilChartWarning, usdBynRateWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning, denisTrendsTranslationWarning)
 	return dailyReceiptBuild{
 		Lines:      lines,
 		Warnings:   warnings,
