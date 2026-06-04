@@ -2,11 +2,15 @@ package finance
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -15,6 +19,8 @@ const (
 	coinGeckoTonChartURL  = "https://api.coingecko.com/api/v3/coins/the-open-network/market_chart?vs_currency=usd&days=1"
 	nbrbUsdBynURL         = "https://api.nbrb.by/exrates/rates/USD?parammode=2"
 	nbrbUsdBynDynamicsURL = "https://api.nbrb.by/exrates/rates/dynamics/431"
+	fredBrentOilCSVURL    = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DCOILBRENTEU"
+	dataHubBrentOilCSVURL = "https://datahub.io/core/oil-prices/r/brent-daily.csv"
 )
 
 type TonPrice struct {
@@ -59,6 +65,25 @@ type FiatMarketChart struct {
 	BaseCode  string
 	QuoteCode string
 	Points    []FiatRatePoint
+}
+
+type OilPrice struct {
+	Name     string
+	Currency string
+	Unit     string
+	Date     time.Time
+	ValueUSD float64
+}
+
+type OilPricePoint struct {
+	Date     time.Time
+	ValueUSD float64
+}
+
+type OilMarketChart struct {
+	Name     string
+	Currency string
+	Points   []OilPricePoint
 }
 
 func DefaultTonPortfolio() TonPortfolio {
@@ -367,6 +392,296 @@ func parseNbrbDate(value string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unsupported NBRB date %q", value)
+}
+
+type FredBrentOilPriceProvider struct {
+	Client *http.Client
+	URL    string
+}
+
+type BrentOilPriceProvider interface {
+	CurrentPrice(context.Context) (OilPrice, error)
+	MarketChart(context.Context) (OilMarketChart, error)
+}
+
+func NewFredBrentOilPriceProvider(client *http.Client) *FredBrentOilPriceProvider {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	return &FredBrentOilPriceProvider{
+		Client: client,
+		URL:    fredBrentOilCSVURL,
+	}
+}
+
+func NewDefaultBrentOilPriceProvider() *FallbackBrentOilPriceProvider {
+	return NewFallbackBrentOilPriceProvider(
+		NewFredBrentOilPriceProvider(&http.Client{Timeout: 4 * time.Second}),
+		NewDataHubBrentOilPriceProvider(&http.Client{Timeout: 10 * time.Second}),
+	)
+}
+
+func (p *FredBrentOilPriceProvider) CurrentPrice(ctx context.Context) (OilPrice, error) {
+	points, err := p.loadPoints(ctx)
+	if err != nil {
+		return OilPrice{}, err
+	}
+	return oilPriceFromPoints(points, "FRED Brent CSV")
+}
+
+func (p *FredBrentOilPriceProvider) MarketChart(ctx context.Context) (OilMarketChart, error) {
+	points, err := p.loadPoints(ctx)
+	if err != nil {
+		return OilMarketChart{}, err
+	}
+	return oilChartFromPoints(points, "FRED Brent CSV")
+}
+
+func (p *FredBrentOilPriceProvider) loadPoints(ctx context.Context) ([]OilPricePoint, error) {
+	return loadOilCSVPoints(ctx, p.client(), p.url(), "FRED Brent CSV")
+}
+
+func (p *FredBrentOilPriceProvider) client() *http.Client {
+	if p.Client != nil {
+		return p.Client
+	}
+	return &http.Client{Timeout: 10 * time.Second}
+}
+
+func (p *FredBrentOilPriceProvider) url() string {
+	if p.URL != "" {
+		return p.URL
+	}
+	return fredBrentOilCSVURL
+}
+
+type DataHubBrentOilPriceProvider struct {
+	Client *http.Client
+	URL    string
+}
+
+func NewDataHubBrentOilPriceProvider(client *http.Client) *DataHubBrentOilPriceProvider {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	return &DataHubBrentOilPriceProvider{
+		Client: client,
+		URL:    dataHubBrentOilCSVURL,
+	}
+}
+
+func (p *DataHubBrentOilPriceProvider) CurrentPrice(ctx context.Context) (OilPrice, error) {
+	points, err := p.loadPoints(ctx)
+	if err != nil {
+		return OilPrice{}, err
+	}
+	return oilPriceFromPoints(points, "DataHub Brent CSV")
+}
+
+func (p *DataHubBrentOilPriceProvider) MarketChart(ctx context.Context) (OilMarketChart, error) {
+	points, err := p.loadPoints(ctx)
+	if err != nil {
+		return OilMarketChart{}, err
+	}
+	return oilChartFromPoints(points, "DataHub Brent CSV")
+}
+
+func (p *DataHubBrentOilPriceProvider) loadPoints(ctx context.Context) ([]OilPricePoint, error) {
+	return loadOilCSVPoints(ctx, p.client(), p.url(), "DataHub Brent CSV")
+}
+
+func (p *DataHubBrentOilPriceProvider) client() *http.Client {
+	if p.Client != nil {
+		return p.Client
+	}
+	return &http.Client{Timeout: 10 * time.Second}
+}
+
+func (p *DataHubBrentOilPriceProvider) url() string {
+	if p.URL != "" {
+		return p.URL
+	}
+	return dataHubBrentOilCSVURL
+}
+
+type FallbackBrentOilPriceProvider struct {
+	Primary           BrentOilPriceProvider
+	Fallback          BrentOilPriceProvider
+	PrimaryRetryAfter time.Duration
+
+	mu             sync.Mutex
+	primaryRetryAt time.Time
+}
+
+func NewFallbackBrentOilPriceProvider(primary BrentOilPriceProvider, fallback BrentOilPriceProvider) *FallbackBrentOilPriceProvider {
+	return &FallbackBrentOilPriceProvider{
+		Primary:  primary,
+		Fallback: fallback,
+	}
+}
+
+func (p *FallbackBrentOilPriceProvider) CurrentPrice(ctx context.Context) (OilPrice, error) {
+	if p.shouldUsePrimary() {
+		price, err := p.Primary.CurrentPrice(ctx)
+		if err == nil {
+			return price, nil
+		}
+		p.markPrimaryFailed()
+		if p.Fallback == nil {
+			return OilPrice{}, err
+		}
+		fallbackPrice, fallbackErr := p.Fallback.CurrentPrice(ctx)
+		if fallbackErr == nil {
+			return fallbackPrice, nil
+		}
+		return OilPrice{}, fmt.Errorf("primary Brent oil provider failed: %v; fallback Brent oil provider failed: %w", err, fallbackErr)
+	}
+	if p.Fallback == nil {
+		return OilPrice{}, fmt.Errorf("missing Brent oil provider")
+	}
+	return p.Fallback.CurrentPrice(ctx)
+}
+
+func (p *FallbackBrentOilPriceProvider) MarketChart(ctx context.Context) (OilMarketChart, error) {
+	if p.shouldUsePrimary() {
+		chart, err := p.Primary.MarketChart(ctx)
+		if err == nil {
+			return chart, nil
+		}
+		p.markPrimaryFailed()
+		if p.Fallback == nil {
+			return OilMarketChart{}, err
+		}
+		fallbackChart, fallbackErr := p.Fallback.MarketChart(ctx)
+		if fallbackErr == nil {
+			return fallbackChart, nil
+		}
+		return OilMarketChart{}, fmt.Errorf("primary Brent oil provider failed: %v; fallback Brent oil provider failed: %w", err, fallbackErr)
+	}
+	if p.Fallback == nil {
+		return OilMarketChart{}, fmt.Errorf("missing Brent oil provider")
+	}
+	return p.Fallback.MarketChart(ctx)
+}
+
+func (p *FallbackBrentOilPriceProvider) shouldUsePrimary() bool {
+	if p.Primary == nil {
+		return false
+	}
+	if p.Fallback == nil {
+		return true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.primaryRetryAt.IsZero() || !time.Now().Before(p.primaryRetryAt)
+}
+
+func (p *FallbackBrentOilPriceProvider) markPrimaryFailed() {
+	if p.Fallback == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	retryAfter := p.PrimaryRetryAfter
+	if retryAfter <= 0 {
+		retryAfter = 30 * time.Minute
+	}
+	p.primaryRetryAt = time.Now().Add(retryAfter)
+}
+
+func loadOilCSVPoints(ctx context.Context, client *http.Client, rawURL string, sourceName string) ([]OilPricePoint, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "text/csv")
+
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("request %s: %w", sourceName, err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		return nil, fmt.Errorf("%s returned HTTP %d", sourceName, response.StatusCode)
+	}
+
+	reader := csv.NewReader(response.Body)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", sourceName, err)
+	}
+	return parseOilCSVRecords(records), nil
+}
+
+func parseOilCSVRecords(records [][]string) []OilPricePoint {
+	if len(records) == 0 {
+		return nil
+	}
+	dateIndex, valueIndex := oilCSVColumnIndexes(records[0])
+	points := make([]OilPricePoint, 0, len(records)-1)
+	for _, record := range records[1:] {
+		if len(record) <= dateIndex || len(record) <= valueIndex {
+			continue
+		}
+		date, err := time.Parse("2006-01-02", strings.TrimSpace(record[dateIndex]))
+		if err != nil {
+			continue
+		}
+		rawValue := strings.TrimSpace(record[valueIndex])
+		if rawValue == "" || rawValue == "." {
+			continue
+		}
+		value, err := strconv.ParseFloat(rawValue, 64)
+		if err != nil || value <= 0 {
+			continue
+		}
+		points = append(points, OilPricePoint{Date: date, ValueUSD: value})
+	}
+	return points
+}
+
+func oilCSVColumnIndexes(header []string) (int, int) {
+	dateIndex := 0
+	valueIndex := 1
+	for index, column := range header {
+		normalized := strings.ToLower(strings.TrimSpace(column))
+		switch normalized {
+		case "date", "observation_date":
+			dateIndex = index
+		case "price", "dcoilbrenteu":
+			valueIndex = index
+		}
+	}
+	return dateIndex, valueIndex
+}
+
+func oilPriceFromPoints(points []OilPricePoint, sourceName string) (OilPrice, error) {
+	if len(points) == 0 {
+		return OilPrice{}, fmt.Errorf("%s returned no usable oil prices", sourceName)
+	}
+	latest := points[len(points)-1]
+	return OilPrice{
+		Name:     "Brent",
+		Currency: "USD",
+		Unit:     "barrel",
+		Date:     latest.Date,
+		ValueUSD: latest.ValueUSD,
+	}, nil
+}
+
+func oilChartFromPoints(points []OilPricePoint, sourceName string) (OilMarketChart, error) {
+	if len(points) > 7 {
+		points = points[len(points)-7:]
+	}
+	if len(points) < 2 {
+		return OilMarketChart{}, fmt.Errorf("%s returned less than 2 usable points", sourceName)
+	}
+	return OilMarketChart{
+		Name:     "Brent",
+		Currency: "USD",
+		Points:   points,
+	}, nil
 }
 
 func roundMoney(value float64) float64 {

@@ -61,6 +61,22 @@ func RenderFiatRateChartPixelBuffer(chart finance.FiatMarketChart, options Optio
 	return RenderLineChartPixelBuffer(points, options)
 }
 
+func RenderOilPriceChart(path string, chart finance.OilMarketChart, options Options) error {
+	points := make([]Point, 0, len(chart.Points))
+	for _, point := range chart.Points {
+		points = append(points, Point{Time: point.Date, Value: point.ValueUSD})
+	}
+	return RenderLineChart(path, points, options)
+}
+
+func RenderOilPriceChartPixelBuffer(chart finance.OilMarketChart, options Options) (MonoImage, error) {
+	points := make([]Point, 0, len(chart.Points))
+	for _, point := range chart.Points {
+		points = append(points, Point{Time: point.Date, Value: point.ValueUSD})
+	}
+	return RenderLineChartPixelBuffer(points, options)
+}
+
 func RenderLineChart(path string, points []Point, options Options) error {
 	chartImage, err := RenderLineChartPixelBuffer(points, options)
 	if err != nil {

@@ -100,7 +100,7 @@ func TestStoreLoadReturnsDefaultReceiptContentWhenFileDoesNotExist(t *testing.T)
 	if content.ShowMail {
 		t.Fatalf("mail must be disabled by default, got %#v", content)
 	}
-	if !content.ShowCalendar || !content.ShowHistory || !content.ShowWeather || !content.ShowUsdBynRate || !content.ShowBankRates {
+	if !content.ShowCalendar || !content.ShowHistory || !content.ShowWeather || !content.ShowOilPrice || !content.ShowUsdBynRate || !content.ShowBankRates {
 		t.Fatalf("expected main receipt sections enabled by default, got %#v", content)
 	}
 }
@@ -151,18 +151,18 @@ func TestStoreMigratesOldContentSettingsToShowHistoryByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load receipt content: %v", err)
 	}
-	if !content.ShowHistory || content.ShowNews {
-		t.Fatalf("expected migrated history=true and preserved news=false, got %#v", content)
+	if !content.ShowHistory || !content.ShowOilPrice || content.ShowNews {
+		t.Fatalf("expected migrated history=true, oil=true and preserved news=false, got %#v", content)
 	}
 
 	scheduleSettings, err := store.LoadSchedule()
 	if err != nil {
 		t.Fatalf("load schedule: %v", err)
 	}
-	if scheduleSettings.IntervalContent == nil || !scheduleSettings.IntervalContent.ShowHistory || scheduleSettings.IntervalContent.ShowNews {
+	if scheduleSettings.IntervalContent == nil || !scheduleSettings.IntervalContent.ShowHistory || !scheduleSettings.IntervalContent.ShowOilPrice || scheduleSettings.IntervalContent.ShowNews {
 		t.Fatalf("expected migrated interval content, got %#v", scheduleSettings.IntervalContent)
 	}
-	if len(scheduleSettings.Runs) != 1 || scheduleSettings.Runs[0].Content == nil || !scheduleSettings.Runs[0].Content.ShowHistory || scheduleSettings.Runs[0].Content.ShowNews {
+	if len(scheduleSettings.Runs) != 1 || scheduleSettings.Runs[0].Content == nil || !scheduleSettings.Runs[0].Content.ShowHistory || !scheduleSettings.Runs[0].Content.ShowOilPrice || scheduleSettings.Runs[0].Content.ShowNews {
 		t.Fatalf("expected migrated run content, got %#v", scheduleSettings.Runs)
 	}
 }

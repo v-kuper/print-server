@@ -185,6 +185,44 @@ func TestPostgresStoreImportsLegacySettingsOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreMigratesOldReceiptContentToShowOilPriceByDefault(t *testing.T) {
+	ctx := context.Background()
+	pool := openPostgresStoreTestPool(t, ctx)
+	resetPostgresStoreTestDatabase(t, ctx, pool)
+
+	store, err := NewPostgresStore(ctx, pool)
+	if err != nil {
+		t.Fatalf("create postgres store: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_settings (workspace_id, key, value)
+		VALUES
+			($1, 'receipt_content', '{"configured":true,"showWeather":true,"showUsdBynRate":true}'::jsonb),
+			($1, 'schedule', '{"enabled":true,"mode":"interval","intervalMinutes":15,"timezone":"Europe/Minsk","intervalContent":{"configured":true,"showWeather":true},"runs":[{"time":"07:00","profile":"custom","content":{"configured":true,"showWeather":true}}]}'::jsonb)`,
+		store.WorkspaceID()); err != nil {
+		t.Fatalf("insert old content settings: %v", err)
+	}
+
+	content, err := store.LoadReceiptContent()
+	if err != nil {
+		t.Fatalf("load old receipt content: %v", err)
+	}
+	if !content.ShowOilPrice {
+		t.Fatalf("expected migrated receipt content oil=true, got %#v", content)
+	}
+
+	scheduleSettings, err := store.LoadSchedule()
+	if err != nil {
+		t.Fatalf("load old schedule: %v", err)
+	}
+	if scheduleSettings.IntervalContent == nil || !scheduleSettings.IntervalContent.ShowOilPrice {
+		t.Fatalf("expected migrated interval content oil=true, got %#v", scheduleSettings.IntervalContent)
+	}
+	if len(scheduleSettings.Runs) != 1 || scheduleSettings.Runs[0].Content == nil || !scheduleSettings.Runs[0].Content.ShowOilPrice {
+		t.Fatalf("expected migrated run content oil=true, got %#v", scheduleSettings.Runs)
+	}
+}
+
 func openPostgresStoreTestPool(t *testing.T, ctx context.Context) storage.Pool {
 	t.Helper()
 	databaseURL := os.Getenv("TEST_DATABASE_URL")

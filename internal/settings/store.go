@@ -339,6 +339,9 @@ func (s *Store) load() (fileSettings, error) {
 	if !strings.Contains(string(data), `"showHistory"`) {
 		enableHistoryInExistingContent(&settings)
 	}
+	if !strings.Contains(string(data), `"showOilPrice"`) {
+		enableOilInExistingContent(&settings)
+	}
 	if settings.Printer.Host == "" && settings.Printer.Port == 0 {
 		settings.Printer = printer.DefaultConfig()
 	}
@@ -376,6 +379,24 @@ func enableHistoryInExistingContent(settings *fileSettings) {
 	for i := range settings.Schedule.Runs {
 		if settings.Schedule.Runs[i].Content != nil {
 			settings.Schedule.Runs[i].Content.ShowHistory = true
+		}
+	}
+}
+
+func enableOilInExistingContent(settings *fileSettings) {
+	if settings.ReceiptContent.Configured {
+		settings.ReceiptContent.ShowOilPrice = true
+	}
+	enableOilInScheduleSettings(&settings.Schedule)
+}
+
+func enableOilInScheduleSettings(settings *schedule.Settings) {
+	if settings.IntervalContent != nil {
+		settings.IntervalContent.ShowOilPrice = true
+	}
+	for i := range settings.Runs {
+		if settings.Runs[i].Content != nil {
+			settings.Runs[i].Content.ShowOilPrice = true
 		}
 	}
 }

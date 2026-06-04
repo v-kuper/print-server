@@ -68,6 +68,14 @@ type FiatMarketChartProvider interface {
 	MarketChart(context.Context, time.Time) (finance.FiatMarketChart, error)
 }
 
+type OilPriceProvider interface {
+	CurrentPrice(context.Context) (finance.OilPrice, error)
+}
+
+type OilMarketChartProvider interface {
+	MarketChart(context.Context) (finance.OilMarketChart, error)
+}
+
 type BankRatesProvider interface {
 	Current(context.Context) (bankrates.Summary, error)
 }
@@ -111,6 +119,8 @@ type ReceiptService struct {
 	tonChartProvider    TonMarketChartProvider
 	fiatRateProvider    FiatRateProvider
 	fiatChartProvider   FiatMarketChartProvider
+	oilPriceProvider    OilPriceProvider
+	oilChartProvider    OilMarketChartProvider
 	bankRatesProvider   BankRatesProvider
 	newsProvider        NewsProvider
 	denisTrendsProvider DenisTrendsProvider
@@ -190,6 +200,23 @@ func WithFiatMarketChartProvider(provider FiatMarketChartProvider) ReceiptServic
 	}
 }
 
+func WithOilPriceProvider(provider OilPriceProvider) ReceiptServiceOption {
+	return func(s *ReceiptService) {
+		s.oilPriceProvider = provider
+		if chartProvider, ok := provider.(OilMarketChartProvider); ok {
+			s.oilChartProvider = chartProvider
+		} else {
+			s.oilChartProvider = nil
+		}
+	}
+}
+
+func WithOilMarketChartProvider(provider OilMarketChartProvider) ReceiptServiceOption {
+	return func(s *ReceiptService) {
+		s.oilChartProvider = provider
+	}
+}
+
 func WithBankRatesProvider(provider BankRatesProvider) ReceiptServiceOption {
 	return func(s *ReceiptService) {
 		s.bankRatesProvider = provider
@@ -246,6 +273,7 @@ func NewReceiptService(store SettingsStore, printerGateway Printer, clock func()
 	}
 	tonProvider := finance.NewCoinGeckoTonPriceProvider(nil)
 	fiatProvider := finance.NewNbrbUsdBynRateProvider(nil)
+	oilProvider := finance.NewDefaultBrentOilPriceProvider()
 	service := &ReceiptService{
 		store:               store,
 		printer:             printerGateway,
@@ -254,6 +282,8 @@ func NewReceiptService(store SettingsStore, printerGateway Printer, clock func()
 		tonChartProvider:    tonProvider,
 		fiatRateProvider:    fiatProvider,
 		fiatChartProvider:   fiatProvider,
+		oilPriceProvider:    oilProvider,
+		oilChartProvider:    oilProvider,
 		bankRatesProvider:   bankrates.NewTheMoneyProvider(nil),
 		newsProvider:        news.NewProvider(nil),
 		denisTrendsProvider: denistrends.NewProvider(nil),
@@ -388,6 +418,20 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 	var usdBynRate *finance.FiatRate
 	var usdBynChartImage *receipt.Image
 	var usdBynChartWarning string
+	var oilPrice *finance.OilPrice
+	var oilChartImage *receipt.Image
+	var oilPriceWarning string
+	var oilChartWarning string
+	if content.ShowOilPrice && s.oilPriceProvider != nil {
+		price, err := s.oilPriceProvider.CurrentPrice(ctx)
+		if err != nil {
+			oilPriceWarning = "нефть недоступна: " + err.Error()
+		} else {
+			oilPrice = &price
+			oilChartImage, oilChartWarning = s.resolveOilChartImage(ctx)
+		}
+	}
+
 	if content.ShowUsdBynRate {
 		rate, err := s.fiatRateProvider.CurrentRate(ctx)
 		if err != nil {
@@ -490,6 +534,8 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		DailyQuests:        dailyQuests,
 		TonPortfolio:       tonSummary,
 		TonChartImage:      tonChartImage,
+		OilPrice:           oilPrice,
+		OilChartImage:      oilChartImage,
 		USDBYNRate:         usdBynRate,
 		USDBYNChartImage:   usdBynChartImage,
 		BankRates:          bankRatesSummary,
@@ -500,7 +546,7 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		NewsItems:          newsItems,
 		DenisTrendSections: denisTrendSections,
 	}, receiptStyle)
-	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning, denisTrendsTranslationWarning)
+	warnings := optionalWarnings(motivationWarning, tonPriceWarning, tonChartWarning, oilPriceWarning, oilChartWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning, denisTrendsTranslationWarning)
 	return dailyReceiptBuild{
 		Lines:      lines,
 		Warnings:   warnings,

@@ -137,6 +137,20 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 			Height:      96,
 			PixelBuffer: testChartPixelBuffer(),
 		},
+		OilPrice: &finance.OilPrice{
+			Name:     "Brent",
+			Currency: "USD",
+			Unit:     "barrel",
+			Date:     time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+			ValueUSD: 98.29,
+		},
+		OilChartImage: &Image{
+			Path:        "/tmp/oil-brent-7d.png",
+			URL:         "/assets/generated/oil-brent-7d.png",
+			Width:       384,
+			Height:      96,
+			PixelBuffer: testChartPixelBuffer(),
+		},
 		BankRates: &bankrates.Summary{
 			Source: "TheMoney.by",
 			SellUSD: &bankrates.Offer{
@@ -170,6 +184,9 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 	requireContains(t, got, "Курс доллара")
 	requireContains(t, got, "USD/BYN 3.1234")
 	requireContainsImage(t, lines, "/tmp/usd-byn-7d.png", "/assets/generated/usd-byn-7d.png")
+	requireContains(t, got, "Цена нефти")
+	requireContains(t, got, "Brent $98.29/барр (01.06)")
+	requireContainsImage(t, lines, "/tmp/oil-brent-7d.png", "/assets/generated/oil-brent-7d.png")
 	requireContains(t, got, "В банках")
 	requireContains(t, got, "Продать $ 3.2550")
 	requireContains(t, got, "Банк Б / Банк В")
@@ -225,6 +242,13 @@ func TestDailyReceiptPrintsCalendarBeforeFinanceAndHistoryBeforeNews(t *testing.
 			Scale:     1,
 			Rate:      3.1234,
 		},
+		OilPrice: &finance.OilPrice{
+			Name:     "Brent",
+			Currency: "USD",
+			Unit:     "barrel",
+			Date:     time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+			ValueUSD: 98.29,
+		},
 		BankRates: &bankrates.Summary{
 			SellUSD: &bankrates.Offer{Rate: 3.255, BankNames: []string{"Банк Б"}},
 		},
@@ -242,6 +266,7 @@ func TestDailyReceiptPrintsCalendarBeforeFinanceAndHistoryBeforeNews(t *testing.
 		"Календарь",
 		"Оставь воздух между встречами.",
 		"TON",
+		"Цена нефти",
 		"Курс доллара",
 		"В банках",
 		"История дня",

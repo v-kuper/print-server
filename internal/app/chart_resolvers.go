@@ -96,6 +96,33 @@ func (s *ReceiptService) resolveUsdBynChartImage(ctx context.Context) (*receipt.
 	}, ""
 }
 
+func (s *ReceiptService) resolveOilChartImage(ctx context.Context) (*receipt.Image, string) {
+	if s.oilChartProvider == nil {
+		return nil, ""
+	}
+	chartData, err := s.oilChartProvider.MarketChart(ctx)
+	if err != nil {
+		return nil, "график нефти недоступен: " + err.Error()
+	}
+
+	path := filepath.Join(s.generatedAssetsPathOrDefault(), "generated", "oil-brent-7d.png")
+	chartImage, err := chart.RenderOilPriceChartPixelBuffer(chartData, chart.Options{Width: 384, Height: 96})
+	if err != nil {
+		return nil, "график нефти недоступен: " + err.Error()
+	}
+	if err := chart.SaveMonoPNG(path, chartImage); err != nil {
+		return nil, "график нефти недоступен: " + err.Error()
+	}
+
+	return &receipt.Image{
+		Path:        path,
+		URL:         fmt.Sprintf("/assets/generated/oil-brent-7d.png?v=%d", s.clock().UnixNano()),
+		Width:       chartImage.Width,
+		Height:      chartImage.Height,
+		PixelBuffer: chartImage.Pixels,
+	}, ""
+}
+
 func (s *ReceiptService) resolveBankRatesSummary(ctx context.Context) (*bankrates.Summary, string) {
 	if s.bankRatesProvider == nil {
 		return nil, ""

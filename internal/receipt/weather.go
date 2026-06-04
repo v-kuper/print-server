@@ -53,6 +53,8 @@ type DailyReceiptData struct {
 	DailyQuests        []dailyquest.DailyQuest
 	TonPortfolio       *finance.TonPortfolioSummary
 	TonChartImage      *Image
+	OilPrice           *finance.OilPrice
+	OilChartImage      *Image
 	USDBYNRate         *finance.FiatRate
 	USDBYNChartImage   *Image
 	BankRates          *bankrates.Summary
@@ -174,6 +176,13 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 		result = append(result, wrappedAligned(formatTonValueLine(*data.TonPortfolio), normalStyle)...)
 		if data.TonChartImage != nil {
 			result = append(result, imageLine(*data.TonChartImage, normalStyle))
+		}
+	}
+	if data.OilPrice != nil {
+		result = appendSectionHeader(result, "Цена нефти", normalStyle)
+		result = append(result, wrappedAligned(formatOilPrice(*data.OilPrice), normalStyle)...)
+		if data.OilChartImage != nil {
+			result = append(result, imageLine(*data.OilChartImage, normalStyle))
 		}
 	}
 	if data.USDBYNRate != nil {
@@ -345,6 +354,14 @@ func formatTonPortfolioLine(summary finance.TonPortfolioSummary) string {
 
 func formatTonValueLine(summary finance.TonPortfolioSummary) string {
 	return fmt.Sprintf("$%.2f P/L %s", summary.CurrentValueUSD, formatSignedCurrency(summary.ProfitLossUSD))
+}
+
+func formatOilPrice(price finance.OilPrice) string {
+	name := strings.TrimSpace(price.Name)
+	if name == "" {
+		name = "Brent"
+	}
+	return fmt.Sprintf("%s $%.2f/барр (%s)", name, price.ValueUSD, price.Date.Format("02.01"))
 }
 
 func formatFiatRate(rate finance.FiatRate) string {

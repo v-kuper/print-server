@@ -60,6 +60,7 @@ const scheduleContentOptions = [
   { key: "showMotivationQuote", label: "Цитата",          group: "Основное" },
   { key: "showDailyQuests",     label: "Квест на день",   group: "Основное" },
   { key: "showTonPortfolio",    label: "TON",             group: "Финансы"  },
+  { key: "showOilPrice",        label: "Нефть",           group: "Финансы"  },
   { key: "showUsdBynRate",      label: "USD/BYN",         group: "Финансы"  },
   { key: "showBankRates",       label: "Банки",           group: "Финансы"  },
   { key: "showMail",            label: "Почта",           group: "Google"   },
@@ -545,6 +546,7 @@ function applyBootstrap(data) {
   setChecked("#content-motivation-quote", content.showMotivationQuote);
   setChecked("#content-daily-quests", content.showDailyQuests);
   setChecked("#content-ton-portfolio", content.showTonPortfolio);
+  setChecked("#content-oil-price", content.showOilPrice);
   setChecked("#content-usd-byn-rate", content.showUsdBynRate);
   setChecked("#content-bank-rates", content.showBankRates);
   setChecked("#content-mail", content.showMail);
@@ -1244,6 +1246,7 @@ function readReceiptContentSettings() {
     showMotivationQuote: checked("#content-motivation-quote"),
     showDailyQuests: checked("#content-daily-quests"),
     showTonPortfolio: checked("#content-ton-portfolio"),
+    showOilPrice: checked("#content-oil-price"),
     showUsdBynRate: checked("#content-usd-byn-rate"),
     showBankRates: checked("#content-bank-rates"),
     showMail: checked("#content-mail"),
@@ -1301,6 +1304,7 @@ function scheduleContentFromSettings(settings) {
     showMotivationQuote: Boolean(content.showMotivationQuote),
     showDailyQuests: Boolean(content.showDailyQuests),
     showTonPortfolio: Boolean(content.showTonPortfolio),
+    showOilPrice: Boolean(content.showOilPrice),
     showUsdBynRate: Boolean(content.showUsdBynRate),
     showBankRates: Boolean(content.showBankRates),
     showMail: Boolean(content.showMail),

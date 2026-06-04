@@ -183,6 +183,7 @@ func TestIndexPageServesStaticClientShell(t *testing.T) {
 		`id="schedule-interval-content"`,
 		`id="schedule-run-header"`,
 		`Точное время и состав`,
+		`id="content-oil-price"`,
 		`id="image-editor-file"`,
 		`id="image-editor-canvas-height"`,
 		`id="image-editor-result"`,
@@ -287,6 +288,7 @@ func TestStaticClientAssetsServedWithoutCache(t *testing.T) {
 				`function renderVersionBadge`,
 				`"Commit: " + shortCommit(commit)`,
 				`data-version-details`,
+				`showOilPrice`,
 				`showHistory`,
 				`showDailyQuests`,
 				`data-schedule-content-key`,
@@ -826,7 +828,7 @@ func TestSaveReceiptContentEndpointPersistsContent(t *testing.T) {
 	store := &fakeStore{}
 	server := NewServer(store, &fakePrinter{}, fixedClock)
 
-	body := bytes.NewBufferString(`{"configured":true,"showWeather":false,"showWeatherAdvice":false,"showMotivationQuote":true,"showDailyQuests":true,"showTonPortfolio":false,"showUsdBynRate":true,"showBankRates":false,"showMail":true,"showCalendar":false,"showHistory":true,"showNews":true,"showDenisTrends":true,"denisTrendsMode":"now"}`)
+	body := bytes.NewBufferString(`{"configured":true,"showWeather":false,"showWeatherAdvice":false,"showMotivationQuote":true,"showDailyQuests":true,"showTonPortfolio":false,"showOilPrice":true,"showUsdBynRate":true,"showBankRates":false,"showMail":true,"showCalendar":false,"showHistory":true,"showNews":true,"showDenisTrends":true,"denisTrendsMode":"now"}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/settings/receipt-content", body)
 	response := httptest.NewRecorder()
 
@@ -842,6 +844,7 @@ func TestSaveReceiptContentEndpointPersistsContent(t *testing.T) {
 		store.receiptContent.ShowCalendar ||
 		!store.receiptContent.ShowMotivationQuote ||
 		!store.receiptContent.ShowDailyQuests ||
+		!store.receiptContent.ShowOilPrice ||
 		!store.receiptContent.ShowUsdBynRate ||
 		!store.receiptContent.ShowMail ||
 		!store.receiptContent.ShowHistory ||
@@ -2056,7 +2059,11 @@ func (s *fakeStore) SaveReceiptStyle(style receipt.StyleSettings) error {
 }
 
 func (s *fakeStore) LoadReceiptContent() (receipt.ContentSettings, error) {
-	return s.receiptContent.Normalized(), nil
+	content := s.receiptContent.Normalized()
+	if s.receiptContent == (receipt.ContentSettings{}) {
+		content.ShowOilPrice = false
+	}
+	return content, nil
 }
 
 func (s *fakeStore) SaveReceiptContent(content receipt.ContentSettings) error {

@@ -198,9 +198,19 @@ func (s *PostgresStore) SaveReceiptStyle(style receipt.StyleSettings) error {
 }
 
 func (s *PostgresStore) LoadReceiptContent() (receipt.ContentSettings, error) {
-	value, err := loadSetting(s, settingReceiptContent, receipt.DefaultContentSettings())
+	data, found, err := s.loadSettingData(settingReceiptContent)
 	if err != nil {
 		return receipt.ContentSettings{}, err
+	}
+	if !found {
+		return receipt.DefaultContentSettings(), nil
+	}
+	var value receipt.ContentSettings
+	if err := json.Unmarshal(data, &value); err != nil {
+		return receipt.ContentSettings{}, fmt.Errorf("decode %s settings: %w", settingReceiptContent, err)
+	}
+	if !strings.Contains(string(data), `"showOilPrice"`) {
+		value.ShowOilPrice = true
 	}
 	return value.Normalized(), nil
 }
@@ -226,9 +236,19 @@ func (s *PostgresStore) SaveReceiptSnapshotSettings(settings receiptsnapshot.Set
 }
 
 func (s *PostgresStore) LoadSchedule() (schedule.Settings, error) {
-	value, err := loadSetting(s, settingSchedule, schedule.DefaultSettings())
+	data, found, err := s.loadSettingData(settingSchedule)
 	if err != nil {
 		return schedule.Settings{}, err
+	}
+	if !found {
+		return schedule.DefaultSettings(), nil
+	}
+	var value schedule.Settings
+	if err := json.Unmarshal(data, &value); err != nil {
+		return schedule.Settings{}, fmt.Errorf("decode %s settings: %w", settingSchedule, err)
+	}
+	if !strings.Contains(string(data), `"showOilPrice"`) {
+		enableOilInScheduleSettings(&value)
 	}
 	return value.Normalized(), nil
 }
@@ -413,17 +433,13 @@ func (s *PostgresStore) ensureFoundation(ctx context.Context) error {
 }
 
 func loadSetting[T any](s *PostgresStore, key string, fallback T) (T, error) {
-	var data []byte
-	err := s.pool.QueryRow(context.Background(), `
-		SELECT value
-		FROM workspace_settings
-		WHERE workspace_id = $1 AND key = $2`, s.workspaceID, key).Scan(&data)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fallback, nil
-	}
+	data, found, err := s.loadSettingData(key)
 	if err != nil {
 		var zero T
 		return zero, err
+	}
+	if !found {
+		return fallback, nil
 	}
 	var value T
 	if err := json.Unmarshal(data, &value); err != nil {
@@ -431,6 +447,21 @@ func loadSetting[T any](s *PostgresStore, key string, fallback T) (T, error) {
 		return zero, fmt.Errorf("decode %s settings: %w", key, err)
 	}
 	return value, nil
+}
+
+func (s *PostgresStore) loadSettingData(key string) ([]byte, bool, error) {
+	var data []byte
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT value
+		FROM workspace_settings
+		WHERE workspace_id = $1 AND key = $2`, s.workspaceID, key).Scan(&data)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
 }
 
 func (s *PostgresStore) saveSetting(key string, value any) error {

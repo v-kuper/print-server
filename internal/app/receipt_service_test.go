@@ -489,6 +489,145 @@ func TestReceiptServiceContinuesWhenUsdBynMarketChartFails(t *testing.T) {
 	}
 }
 
+func TestReceiptServiceAddsOilChartImageWhenMarketChartAvailable(t *testing.T) {
+	weatherCode := 0
+	assetsPath := t.TempDir()
+	content := receipt.DefaultContentSettings()
+	service := NewReceiptService(
+		&fakeStore{
+			location:       weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
+			portfolio:      finance.DefaultTonPortfolio(),
+			receiptContent: content,
+		},
+		&fakePrinter{},
+		fixedClock,
+		WithGeneratedAssetsPath(assetsPath),
+		WithWeatherProvider(&fakeWeatherProvider{snapshot: weather.Snapshot{
+			Timezone:     "Europe/Minsk",
+			ObservedAt:   fixedClock(),
+			TemperatureC: 22.2,
+			WeatherCode:  &weatherCode,
+		}}),
+		WithTonPriceProvider(&fakeTonProvider{price: finance.TonPrice{USD: 1.7435687405482407}}),
+		WithTonMarketChartProvider(&fakeTonMarketChartProvider{}),
+		WithOilPriceProvider(&fakeOilProvider{
+			price: finance.OilPrice{Name: "Brent", Currency: "USD", Unit: "barrel", Date: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), ValueUSD: 98.29},
+			chart: finance.OilMarketChart{
+				Name:     "Brent",
+				Currency: "USD",
+				Points: []finance.OilPricePoint{
+					{Date: fixedClock().AddDate(0, 0, -2), ValueUSD: 102.75},
+					{Date: fixedClock().AddDate(0, 0, -1), ValueUSD: 95.47},
+					{Date: fixedClock(), ValueUSD: 98.29},
+				},
+			},
+		}),
+		WithFiatRateProvider(&fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}),
+		WithFiatMarketChartProvider(&fakeFiatMarketChartProvider{}),
+		WithBankRatesProvider(&fakeBankRatesProvider{}),
+		WithNewsProvider(&fakeNewsProvider{}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, err := service.BuildDailyReceipt(context.Background())
+	if err != nil {
+		t.Fatalf("build daily receipt: %v", err)
+	}
+
+	chartPath := filepath.Join(assetsPath, "generated", "oil-brent-7d.png")
+	if _, err := os.Stat(chartPath); err != nil {
+		t.Fatalf("expected generated oil chart file: %v", err)
+	}
+	if !lineTextsContain(lines, "Цена нефти") || !lineTextsContain(lines, "Brent $98.29/барр (01.06)") {
+		t.Fatalf("expected oil block, got %#v", lines)
+	}
+	if !receiptLinesContainPixelImage(lines, chartPath) {
+		t.Fatalf("expected oil chart image line, got %#v", lines)
+	}
+}
+
+func TestReceiptServiceContinuesWhenOilMarketChartFails(t *testing.T) {
+	weatherCode := 0
+	content := receipt.DefaultContentSettings()
+	service := NewReceiptService(
+		&fakeStore{
+			location:       weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
+			portfolio:      finance.DefaultTonPortfolio(),
+			receiptContent: content,
+		},
+		&fakePrinter{},
+		fixedClock,
+		WithGeneratedAssetsPath(t.TempDir()),
+		WithWeatherProvider(&fakeWeatherProvider{snapshot: weather.Snapshot{
+			Timezone:     "Europe/Minsk",
+			ObservedAt:   fixedClock(),
+			TemperatureC: 22.2,
+			WeatherCode:  &weatherCode,
+		}}),
+		WithTonPriceProvider(&fakeTonProvider{price: finance.TonPrice{USD: 1.7435687405482407}}),
+		WithTonMarketChartProvider(&fakeTonMarketChartProvider{}),
+		WithOilPriceProvider(&fakeOilProvider{
+			price:    finance.OilPrice{Name: "Brent", Currency: "USD", Unit: "barrel", Date: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), ValueUSD: 98.29},
+			chartErr: errors.New("FRED unavailable"),
+		}),
+		WithFiatRateProvider(&fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}),
+		WithFiatMarketChartProvider(&fakeFiatMarketChartProvider{}),
+		WithBankRatesProvider(&fakeBankRatesProvider{}),
+		WithNewsProvider(&fakeNewsProvider{}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build daily receipt must survive oil chart failure: %v", err)
+	}
+	if !lineTextsContain(lines, "Цена нефти") {
+		t.Fatalf("expected oil block without chart, got %#v", lines)
+	}
+	if !containsWarning(warnings, "график нефти") {
+		t.Fatalf("expected oil chart warning, got %#v", warnings)
+	}
+}
+
+func TestReceiptServiceContinuesWhenOilPriceFails(t *testing.T) {
+	weatherCode := 0
+	content := receipt.DefaultContentSettings()
+	service := NewReceiptService(
+		&fakeStore{
+			location:       weather.Location{Name: "Гомель", Latitude: 52.4345, Longitude: 30.9754},
+			portfolio:      finance.DefaultTonPortfolio(),
+			receiptContent: content,
+		},
+		&fakePrinter{},
+		fixedClock,
+		WithWeatherProvider(&fakeWeatherProvider{snapshot: weather.Snapshot{
+			Timezone:     "Europe/Minsk",
+			ObservedAt:   fixedClock(),
+			TemperatureC: 22.2,
+			WeatherCode:  &weatherCode,
+		}}),
+		WithTonPriceProvider(&fakeTonProvider{price: finance.TonPrice{USD: 1.7435687405482407}}),
+		WithTonMarketChartProvider(&fakeTonMarketChartProvider{}),
+		WithOilPriceProvider(&fakeOilProvider{priceErr: errors.New("FRED returned HTTP 503")}),
+		WithFiatRateProvider(&fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}),
+		WithFiatMarketChartProvider(&fakeFiatMarketChartProvider{}),
+		WithBankRatesProvider(&fakeBankRatesProvider{}),
+		WithNewsProvider(&fakeNewsProvider{}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build daily receipt must survive oil price failure: %v", err)
+	}
+	if lineTextsContain(lines, "Цена нефти") {
+		t.Fatalf("expected oil block to be skipped when price is unavailable, got %#v", lines)
+	}
+	if !containsWarning(warnings, "нефть недоступна") {
+		t.Fatalf("expected oil warning, got %#v", warnings)
+	}
+}
+
 func TestReceiptServiceAddsBankRatesWhenAvailable(t *testing.T) {
 	weatherCode := 0
 	service := NewReceiptService(
@@ -1155,6 +1294,7 @@ func TestReceiptServiceSkipsDisabledFinanceContent(t *testing.T) {
 	weatherCode := 0
 	tonProvider := &fakeTonProvider{price: finance.TonPrice{USD: 1.7435687405482407}}
 	fiatProvider := &fakeFiatProvider{rate: finance.FiatRate{BaseCode: "USD", QuoteCode: "BYN", Scale: 1, Rate: 3.1234}}
+	oilProvider := &fakeOilProvider{price: finance.OilPrice{Name: "Brent", Currency: "USD", Unit: "barrel", Date: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), ValueUSD: 98.29}}
 	bankProvider := &fakeBankRatesProvider{summary: bankrates.Summary{
 		SellUSD: &bankrates.Offer{Rate: 3.255, BankNames: []string{"Банк Б"}},
 		BuyUSD:  &bankrates.Offer{Rate: 3.279, BankNames: []string{"Банк Д"}},
@@ -1168,6 +1308,7 @@ func TestReceiptServiceSkipsDisabledFinanceContent(t *testing.T) {
 			ShowWeatherAdvice:   false,
 			ShowMotivationQuote: false,
 			ShowTonPortfolio:    false,
+			ShowOilPrice:        false,
 			ShowUsdBynRate:      false,
 			ShowBankRates:       false,
 			ShowMail:            false,
@@ -1187,6 +1328,7 @@ func TestReceiptServiceSkipsDisabledFinanceContent(t *testing.T) {
 			WeatherCode:  &weatherCode,
 		}}),
 		WithTonPriceProvider(tonProvider),
+		WithOilPriceProvider(oilProvider),
 		WithFiatRateProvider(fiatProvider),
 		WithBankRatesProvider(bankProvider),
 		WithNewsProvider(&fakeNewsProvider{}),
@@ -1200,11 +1342,11 @@ func TestReceiptServiceSkipsDisabledFinanceContent(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings for disabled sections, got %#v", warnings)
 	}
-	if lineTextsContain(lines, "TON") || lineTextsContain(lines, "Курс доллара") || lineTextsContain(lines, "В банках") {
+	if lineTextsContain(lines, "TON") || lineTextsContain(lines, "Цена нефти") || lineTextsContain(lines, "Курс доллара") || lineTextsContain(lines, "В банках") {
 		t.Fatalf("expected disabled finance blocks to be omitted, got %#v", lines)
 	}
-	if tonProvider.calls != 0 || fiatProvider.calls != 0 || bankProvider.calls != 0 {
-		t.Fatalf("expected disabled finance providers not to be called, got ton=%d fiat=%d bank=%d", tonProvider.calls, fiatProvider.calls, bankProvider.calls)
+	if tonProvider.calls != 0 || oilProvider.priceCalls != 0 || oilProvider.chartCalls != 0 || fiatProvider.calls != 0 || bankProvider.calls != 0 {
+		t.Fatalf("expected disabled finance providers not to be called, got ton=%d oilPrice=%d oilChart=%d fiat=%d bank=%d", tonProvider.calls, oilProvider.priceCalls, oilProvider.chartCalls, fiatProvider.calls, bankProvider.calls)
 	}
 }
 
@@ -2113,7 +2255,11 @@ func (s *fakeStore) LoadReceiptStyle() (receipt.StyleSettings, error) {
 
 func (s *fakeStore) LoadReceiptContent() (receipt.ContentSettings, error) {
 	s.receiptContentLoadCalls++
-	return s.receiptContent.Normalized(), nil
+	content := s.receiptContent.Normalized()
+	if s.receiptContent == (receipt.ContentSettings{}) {
+		content.ShowOilPrice = false
+	}
+	return content, nil
 }
 
 func (s *fakeStore) LoadReceiptSnapshotSettings() (receiptsnapshot.Settings, error) {
@@ -2247,6 +2393,31 @@ type fakeFiatMarketChartProvider struct {
 
 func (p *fakeFiatMarketChartProvider) MarketChart(context.Context, time.Time) (finance.FiatMarketChart, error) {
 	return p.chart, p.err
+}
+
+type fakeOilProvider struct {
+	price      finance.OilPrice
+	chart      finance.OilMarketChart
+	priceErr   error
+	chartErr   error
+	priceCalls int
+	chartCalls int
+}
+
+func (p *fakeOilProvider) CurrentPrice(context.Context) (finance.OilPrice, error) {
+	p.priceCalls++
+	if p.priceErr != nil {
+		return finance.OilPrice{}, p.priceErr
+	}
+	return p.price, nil
+}
+
+func (p *fakeOilProvider) MarketChart(context.Context) (finance.OilMarketChart, error) {
+	p.chartCalls++
+	if p.chartErr != nil {
+		return finance.OilMarketChart{}, p.chartErr
+	}
+	return p.chart, nil
 }
 
 type fakeBankRatesProvider struct {

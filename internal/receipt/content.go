@@ -12,6 +12,7 @@ type ContentSettings struct {
 	ShowMotivationQuote bool                  `json:"showMotivationQuote"`
 	ShowDailyQuests     bool                  `json:"showDailyQuests"`
 	ShowTonPortfolio    bool                  `json:"showTonPortfolio"`
+	ShowOilPrice        bool                  `json:"showOilPrice"`
 	ShowUsdBynRate      bool                  `json:"showUsdBynRate"`
 	ShowBankRates       bool                  `json:"showBankRates"`
 	ShowMail            bool                  `json:"showMail"`
@@ -31,6 +32,7 @@ func DefaultContentSettings() ContentSettings {
 		ShowMotivationQuote: true,
 		ShowDailyQuests:     true,
 		ShowTonPortfolio:    true,
+		ShowOilPrice:        true,
 		ShowUsdBynRate:      true,
 		ShowBankRates:       true,
 		ShowMail:            false,

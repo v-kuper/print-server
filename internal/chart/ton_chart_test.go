@@ -129,6 +129,43 @@ func TestRenderFiatRateChartWritesPrintablePNG(t *testing.T) {
 	}
 }
 
+func TestRenderOilPriceChartPixelBufferReturnsPrintableMonoBuffer(t *testing.T) {
+	chartData := finance.OilMarketChart{
+		Name:     "Brent",
+		Currency: "USD",
+		Points: []finance.OilPricePoint{
+			{Date: time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC), ValueUSD: 102.75},
+			{Date: time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC), ValueUSD: 97.11},
+			{Date: time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC), ValueUSD: 95.47},
+			{Date: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), ValueUSD: 98.29},
+		},
+	}
+
+	buffer, err := RenderOilPriceChartPixelBuffer(chartData, Options{Width: 384, Height: 96})
+	if err != nil {
+		t.Fatalf("render oil chart pixel buffer: %v", err)
+	}
+
+	if buffer.Width != 384 || buffer.Height != 96 {
+		t.Fatalf("expected 384x96 chart buffer, got %#v", buffer)
+	}
+	if len(buffer.Pixels) != 384*96 {
+		t.Fatalf("expected width*height pixels, got %d", len(buffer.Pixels))
+	}
+	blackPixels := 0
+	for index, value := range buffer.Pixels {
+		if value != 0 && value != 255 {
+			t.Fatalf("expected monochrome 0/255 pixel at %d, got %d", index, value)
+		}
+		if value == 255 {
+			blackPixels++
+		}
+	}
+	if blackPixels < 200 {
+		t.Fatalf("expected visible chart pixels, got %d black pixels", blackPixels)
+	}
+}
+
 func hasPixelBufferVerticalTick(buffer MonoImage, x int) bool {
 	blackPixels := 0
 	for y := 0; y < buffer.Height; y++ {
