@@ -27,6 +27,7 @@ import (
 	"atol-server/internal/receiptsnapshot"
 	"atol-server/internal/schedule"
 	schedulerruntime "atol-server/internal/scheduler"
+	"atol-server/internal/telegramfax"
 	"atol-server/internal/version"
 	"atol-server/internal/weather"
 )
@@ -2254,9 +2255,9 @@ type fakeTelegramFaxFlusher struct {
 	calls chan struct{}
 }
 
-func (f *fakeTelegramFaxFlusher) FlushPending(context.Context) error {
+func (f *fakeTelegramFaxFlusher) FlushPending(context.Context) (telegramfax.FlushReport, error) {
 	f.calls <- struct{}{}
-	return nil
+	return telegramfax.FlushReport{}, nil
 }
 
 type fakePrinter struct {

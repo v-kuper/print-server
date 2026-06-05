@@ -13,44 +13,58 @@ import (
 
 func TestPollOnceWithHTTPClientFakeTelegramAPI(t *testing.T) {
 	var getUpdatesRequest GetUpdatesRequest
+	var sendMessageRequest SendMessageRequest
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Fatalf("expected POST, got %s", r.Method)
-		}
-		if r.URL.Path != "/bot123:abc/getUpdates" {
+		switch r.URL.Path {
+		case "/bot123:abc/getUpdates":
+			if r.Method != http.MethodPost {
+				t.Fatalf("expected getUpdates POST, got %s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&getUpdatesRequest); err != nil {
+				t.Fatalf("decode getUpdates request: %v", err)
+			}
+			writeTelegramTestJSON(w, map[string]any{
+				"ok": true,
+				"result": []any{
+					map[string]any{
+						"update_id": 5,
+						"business_connection": map[string]any{
+							"id": "bc-1",
+							"user": map[string]any{
+								"id":         1001,
+								"first_name": "Owner",
+							},
+						},
+					},
+					map[string]any{
+						"update_id": 6,
+						"business_message": map[string]any{
+							"business_connection_id": "bc-1",
+							"message_id":             99,
+							"date":                   time.Date(2026, 6, 1, 15, 10, 0, 0, time.UTC).Unix(),
+							"from": map[string]any{
+								"id":         2001,
+								"first_name": "Sender",
+							},
+							"text": "HTTP client fax",
+						},
+					},
+				},
+			})
+		case "/bot123:abc/sendMessage":
+			if r.Method != http.MethodPost {
+				t.Fatalf("expected sendMessage POST, got %s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&sendMessageRequest); err != nil {
+				t.Fatalf("decode sendMessage request: %v", err)
+			}
+			writeTelegramTestJSON(w, map[string]any{
+				"ok":     true,
+				"result": map[string]any{"message_id": 77},
+			})
+		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&getUpdatesRequest); err != nil {
-			t.Fatalf("decode getUpdates request: %v", err)
-		}
-		writeTelegramTestJSON(w, map[string]any{
-			"ok": true,
-			"result": []any{
-				map[string]any{
-					"update_id": 5,
-					"business_connection": map[string]any{
-						"id": "bc-1",
-						"user": map[string]any{
-							"id":         1001,
-							"first_name": "Owner",
-						},
-					},
-				},
-				map[string]any{
-					"update_id": 6,
-					"business_message": map[string]any{
-						"business_connection_id": "bc-1",
-						"message_id":             99,
-						"date":                   time.Date(2026, 6, 1, 15, 10, 0, 0, time.UTC).Unix(),
-						"from": map[string]any{
-							"id":         2001,
-							"first_name": "Sender",
-						},
-						"text": "HTTP client fax",
-					},
-				},
-			},
-		})
 	}))
 	defer api.Close()
 
@@ -83,44 +97,61 @@ func TestPollOnceWithHTTPClientFakeTelegramAPI(t *testing.T) {
 	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "HTTP client fax" {
 		t.Fatalf("expected fake Telegram message to print, got %#v", gateway.printedLines)
 	}
+	if sendMessageRequest.BusinessConnectionID != "bc-1" || sendMessageRequest.ChatID != 2001 || sendMessageRequest.Text != "Факс доставлен." {
+		t.Fatalf("unexpected sendMessage request: %#v", sendMessageRequest)
+	}
 }
 
 func TestPollOncePrintsDirectMessageWithHTTPClientFakeTelegramAPI(t *testing.T) {
 	var getUpdatesRequest GetUpdatesRequest
+	var sendMessageRequest SendMessageRequest
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Fatalf("expected POST, got %s", r.Method)
-		}
-		if r.URL.Path != "/bot123:abc/getUpdates" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&getUpdatesRequest); err != nil {
-			t.Fatalf("decode getUpdates request: %v", err)
-		}
-		writeTelegramTestJSON(w, map[string]any{
-			"ok": true,
-			"result": []any{
-				map[string]any{
-					"update_id": 7,
-					"message": map[string]any{
-						"message_id": 101,
-						"date":       time.Date(2026, 6, 2, 10, 20, 0, 0, time.UTC).Unix(),
-						"from": map[string]any{
-							"id":         2001,
-							"first_name": "Direct",
-							"username":   "direct_user",
+		switch r.URL.Path {
+		case "/bot123:abc/getUpdates":
+			if r.Method != http.MethodPost {
+				t.Fatalf("expected getUpdates POST, got %s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&getUpdatesRequest); err != nil {
+				t.Fatalf("decode getUpdates request: %v", err)
+			}
+			writeTelegramTestJSON(w, map[string]any{
+				"ok": true,
+				"result": []any{
+					map[string]any{
+						"update_id": 7,
+						"message": map[string]any{
+							"message_id": 101,
+							"date":       time.Date(2026, 6, 2, 10, 20, 0, 0, time.UTC).Unix(),
+							"from": map[string]any{
+								"id":         2001,
+								"first_name": "Direct",
+								"username":   "direct_user",
+							},
+							"chat": map[string]any{
+								"id":         2001,
+								"type":       "private",
+								"first_name": "Direct",
+								"username":   "direct_user",
+							},
+							"text": "HTTP direct fax",
 						},
-						"chat": map[string]any{
-							"id":         2001,
-							"type":       "private",
-							"first_name": "Direct",
-							"username":   "direct_user",
-						},
-						"text": "HTTP direct fax",
 					},
 				},
-			},
-		})
+			})
+		case "/bot123:abc/sendMessage":
+			if r.Method != http.MethodPost {
+				t.Fatalf("expected sendMessage POST, got %s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&sendMessageRequest); err != nil {
+				t.Fatalf("decode sendMessage request: %v", err)
+			}
+			writeTelegramTestJSON(w, map[string]any{
+				"ok":     true,
+				"result": map[string]any{"message_id": 77},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
 	}))
 	defer api.Close()
 
@@ -150,12 +181,16 @@ func TestPollOncePrintsDirectMessageWithHTTPClientFakeTelegramAPI(t *testing.T) 
 	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "HTTP direct fax" {
 		t.Fatalf("expected fake Telegram direct message to print, got %#v", gateway.printedLines)
 	}
+	if sendMessageRequest.BusinessConnectionID != "" || sendMessageRequest.ChatID != 2001 || sendMessageRequest.Text != "Факс доставлен." {
+		t.Fatalf("unexpected sendMessage request: %#v", sendMessageRequest)
+	}
 }
 
 func TestPollOncePrintsPhotoWithHTTPClientFakeTelegramAPI(t *testing.T) {
 	imageData := testTelegramPhotoPNG(t, 4, 2)
 	var getUpdatesRequest GetUpdatesRequest
 	var getFileRequest map[string]string
+	var sendMessageRequest SendMessageRequest
 	downloadedPhoto := false
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -225,6 +260,17 @@ func TestPollOncePrintsPhotoWithHTTPClientFakeTelegramAPI(t *testing.T) {
 			if _, err := w.Write(imageData); err != nil {
 				t.Fatalf("write image data: %v", err)
 			}
+		case "/bot123:abc/sendMessage":
+			if r.Method != http.MethodPost {
+				t.Fatalf("expected sendMessage POST, got %s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&sendMessageRequest); err != nil {
+				t.Fatalf("decode sendMessage request: %v", err)
+			}
+			writeTelegramTestJSON(w, map[string]any{
+				"ok":     true,
+				"result": map[string]any{"message_id": 77},
+			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -263,6 +309,9 @@ func TestPollOncePrintsPhotoWithHTTPClientFakeTelegramAPI(t *testing.T) {
 	if len(gateway.printedLines) == 0 || gateway.printedLines[0].Text != "INCOMING PHOTO FAX" {
 		t.Fatalf("expected fake Telegram photo to print, got %#v", gateway.printedLines)
 	}
+	if sendMessageRequest.BusinessConnectionID != "bc-photo" || sendMessageRequest.ChatID != 2001 || sendMessageRequest.Text != "Факс доставлен." {
+		t.Fatalf("unexpected sendMessage request: %#v", sendMessageRequest)
+	}
 }
 
 func TestHTTPClientMapsMissingBusinessConnection(t *testing.T) {
@@ -278,6 +327,39 @@ func TestHTTPClientMapsMissingBusinessConnection(t *testing.T) {
 	_, err := NewHTTPClient("123:abc", api.URL, api.Client()).GetBusinessConnection(context.Background(), "missing")
 	if !errors.Is(err, ErrBusinessConnectionNotFound) {
 		t.Fatalf("expected ErrBusinessConnectionNotFound, got %v", err)
+	}
+}
+
+func TestHTTPClientSendMessagePostsPayload(t *testing.T) {
+	var request SendMessageRequest
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/bot123:abc/sendMessage" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode sendMessage request: %v", err)
+		}
+		writeTelegramTestJSON(w, map[string]any{
+			"ok":     true,
+			"result": map[string]any{"message_id": 77},
+		})
+	}))
+	defer api.Close()
+
+	err := NewHTTPClient("123:abc", api.URL, api.Client()).SendMessage(context.Background(), SendMessageRequest{
+		BusinessConnectionID: "bc-1",
+		ChatID:               3001,
+		Text:                 "Факс доставлен.",
+	})
+	if err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+
+	if request.BusinessConnectionID != "bc-1" || request.ChatID != 3001 || request.Text != "Факс доставлен." {
+		t.Fatalf("unexpected sendMessage request: %#v", request)
 	}
 }
 

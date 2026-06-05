@@ -301,7 +301,7 @@ func (s *Server) flushTelegramFaxQueue() {
 		return
 	}
 	go func() {
-		_ = s.telegramFaxFlusher.FlushPending(context.Background())
+		_, _ = s.telegramFaxFlusher.FlushPending(context.Background())
 	}()
 }
 

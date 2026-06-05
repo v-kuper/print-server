@@ -66,3 +66,9 @@ type GetUpdatesRequest struct {
 	Timeout        int      `json:"timeout,omitempty"`
 	AllowedUpdates []string `json:"allowed_updates,omitempty"`
 }
+
+type SendMessageRequest struct {
+	BusinessConnectionID string `json:"business_connection_id,omitempty"`
+	ChatID               int64  `json:"chat_id"`
+	Text                 string `json:"text"`
+}

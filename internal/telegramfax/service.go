@@ -20,6 +20,22 @@ var telegramFaxAllowedUpdates = []string{
 	"deleted_business_messages",
 }
 
+const (
+	faxDeliveredNotification = "Факс доставлен."
+	faxAcceptedNotification  = "Факс принят. Принтер сейчас недоступен или занят; распечатаем и уведомим вас."
+	faxFailedNotification    = "Факс не доставлен. Проверьте принтер и отправьте факс ещё раз."
+)
+
+type FlushReport struct {
+	Printed []QueueItem
+	Failed  []QueueItem
+}
+
+type enqueueResult struct {
+	Item     QueueItem
+	Inserted bool
+}
+
 type PrinterConfigStore interface {
 	LoadPrinter() (printer.Config, error)
 }
@@ -165,7 +181,7 @@ func (s *Service) retryQueuedFaxes(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.FlushPending(ctx); err != nil && ctx.Err() == nil {
+			if _, err := s.FlushPending(ctx); err != nil && ctx.Err() == nil {
 				s.logf("telegram fax queue flush failed: %v", err)
 			}
 		}
@@ -185,9 +201,14 @@ func (s *Service) PollOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("get Telegram updates: %w", err)
 	}
+	var newItems []QueueItem
 	for _, update := range updates {
-		if err := s.processUpdate(ctx, update); err != nil {
+		result, err := s.processUpdate(ctx, update)
+		if err != nil {
 			return err
+		}
+		if result.Inserted {
+			newItems = append(newItems, result.Item)
 		}
 		if update.UpdateID >= state.NextUpdateOffset {
 			state.NextUpdateOffset = update.UpdateID + 1
@@ -197,17 +218,19 @@ func (s *Service) PollOnce(ctx context.Context) error {
 		}
 	}
 	if len(updates) > 0 {
-		if err := s.FlushPending(ctx); err != nil {
+		report, err := s.FlushPending(ctx)
+		if err != nil {
 			return fmt.Errorf("flush telegram fax queue: %w", err)
 		}
+		s.notifyAcceptedForPendingNewItems(ctx, newItems, report)
 	}
 	return nil
 }
 
-func (s *Service) processUpdate(ctx context.Context, update Update) error {
+func (s *Service) processUpdate(ctx context.Context, update Update) (enqueueResult, error) {
 	if update.BusinessConnection != nil {
 		s.rememberConnection(*update.BusinessConnection)
-		return nil
+		return enqueueResult{}, nil
 	}
 	if update.BusinessMessage != nil {
 		return s.processBusinessMessage(ctx, *update.BusinessMessage)
@@ -215,29 +238,29 @@ func (s *Service) processUpdate(ctx context.Context, update Update) error {
 	if update.Message != nil {
 		return s.processDirectMessage(ctx, *update.Message)
 	}
-	return nil
+	return enqueueResult{}, nil
 }
 
-func (s *Service) processBusinessMessage(ctx context.Context, message Message) error {
+func (s *Service) processBusinessMessage(ctx context.Context, message Message) (enqueueResult, error) {
 	if message.From == nil || message.From.IsBot {
-		return nil
+		return enqueueResult{}, nil
 	}
 	photo, hasPhoto := bestPhotoSize(message.Photo)
 	if strings.TrimSpace(message.Text) == "" && !hasPhoto {
-		return nil
+		return enqueueResult{}, nil
 	}
 	if len(s.config.AllowedSenderIDs) > 0 && !s.config.AllowedSenderIDs.Contains(message.From.ID) {
-		return nil
+		return enqueueResult{}, nil
 	}
 	ownerID, ok, err := s.ownerIDForMessage(ctx, message)
 	if err != nil {
-		return err
+		return enqueueResult{}, err
 	}
 	if !ok || !s.config.OwnerIDs.Contains(ownerID) {
-		return nil
+		return enqueueResult{}, nil
 	}
 	if message.From.ID == ownerID {
-		return nil
+		return enqueueResult{}, nil
 	}
 	if hasPhoto {
 		return s.enqueueMessage(ctx, QueueItem{
@@ -258,20 +281,20 @@ func (s *Service) processBusinessMessage(ctx context.Context, message Message) e
 	})
 }
 
-func (s *Service) processDirectMessage(ctx context.Context, message Message) error {
+func (s *Service) processDirectMessage(ctx context.Context, message Message) (enqueueResult, error) {
 	if message.From == nil || message.From.IsBot {
-		return nil
+		return enqueueResult{}, nil
 	}
 	if message.Chat == nil || message.Chat.Type != "private" {
-		return nil
+		return enqueueResult{}, nil
 	}
 	photo, hasPhoto := bestPhotoSize(message.Photo)
 	text := strings.TrimSpace(message.Text)
 	if text == "" && !hasPhoto {
-		return nil
+		return enqueueResult{}, nil
 	}
 	if strings.HasPrefix(text, "/") {
-		return nil
+		return enqueueResult{}, nil
 	}
 	if hasPhoto {
 		return s.enqueueMessage(ctx, QueueItem{
@@ -290,15 +313,15 @@ func (s *Service) processDirectMessage(ctx context.Context, message Message) err
 	})
 }
 
-func (s *Service) enqueueMessage(ctx context.Context, item QueueItem) error {
+func (s *Service) enqueueMessage(ctx context.Context, item QueueItem) (enqueueResult, error) {
 	if s.queueStore == nil {
 		s.queueStore = newMemoryQueueStore(s.clock)
 	}
-	_, _, err := s.queueStore.Enqueue(ctx, item)
+	queued, inserted, err := s.queueStore.Enqueue(ctx, item)
 	if err != nil {
-		return fmt.Errorf("enqueue telegram fax: %w", err)
+		return enqueueResult{}, fmt.Errorf("enqueue telegram fax: %w", err)
 	}
-	return nil
+	return enqueueResult{Item: queued, Inserted: inserted}, nil
 }
 
 func (s *Service) rememberConnection(connection BusinessConnection) {
@@ -328,24 +351,25 @@ func (s *Service) ownerIDForMessage(ctx context.Context, message Message) (int64
 	return ownerID, ok, nil
 }
 
-func (s *Service) FlushPending(ctx context.Context) error {
+func (s *Service) FlushPending(ctx context.Context) (FlushReport, error) {
+	report := FlushReport{}
 	if s.queueStore == nil {
-		return nil
+		return report, nil
 	}
 	item, ok, err := s.queueStore.NextPending(ctx, s.clock())
 	if err != nil {
-		return fmt.Errorf("load pending telegram fax: %w", err)
+		return report, fmt.Errorf("load pending telegram fax: %w", err)
 	}
 	if !ok {
-		return nil
+		return report, nil
 	}
 	config, err := s.printerConfig.LoadPrinter()
 	if err != nil {
-		return fmt.Errorf("load printer config: %w", err)
+		return report, fmt.Errorf("load printer config: %w", err)
 	}
 	if _, err := s.printer.CheckConnection(ctx, config); err != nil {
 		s.logf("telegram fax printer is unavailable, queued faxes retained: %v", err)
-		return nil
+		return report, nil
 	}
 	for ctx.Err() == nil {
 		ran, printErr := s.printCoordinator.TryRunFax(ctx, func(ctx context.Context) error {
@@ -353,34 +377,41 @@ func (s *Service) FlushPending(ctx context.Context) error {
 		})
 		if printErr != nil {
 			nextAttemptAt := s.nextAttemptAt(item)
+			exhausted := item.Attempts+1 >= maxQueueAttempts
 			if err := s.queueStore.MarkFailed(ctx, item.ID, printErr, nextAttemptAt); err != nil {
-				return fmt.Errorf("mark telegram fax failed: %w", err)
+				return report, fmt.Errorf("mark telegram fax failed: %w", err)
 			}
 			s.logf("telegram queued fax print failed: %v", printErr)
+			if exhausted {
+				report.Failed = append(report.Failed, item)
+				s.notifyQueueItem(ctx, item, faxFailedNotification)
+			}
 			item, ok, err = s.queueStore.NextPending(ctx, s.clock())
 			if err != nil {
-				return fmt.Errorf("load pending telegram fax: %w", err)
+				return report, fmt.Errorf("load pending telegram fax: %w", err)
 			}
 			if !ok {
-				return nil
+				return report, nil
 			}
 			continue
 		}
 		if !ran {
-			return nil
+			return report, nil
 		}
 		if err := s.queueStore.MarkPrinted(ctx, item.ID); err != nil {
-			return fmt.Errorf("mark telegram fax printed: %w", err)
+			return report, fmt.Errorf("mark telegram fax printed: %w", err)
 		}
+		report.Printed = append(report.Printed, item)
+		s.notifyQueueItem(ctx, item, faxDeliveredNotification)
 		item, ok, err = s.queueStore.NextPending(ctx, s.clock())
 		if err != nil {
-			return fmt.Errorf("load pending telegram fax: %w", err)
+			return report, fmt.Errorf("load pending telegram fax: %w", err)
 		}
 		if !ok {
-			return nil
+			return report, nil
 		}
 	}
-	return ctx.Err()
+	return report, ctx.Err()
 }
 
 func (s *Service) printQueuedItem(ctx context.Context, config printer.Config, item QueueItem) error {
@@ -413,6 +444,71 @@ func (s *Service) nextAttemptAt(item QueueItem) time.Time {
 		delay = 5 * time.Minute
 	}
 	return s.clock().Add(delay)
+}
+
+func (s *Service) notifyAcceptedForPendingNewItems(ctx context.Context, newItems []QueueItem, report FlushReport) {
+	if len(newItems) == 0 {
+		return
+	}
+	completed := reportedQueueItems(report)
+	for _, item := range newItems {
+		if _, ok := completed[queueItemReportKey(item)]; ok {
+			continue
+		}
+		s.notifyQueueItem(ctx, item, faxAcceptedNotification)
+	}
+}
+
+func reportedQueueItems(report FlushReport) map[string]struct{} {
+	result := make(map[string]struct{}, len(report.Printed)+len(report.Failed))
+	for _, item := range report.Printed {
+		result[queueItemReportKey(item)] = struct{}{}
+	}
+	for _, item := range report.Failed {
+		result[queueItemReportKey(item)] = struct{}{}
+	}
+	return result
+}
+
+func queueItemReportKey(item QueueItem) string {
+	if strings.TrimSpace(item.ID) != "" {
+		return "id:" + item.ID
+	}
+	return "dedupe:" + item.DedupeKey
+}
+
+func (s *Service) notifyQueueItem(ctx context.Context, item QueueItem, text string) {
+	if s.client == nil {
+		return
+	}
+	request, ok := sendMessageRequestForQueueItem(item, text)
+	if !ok {
+		s.logf("telegram fax notification skipped: missing chat id for queue item %s", item.DedupeKey)
+		return
+	}
+	if err := s.client.SendMessage(ctx, request); err != nil {
+		s.logf("telegram fax notification failed: %v", err)
+	}
+}
+
+func sendMessageRequestForQueueItem(item QueueItem, text string) (SendMessageRequest, bool) {
+	chatID := int64(0)
+	if item.Message.Chat != nil {
+		chatID = item.Message.Chat.ID
+	} else if item.Message.From != nil {
+		chatID = item.Message.From.ID
+	}
+	if chatID == 0 {
+		return SendMessageRequest{}, false
+	}
+	request := SendMessageRequest{
+		ChatID: chatID,
+		Text:   text,
+	}
+	if item.Source == "telegram_business" {
+		request.BusinessConnectionID = strings.TrimSpace(item.Message.BusinessConnectionID)
+	}
+	return request, true
 }
 
 func businessDedupeKey(message Message) string {

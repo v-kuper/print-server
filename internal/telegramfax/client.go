@@ -21,6 +21,7 @@ type Client interface {
 	GetBusinessConnection(context.Context, string) (BusinessConnection, error)
 	GetFile(context.Context, string) (File, error)
 	DownloadFile(context.Context, string) ([]byte, error)
+	SendMessage(context.Context, SendMessageRequest) error
 }
 
 type HTTPClient struct {
@@ -82,6 +83,11 @@ func (c *HTTPClient) DownloadFile(ctx context.Context, filePath string) ([]byte,
 		return nil, fmt.Errorf("telegram file is larger than %d bytes", maxTelegramFileDownloadBytes)
 	}
 	return data, nil
+}
+
+func (c *HTTPClient) SendMessage(ctx context.Context, request SendMessageRequest) error {
+	_, err := doTelegram[Message](ctx, c, "sendMessage", request)
+	return err
 }
 
 type telegramResponse[T any] struct {

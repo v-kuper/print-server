@@ -20,6 +20,7 @@ import (
 	"atol-server/internal/receiptsnapshot"
 	"atol-server/internal/schedule"
 	schedulerruntime "atol-server/internal/scheduler"
+	"atol-server/internal/telegramfax"
 	"atol-server/internal/version"
 	"atol-server/internal/weather"
 )
@@ -143,7 +144,7 @@ type PrintCoordinator interface {
 }
 
 type TelegramFaxQueueFlusher interface {
-	FlushPending(context.Context) error
+	FlushPending(context.Context) (telegramfax.FlushReport, error)
 }
 
 type Scheduler interface {

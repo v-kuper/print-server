@@ -72,6 +72,38 @@ func TestPollOncePrintsAllowedBusinessMessageAndAdvancesOffset(t *testing.T) {
 	}
 }
 
+func TestPollOnceNotifiesBusinessSenderWhenFaxPrintsImmediately(t *testing.T) {
+	client := &fakeTelegramClient{
+		updates: []Update{
+			{UpdateID: 10, BusinessConnection: &BusinessConnection{ID: "bc-1", User: User{ID: 1001}}},
+			{
+				UpdateID: 11,
+				BusinessMessage: &Message{
+					BusinessConnectionID: "bc-1",
+					MessageID:            22,
+					Date:                 time.Date(2026, 6, 1, 15, 10, 0, 0, time.UTC).Unix(),
+					From:                 &User{ID: 2001, FirstName: "Vitali"},
+					Chat:                 &Chat{ID: 3001, Type: "private"},
+					Text:                 "Hello fax",
+				},
+			},
+		},
+	}
+	service := NewService(testConfig(), client, &fakeStateStore{}, &fakePrinterConfigStore{}, &fakePrintJobStore{}, &fakeTelegramFaxPrinter{}, fixedFaxClock, WithLocation(time.UTC))
+
+	if err := service.PollOnce(context.Background()); err != nil {
+		t.Fatalf("poll once: %v", err)
+	}
+
+	if len(client.sentMessages) != 1 {
+		t.Fatalf("expected one notification, got %#v", client.sentMessages)
+	}
+	message := client.sentMessages[0]
+	if message.ChatID != 3001 || message.BusinessConnectionID != "bc-1" || message.Text != "Факс доставлен." {
+		t.Fatalf("unexpected business notification: %#v", message)
+	}
+}
+
 func TestPollOnceSkipsDisallowedUpdatesAndStillAdvancesOffset(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -269,6 +301,36 @@ func TestPollOncePrintsAllowedDirectMessageAndAdvancesOffset(t *testing.T) {
 	request, ok := jobs.startedRequest.(map[string]any)
 	if !ok || request["source"] != "telegram_bot_direct" || request["contentType"] != "text" || request["senderId"] != int64(2001) {
 		t.Fatalf("unexpected direct print job request: %#v", jobs.startedRequest)
+	}
+}
+
+func TestPollOnceNotifiesDirectSenderWithoutBusinessConnection(t *testing.T) {
+	client := &fakeTelegramClient{
+		updates: []Update{
+			{
+				UpdateID: 80,
+				Message: &Message{
+					MessageID: 88,
+					Date:      time.Date(2026, 6, 2, 10, 20, 0, 0, time.UTC).Unix(),
+					From:      &User{ID: 2001, FirstName: "Direct"},
+					Chat:      &Chat{ID: 2001, Type: "private"},
+					Text:      "Print this from bot DM",
+				},
+			},
+		},
+	}
+	service := NewService(testConfig(), client, &fakeStateStore{}, &fakePrinterConfigStore{}, &fakePrintJobStore{}, &fakeTelegramFaxPrinter{}, fixedFaxClock, WithLocation(time.UTC))
+
+	if err := service.PollOnce(context.Background()); err != nil {
+		t.Fatalf("poll once: %v", err)
+	}
+
+	if len(client.sentMessages) != 1 {
+		t.Fatalf("expected one notification, got %#v", client.sentMessages)
+	}
+	message := client.sentMessages[0]
+	if message.ChatID != 2001 || message.BusinessConnectionID != "" || message.Text != "Факс доставлен." {
+		t.Fatalf("unexpected direct notification: %#v", message)
 	}
 }
 
@@ -522,10 +584,20 @@ func TestPollOnceQueuesFaxWhenPrinterConnectionFailsAndFlushesLater(t *testing.T
 	if pending[0].DedupeKey != "business:bc-1:42" || pending[0].ContentType != "text" {
 		t.Fatalf("unexpected queued fax: %#v", pending[0])
 	}
+	if len(client.sentMessages) != 1 {
+		t.Fatalf("expected accepted notification, got %#v", client.sentMessages)
+	}
+	if client.sentMessages[0].Text != "Факс принят. Принтер сейчас недоступен или занят; распечатаем и уведомим вас." {
+		t.Fatalf("unexpected accepted notification: %#v", client.sentMessages[0])
+	}
 
 	gateway.checkErr = nil
-	if err := service.FlushPending(context.Background()); err != nil {
+	report, err := service.FlushPending(context.Background())
+	if err != nil {
 		t.Fatalf("flush pending: %v", err)
+	}
+	if len(report.Printed) != 1 || report.Printed[0].DedupeKey != "business:bc-1:42" {
+		t.Fatalf("expected printed report item, got %#v", report)
 	}
 
 	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "print me later" {
@@ -536,6 +608,143 @@ func TestPollOnceQueuesFaxWhenPrinterConnectionFailsAndFlushesLater(t *testing.T
 	}
 	if len(queue.pendingItems()) != 0 {
 		t.Fatalf("expected queue to be empty after successful print, got %#v", queue.pendingItems())
+	}
+	if len(client.sentMessages) != 2 {
+		t.Fatalf("expected delivered notification after flush, got %#v", client.sentMessages)
+	}
+	if client.sentMessages[1].Text != "Факс доставлен." {
+		t.Fatalf("unexpected delivered notification after flush: %#v", client.sentMessages[1])
+	}
+}
+
+func TestPollOnceDoesNotNotifyAgainForDuplicateQueuedFax(t *testing.T) {
+	queue := newFakeQueueStore()
+	_, inserted, err := queue.Enqueue(context.Background(), QueueItem{
+		DedupeKey:   "direct:2001:7",
+		Source:      "telegram_bot_direct",
+		ContentType: "text",
+		Message: Message{
+			MessageID: 7,
+			Date:      time.Date(2026, 6, 2, 10, 20, 0, 0, time.UTC).Unix(),
+			From:      &User{ID: 2001, FirstName: "Direct"},
+			Chat:      &Chat{ID: 2001, Type: "private"},
+			Text:      "duplicate fax",
+		},
+	})
+	if err != nil || !inserted {
+		t.Fatalf("enqueue existing fax: inserted=%v err=%v", inserted, err)
+	}
+	client := &fakeTelegramClient{
+		updates: []Update{
+			{
+				UpdateID: 80,
+				Message: &Message{
+					MessageID: 7,
+					Date:      time.Date(2026, 6, 2, 10, 20, 0, 0, time.UTC).Unix(),
+					From:      &User{ID: 2001, FirstName: "Direct"},
+					Chat:      &Chat{ID: 2001, Type: "private"},
+					Text:      "duplicate fax",
+				},
+			},
+		},
+	}
+	service := NewService(
+		testConfig(),
+		client,
+		&fakeStateStore{},
+		&fakePrinterConfigStore{},
+		&fakePrintJobStore{},
+		&fakeTelegramFaxPrinter{checkErr: errors.New("printer offline")},
+		fixedFaxClock,
+		WithLocation(time.UTC),
+		WithQueueStore(queue),
+	)
+
+	if err := service.PollOnce(context.Background()); err != nil {
+		t.Fatalf("poll once: %v", err)
+	}
+
+	if len(client.sentMessages) != 0 {
+		t.Fatalf("expected no duplicate notification, got %#v", client.sentMessages)
+	}
+}
+
+func TestPollOnceContinuesWhenNotificationFails(t *testing.T) {
+	state := &fakeStateStore{}
+	client := &fakeTelegramClient{
+		updates: []Update{
+			{
+				UpdateID: 80,
+				Message: &Message{
+					MessageID: 88,
+					Date:      time.Date(2026, 6, 2, 10, 20, 0, 0, time.UTC).Unix(),
+					From:      &User{ID: 2001, FirstName: "Direct"},
+					Chat:      &Chat{ID: 2001, Type: "private"},
+					Text:      "Print this from bot DM",
+				},
+			},
+		},
+		sendErr: errors.New("telegram send failed"),
+	}
+	gateway := &fakeTelegramFaxPrinter{}
+	service := NewService(testConfig(), client, state, &fakePrinterConfigStore{}, &fakePrintJobStore{}, gateway, fixedFaxClock, WithLocation(time.UTC))
+
+	if err := service.PollOnce(context.Background()); err != nil {
+		t.Fatalf("poll once should ignore notification errors: %v", err)
+	}
+
+	if state.state.NextUpdateOffset != 81 {
+		t.Fatalf("expected next offset 81, got %d", state.state.NextUpdateOffset)
+	}
+	if len(gateway.printedLines) == 0 || gateway.printedLines[4].Text != "Print this from bot DM" {
+		t.Fatalf("expected fax to print despite notification error, got %#v", gateway.printedLines)
+	}
+}
+
+func TestFlushPendingNotifiesSenderWhenFaxExhaustsAttempts(t *testing.T) {
+	queue := newFakeQueueStore()
+	_, inserted, err := queue.Enqueue(context.Background(), QueueItem{
+		DedupeKey:   "direct:2001:7",
+		Source:      "telegram_bot_direct",
+		ContentType: "text",
+		Attempts:    maxQueueAttempts - 1,
+		Message: Message{
+			MessageID: 7,
+			Date:      time.Date(2026, 6, 2, 10, 20, 0, 0, time.UTC).Unix(),
+			From:      &User{ID: 2001, FirstName: "Direct"},
+			Chat:      &Chat{ID: 2001, Type: "private"},
+			Text:      "final failed fax",
+		},
+	})
+	if err != nil || !inserted {
+		t.Fatalf("enqueue final attempt fax: inserted=%v err=%v", inserted, err)
+	}
+	client := &fakeTelegramClient{}
+	service := NewService(
+		testConfig(),
+		client,
+		&fakeStateStore{},
+		&fakePrinterConfigStore{},
+		&fakePrintJobStore{},
+		&fakeTelegramFaxPrinter{printErr: errors.New("printer offline")},
+		fixedFaxClock,
+		WithLocation(time.UTC),
+		WithQueueStore(queue),
+	)
+
+	report, err := service.FlushPending(context.Background())
+	if err != nil {
+		t.Fatalf("flush pending: %v", err)
+	}
+
+	if len(report.Failed) != 1 || report.Failed[0].DedupeKey != "direct:2001:7" {
+		t.Fatalf("expected failed report item, got %#v", report)
+	}
+	if len(client.sentMessages) != 1 {
+		t.Fatalf("expected failure notification, got %#v", client.sentMessages)
+	}
+	if client.sentMessages[0].Text != "Факс не доставлен. Проверьте принтер и отправьте факс ещё раз." {
+		t.Fatalf("unexpected failure notification: %#v", client.sentMessages[0])
 	}
 }
 
@@ -571,8 +780,12 @@ func TestFlushPendingStopsWhenFaxCoordinatorIsBusy(t *testing.T) {
 		WithPrintCoordinator(coordinator),
 	)
 
-	if err := service.FlushPending(context.Background()); err != nil {
+	report, err := service.FlushPending(context.Background())
+	if err != nil {
 		t.Fatalf("flush pending: %v", err)
+	}
+	if len(report.Printed) != 0 || len(report.Failed) != 0 {
+		t.Fatalf("expected empty flush report while coordinator is busy, got %#v", report)
 	}
 
 	if coordinator.calls != 1 {
@@ -683,10 +896,12 @@ func (s *fakeStateStore) Save(_ context.Context, state State) error {
 
 type fakeTelegramClient struct {
 	requests             []GetUpdatesRequest
+	sentMessages         []SendMessageRequest
 	updates              []Update
 	connections          map[string]BusinessConnection
 	files                map[string]File
 	downloads            map[string][]byte
+	sendErr              error
 	resolvedConnectionID string
 	requestedFileID      string
 	downloadedFilePath   string
@@ -722,6 +937,11 @@ func (c *fakeTelegramClient) DownloadFile(_ context.Context, filePath string) ([
 		return nil, errors.New("telegram file download not found")
 	}
 	return append([]byte(nil), data...), nil
+}
+
+func (c *fakeTelegramClient) SendMessage(_ context.Context, request SendMessageRequest) error {
+	c.sentMessages = append(c.sentMessages, request)
+	return c.sendErr
 }
 
 type fakePrinterConfigStore struct {
@@ -836,6 +1056,9 @@ func (s *fakeQueueStore) MarkFailed(_ context.Context, id string, err error, nex
 			s.items[i].Attempts++
 			s.items[i].LastError = err.Error()
 			s.items[i].NextAttemptAt = nextAttemptAt
+			if s.items[i].Attempts >= maxQueueAttempts {
+				s.items[i].Status = QueueStatusFailed
+			}
 			return nil
 		}
 	}

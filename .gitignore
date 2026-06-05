@@ -12,3 +12,4 @@ tmp/
 !.env.example
 
 *.log
+/THREAT_MODEL.md
