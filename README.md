@@ -40,7 +40,9 @@ http://localhost:8080
 Основное хранилище — Postgres из `docker-compose.yml`. Старые файлы
 `data/settings.json`, `data/image-editor/*` и `data/google/token.json`
 импортируются в БД один раз при первом запуске и остаются как backup.
-Google `credentials.json` по-прежнему нужно положить в `data/google/credentials.json`.
+Google `credentials.json` по-прежнему нужно положить в
+`data/google/credentials.json` для локального запуска или в
+`%ATOL_DATA_DIR%\google\credentials.json` для Windows CI/CD.
 
 ### Google OAuth без еженедельной повторной авторизации
 
@@ -79,13 +81,23 @@ Google выдает refresh token с истечением через 7 дней.
 `workflow_dispatch`.
 
 Workflow рассчитан на self-hosted GitHub Actions runner на той же
-Windows-машине, где установлен Docker Desktop и запускается ATOL server. В
-GitHub repository variables нужно задать `ATOL_DEPLOY_DIR` — абсолютный путь к
-папке `server` на Windows, где лежат `docker-compose.yml`, `.env` и `data/`.
+Windows-машине, где установлен Docker Desktop и запускается ATOL server. Проект
+не нужно держать постоянной папкой на Windows: workflow делает fresh checkout
+из GitHub в рабочую папку runner-а.
+
+Постоянно на Windows нужна только папка данных, например:
+
+```text
+D:\vitali\atol-data
+```
+
+В GitHub repository variables нужно задать `ATOL_DATA_DIR` — абсолютный путь к
+этой папке. В ней хранятся `settings.json`, `image-editor/`,
+`google/credentials.json` и `google/token.json`.
 
 Workflow делает:
 
-1. `git pull --ff-only` в `ATOL_DEPLOY_DIR`;
+1. checkout репозитория в runner workspace;
 2. `go test ./...`;
 3. записывает build metadata (`build-<run_number>`, commit, branch, build time);
 4. `docker compose build atol-server`;
@@ -96,9 +108,9 @@ Workflow делает:
 раскрываются commit, branch и время сборки. Те же данные доступны через
 `GET /api/version`.
 
-Секреты не передаются в GitHub Actions. Docker Compose читает локальный `.env`
-рядом с `docker-compose.yml` на Windows-машине, поэтому Telegram token и другие
-локальные значения остаются вне git.
+Telegram token передается через GitHub Actions Secret
+`TELEGRAM_FAX_BOT_TOKEN`. Остальные Telegram-настройки можно задать в GitHub
+Actions Variables. Локальный `.env` нужен только для ручного запуска вне CI.
 
 Важно: self-hosted runner выполняет код из репозитория на твоей Windows-машине.
 Используй такую схему только для приватного репозитория или полностью доверенных
@@ -156,6 +168,7 @@ contributors.
    Заполни `.env` реальными значениями:
 
    ```dotenv
+   ATOL_DATA_DIR=./data
    TELEGRAM_FAX_BOT_TOKEN=123456:replace-with-bot-token
    TELEGRAM_FAX_OWNER_IDS=111111111
    TELEGRAM_FAX_ALLOWED_SENDER_IDS=

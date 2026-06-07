@@ -21,49 +21,51 @@ jobs:
     timeout-minutes: 30
 
     env:
-      ATOL_DEPLOY_DIR: ${{ vars.ATOL_DEPLOY_DIR }}
+      ATOL_DATA_DIR: ${{ vars.ATOL_DATA_DIR }}
       PSExecutionPolicyPreference: Bypass
+      TELEGRAM_FAX_ALLOWED_SENDER_IDS: ${{ vars.TELEGRAM_FAX_ALLOWED_SENDER_IDS }}
+      TELEGRAM_FAX_API_BASE_URL: ${{ vars.TELEGRAM_FAX_API_BASE_URL }}
+      TELEGRAM_FAX_BOT_TOKEN: ${{ secrets.TELEGRAM_FAX_BOT_TOKEN }}
+      TELEGRAM_FAX_OWNER_IDS: ${{ vars.TELEGRAM_FAX_OWNER_IDS }}
+      TELEGRAM_FAX_POLL_TIMEOUT_SECONDS: ${{ vars.TELEGRAM_FAX_POLL_TIMEOUT_SECONDS }}
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: 1.24.x
           cache: false
 
-      - name: Validate deploy directory
+      - name: Validate persistent data directory
         shell: powershell
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:ATOL_DEPLOY_DIR)) {
-            throw "Set GitHub repository variable ATOL_DEPLOY_DIR to the Windows path of the server directory."
+          if ([string]::IsNullOrWhiteSpace($env:ATOL_DATA_DIR)) {
+            throw "Set GitHub repository variable ATOL_DATA_DIR to the Windows path of the persistent data directory."
           }
 
-          if (-not (Test-Path $env:ATOL_DEPLOY_DIR)) {
-            throw "ATOL_DEPLOY_DIR does not exist: $env:ATOL_DEPLOY_DIR"
+          New-Item -ItemType Directory -Force -Path $env:ATOL_DATA_DIR | Out-Null
+          $resolvedDataDir = (Resolve-Path $env:ATOL_DATA_DIR).Path
+          $googleDir = Join-Path $resolvedDataDir "google"
+          $imageEditorDir = Join-Path $resolvedDataDir "image-editor"
+          New-Item -ItemType Directory -Force -Path $googleDir, $imageEditorDir | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Value "ATOL_DATA_DIR=$resolvedDataDir"
+
+          $settingsPath = Join-Path $resolvedDataDir "settings.json"
+          if (-not (Test-Path $settingsPath)) {
+            Write-Warning "settings.json was not found in ATOL_DATA_DIR; the server may create defaults or require initial setup."
           }
 
-          $composePath = Join-Path $env:ATOL_DEPLOY_DIR "docker-compose.yml"
-          if (-not (Test-Path $composePath)) {
-            throw "docker-compose.yml was not found in ATOL_DEPLOY_DIR: $env:ATOL_DEPLOY_DIR"
+          $googleCredentialsPath = Join-Path $googleDir "credentials.json"
+          if (-not (Test-Path $googleCredentialsPath)) {
+            Write-Warning "Google credentials were not found at $googleCredentialsPath."
           }
-
-          $envPath = Join-Path $env:ATOL_DEPLOY_DIR ".env"
-          if (-not (Test-Path $envPath)) {
-            Write-Warning ".env was not found in ATOL_DEPLOY_DIR; Docker Compose will use default empty env values."
-          }
-
-      - name: Pull latest code
-        shell: powershell
-        run: |
-          Set-Location $env:ATOL_DEPLOY_DIR
-          git fetch --prune origin
-          git checkout $env:GITHUB_REF_NAME
-          git pull --ff-only origin $env:GITHUB_REF_NAME
 
       - name: Show tool versions
         shell: powershell
         run: |
-          Set-Location $env:ATOL_DEPLOY_DIR
           go version
           docker version
           docker compose version
@@ -71,7 +73,6 @@ jobs:
       - name: Run Go tests
         shell: powershell
         run: |
-          Set-Location $env:ATOL_DEPLOY_DIR
           go test ./...
 
       - name: Set build metadata
@@ -86,19 +87,16 @@ jobs:
       - name: Build Docker image
         shell: powershell
         run: |
-          Set-Location $env:ATOL_DEPLOY_DIR
           docker compose build atol-server
 
       - name: Restart Docker service
         shell: powershell
         run: |
-          Set-Location $env:ATOL_DEPLOY_DIR
           docker compose up -d --force-recreate atol-server
 
       - name: Check server health
         shell: powershell
         run: |
-          Set-Location $env:ATOL_DEPLOY_DIR
           $deadline = (Get-Date).AddSeconds(60)
 
           do {

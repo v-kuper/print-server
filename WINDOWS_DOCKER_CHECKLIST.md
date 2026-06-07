@@ -283,6 +283,7 @@ http://localhost:8080/
    Заполни `.env` реальными значениями:
 
    ```dotenv
+   ATOL_DATA_DIR=./data
    TELEGRAM_FAX_BOT_TOKEN=123456:replace-with-bot-token
    TELEGRAM_FAX_OWNER_IDS=111111111
    TELEGRAM_FAX_ALLOWED_SENDER_IDS=
@@ -390,34 +391,63 @@ http://<IP Windows-машины>:8080/
 
 Этот шаг нужен один раз. После него каждый `push` в `main` или `master` будет
 автоматически запускать сборку и перезапуск `atol-server` на этой Windows-машине.
+Постоянную копию проекта рядом с runner-ом держать не нужно: GitHub Actions
+сам скачает репозиторий в runner workspace через `actions/checkout`.
 
-Предварительно проверь, что на Windows уже работают:
+Предварительно проверь, что на Windows уже работают Docker и Docker Compose:
 
 ```powershell
 docker version
 docker compose version
-Test-Path .\.env
-Test-Path .\docker-compose.yml
 ```
 
-`.env` должен лежать рядом с `docker-compose.yml`. GitHub Actions его не
-коммитит и не скачивает из GitHub; Docker Compose читает этот локальный файл во
-время деплоя.
+Создай постоянную папку данных. Это не папка проекта, а место для состояния
+приложения:
 
-В GitHub repository variables нужно задать путь к этой папке:
+```powershell
+$dataDir = "D:\vitali\atol-data"
+New-Item -ItemType Directory -Force -Path $dataDir, "$dataDir\google", "$dataDir\image-editor" | Out-Null
+```
+
+Если используешь Google Calendar/Gmail, положи OAuth credentials сюда:
 
 ```text
-ATOL_DEPLOY_DIR=C:\path\to\server
+D:\vitali\atol-data\google\credentials.json
+```
+
+Если файл лежит в Downloads:
+
+```powershell
+Copy-Item "$env:USERPROFILE\Downloads\credentials.json" "$dataDir\google\credentials.json" -Force
+Test-Path "$dataDir\google\credentials.json"
+```
+
+В GitHub repository variables задай:
+
+```text
+ATOL_DATA_DIR=D:\vitali\atol-data
+TELEGRAM_FAX_OWNER_IDS=111111111
+TELEGRAM_FAX_ALLOWED_SENDER_IDS=
+TELEGRAM_FAX_API_BASE_URL=
+TELEGRAM_FAX_POLL_TIMEOUT_SECONDS=25
+```
+
+В GitHub repository secrets задай:
+
+```text
+TELEGRAM_FAX_BOT_TOKEN=123456:replace-with-bot-token
 ```
 
 Настраивается здесь:
 
 ```text
 Settings -> Secrets and variables -> Actions -> Variables -> New repository variable
+Settings -> Secrets and variables -> Actions -> Secrets -> New repository secret
 ```
 
-`ATOL_DEPLOY_DIR` не секрет, это просто локальный путь на Windows. Токены и
-пароли остаются в `.env`.
+`ATOL_DATA_DIR` не секрет, это просто локальный путь на Windows. Telegram token
+клади именно в Secret, не в Variable. Локальный `.env` для автодеплоя больше не
+нужен; он остается только для ручного запуска Docker Compose вне CI.
 
 Важно: self-hosted runner выполняет код из репозитория на этой Windows-машине.
 Используй автодеплой только для приватного репозитория или полностью доверенных
