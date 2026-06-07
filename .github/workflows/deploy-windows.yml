@@ -22,6 +22,7 @@ jobs:
 
     env:
       ATOL_DEPLOY_DIR: ${{ vars.ATOL_DEPLOY_DIR }}
+      PSExecutionPolicyPreference: Bypass
 
     steps:
       - name: Setup Go
