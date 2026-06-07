@@ -449,6 +449,25 @@ Settings -> Secrets and variables -> Actions -> Secrets -> New repository secret
 клади именно в Secret, не в Variable. Локальный `.env` для автодеплоя больше не
 нужен; он остается только для ручного запуска Docker Compose вне CI.
 
+Если Telegram-бот не отвечает после деплоя, сначала проверь последний workflow
+run. Шаг `Validate Telegram fax configuration` должен вывести:
+
+```text
+Telegram fax bot env: token=set, ownerIds=set.
+```
+
+Если вместо этого workflow пишет про `TELEGRAM_FAX_BOT_TOKEN repository secret`,
+значит токен добавлен не в Secrets или назван не точно
+`TELEGRAM_FAX_BOT_TOKEN`. Если контейнер стартовал, но бот не отвечает, проверь
+логи:
+
+```powershell
+docker compose logs --tail=120 atol-server
+```
+
+В логах должна быть строка `Telegram fax bot enabled`. Если там
+`Telegram fax bot disabled`, контейнер получил пустой `TELEGRAM_FAX_BOT_TOKEN`.
+
 Важно: self-hosted runner выполняет код из репозитория на этой Windows-машине.
 Используй автодеплой только для приватного репозитория или полностью доверенных
 contributors.

@@ -63,6 +63,23 @@ jobs:
             Write-Warning "Google credentials were not found at $googleCredentialsPath."
           }
 
+      - name: Validate Telegram fax configuration
+        shell: powershell
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace($env:TELEGRAM_FAX_BOT_TOKEN)) {
+            $missing += "TELEGRAM_FAX_BOT_TOKEN repository secret"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TELEGRAM_FAX_OWNER_IDS)) {
+            $missing += "TELEGRAM_FAX_OWNER_IDS repository variable"
+          }
+
+          if ($missing.Count -gt 0) {
+            throw "Missing Telegram fax configuration: $($missing -join ', ')."
+          }
+
+          Write-Host "Telegram fax bot env: token=set, ownerIds=set."
+
       - name: Show tool versions
         shell: powershell
         run: |
