@@ -85,6 +85,7 @@ type MotivationProvider interface {
 	GenerateHistoryFacts(context.Context, motivation.Settings, []motivation.HistoryEvent) ([]motivation.HistoryFact, error)
 	GenerateDailyQuests(context.Context, motivation.Settings, []dailyquest.Quest) ([]dailyquest.DailyQuest, error)
 	TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error)
+	GenerateNewsDigest(context.Context, motivation.Settings, []motivation.NewsTitle) (motivation.NewsDigest, error)
 }
 
 type ArticleSummaryProvider interface {

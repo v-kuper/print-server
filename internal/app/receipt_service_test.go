@@ -97,6 +97,7 @@ func TestReceiptServiceCreatesNewsSnapshotAndPrintsQRCode(t *testing.T) {
 			SourceName:    "Reuters",
 			Link:          "https://example.com/news",
 		}}}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
 		WithReceiptSnapshotStore(snapshotStore),
 	)
 
@@ -159,6 +160,7 @@ func TestReceiptServicePrintsNewsWithDefaultQRCodeWhenSnapshotBaseURLIsEmpty(t *
 		gateway,
 		fixedClock,
 		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "Reuters"}}}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
 		WithReceiptSnapshotStore(snapshotStore),
 	)
 
@@ -199,6 +201,7 @@ func TestReceiptServiceSkipsQRCodeWhenSnapshotFinalizationFails(t *testing.T) {
 		gateway,
 		fixedClock,
 		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "Reuters"}}}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
 		WithReceiptSnapshotStore(snapshotStore),
 	)
 
@@ -238,6 +241,7 @@ func TestReceiptServiceMarksNewsSnapshotFailedWhenPrinterFails(t *testing.T) {
 		&fakePrinter{printErr: errors.New("paper empty")},
 		fixedClock,
 		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Заголовок", SourceName: "Reuters"}}}),
+		WithMotivationProvider(&fakeMotivationProvider{}),
 		WithReceiptSnapshotStore(snapshotStore),
 	)
 
@@ -833,6 +837,47 @@ func TestReceiptServiceContinuesWhenNewsProviderFails(t *testing.T) {
 	}
 }
 
+func TestReceiptServiceContinuesWhenNewsDigestFails(t *testing.T) {
+	store := &fakeStore{
+		newsSettings: news.Settings{Sources: []news.SourceSettings{
+			{Preset: news.PresetReuters, Enabled: true, FeedURL: "https://example.com/rss", MaxItems: 1},
+		}},
+		receiptContent: receipt.ContentSettings{
+			Configured:          true,
+			ShowWeather:         false,
+			ShowWeatherAdvice:   false,
+			ShowMotivationQuote: false,
+			ShowTonPortfolio:    false,
+			ShowOilPrice:        false,
+			ShowUsdBynRate:      false,
+			ShowBankRates:       false,
+			ShowMail:            false,
+			ShowCalendar:        false,
+			ShowHistory:         false,
+			ShowNews:            true,
+		},
+		motivationSettings: motivation.Settings{Configured: true, Enabled: true},
+	}
+	service := NewReceiptService(
+		store,
+		&fakePrinter{},
+		fixedClock,
+		WithNewsProvider(&fakeNewsProvider{items: []news.Item{{Title: "Важная новость", SourceName: "Reuters"}}}),
+		WithMotivationProvider(&fakeMotivationProvider{newsDigestErr: errors.New("llama offline")}),
+	)
+
+	lines, warnings, err := service.BuildDailyReceiptWithWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("build receipt must survive news digest failure: %v", err)
+	}
+	if !lineTextsContainSubstring(lines, "Важная новость") || lineTextsContain(lines, "Картина дня") {
+		t.Fatalf("expected news without digest after AI failure, got %#v", lines)
+	}
+	if !containsWarning(warnings, "AI-картина дня недоступна") {
+		t.Fatalf("expected news digest warning, got %#v", warnings)
+	}
+}
+
 func TestReceiptServiceContinuesWhenDenisTrendsProviderFails(t *testing.T) {
 	store := &fakeStore{
 		denisTrends: denistrends.DefaultSettings(),
@@ -1082,6 +1127,9 @@ func TestReceiptServiceTranslatesEnglishNewsTitles(t *testing.T) {
 	provider := &fakeMotivationProvider{
 		quote:  motivation.Quote{Text: "Делай важное спокойно."},
 		advice: motivation.WeatherAdvice{Text: "Погода для прогулки."},
+		newsDigest: motivation.NewsDigest{
+			Text: "Рынки сохраняют осторожность, а технологические компании продолжают искать точки роста.",
+		},
 		translations: []motivation.NewsTranslation{
 			{Index: 1, Title: "Reuters готовит новый обзор рынков"},
 			{Index: 2, Title: "Основатель стартапа рассказал о росте"},
@@ -1126,6 +1174,9 @@ func TestReceiptServiceTranslatesEnglishNewsTitles(t *testing.T) {
 	if !lineTextsContainSubstring(lines, "Основатель стартапа") {
 		t.Fatalf("expected translated Hacker News title, got %#v", lines)
 	}
+	if !lineTextsContain(lines, "Картина дня") || !lineTextsContainSubstring(lines, "Рынки сохраняют осторожность") {
+		t.Fatalf("expected generated news digest after printed titles, got %#v", lines)
+	}
 	if len(provider.translatedTitles) != 2 {
 		t.Fatalf("expected only English sources to be translated, got %#v", provider.translatedTitles)
 	}
@@ -1134,6 +1185,12 @@ func TestReceiptServiceTranslatesEnglishNewsTitles(t *testing.T) {
 	}
 	if provider.translatedTitles[1].Index != 2 || provider.translatedTitles[1].SourceName != "Hacker News" {
 		t.Fatalf("expected Hacker News title with original item index, got %#v", provider.translatedTitles)
+	}
+	if len(provider.newsDigestTitles) != 3 ||
+		provider.newsDigestTitles[0].Title != "Русский заголовок" ||
+		provider.newsDigestTitles[1].Title != "Reuters готовит новый обзор рынков" ||
+		provider.newsDigestTitles[2].Title != "Основатель стартапа рассказал о росте" {
+		t.Fatalf("expected digest input to match final printed titles, got %#v", provider.newsDigestTitles)
 	}
 	if lineTextsContainSubstring(lines, "- Русский заголовок") && lineTextsContainSubstring(lines, "Русский заголовок Русский заголовок") {
 		t.Fatalf("expected Reuters title not to get duplicated as original, got %#v", lines)
@@ -2774,21 +2831,25 @@ type fakeMotivationProvider struct {
 	historyFacts        []motivation.HistoryFact
 	dailyQuests         []dailyquest.DailyQuest
 	translations        []motivation.NewsTranslation
+	newsDigest          motivation.NewsDigest
 	err                 error
 	calendarAdviceErr   error
 	historyFactsErr     error
 	dailyQuestErr       error
 	translationErr      error
+	newsDigestErr       error
 	weatherContext      motivation.WeatherContext
 	calendarContext     motivation.CalendarContext
 	historyEvents       []motivation.HistoryEvent
 	dailyQuestInput     []dailyquest.Quest
 	translatedTitles    []motivation.NewsTitle
+	newsDigestTitles    []motivation.NewsTitle
 	quoteCalls          int
 	adviceCalls         int
 	calendarAdviceCalls int
 	historyFactCalls    int
 	dailyQuestCalls     int
+	newsDigestCalls     int
 }
 
 func (p *fakeMotivationProvider) Generate(context.Context, motivation.Settings) (motivation.Quote, error) {
@@ -2847,6 +2908,12 @@ func (p *fakeMotivationProvider) GenerateDailyQuests(_ context.Context, _ motiva
 func (p *fakeMotivationProvider) TranslateNewsTitles(_ context.Context, _ motivation.Settings, titles []motivation.NewsTitle) ([]motivation.NewsTranslation, error) {
 	p.translatedTitles = append([]motivation.NewsTitle(nil), titles...)
 	return append([]motivation.NewsTranslation(nil), p.translations...), p.translationErr
+}
+
+func (p *fakeMotivationProvider) GenerateNewsDigest(_ context.Context, _ motivation.Settings, titles []motivation.NewsTitle) (motivation.NewsDigest, error) {
+	p.newsDigestCalls++
+	p.newsDigestTitles = append([]motivation.NewsTitle(nil), titles...)
+	return p.newsDigest, p.newsDigestErr
 }
 
 func lineTextsContain(lines []receipt.Line, want string) bool {

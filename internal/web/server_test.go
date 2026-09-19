@@ -2427,6 +2427,10 @@ func (p *fakeMotivationProvider) TranslateNewsTitles(context.Context, motivation
 	return nil, p.err
 }
 
+func (p *fakeMotivationProvider) GenerateNewsDigest(context.Context, motivation.Settings, []motivation.NewsTitle) (motivation.NewsDigest, error) {
+	return motivation.NewsDigest{}, p.err
+}
+
 func lineTextsContain(lines []receipt.Line, want string) bool {
 	for _, line := range lines {
 		if line.Text == want {

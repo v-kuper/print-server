@@ -24,6 +24,7 @@ type Provider interface {
 	GenerateHistoryFacts(context.Context, Settings, []HistoryEvent) ([]HistoryFact, error)
 	GenerateDailyQuests(context.Context, Settings, []dailyquest.Quest) ([]dailyquest.DailyQuest, error)
 	TranslateNewsTitles(context.Context, Settings, []NewsTitle) ([]NewsTranslation, error)
+	GenerateNewsDigest(context.Context, Settings, []NewsTitle) (NewsDigest, error)
 }
 
 type OllamaProvider struct {
@@ -32,6 +33,7 @@ type OllamaProvider struct {
 	adviceMu               sync.Mutex
 	previousWeatherAdvice  string
 	previousCalendarAdvice string
+	previousNewsDigest     string
 }
 
 type ollamaChatRequest struct {
@@ -79,6 +81,13 @@ var newsTranslationOptions = ollamaOptions{
 	TopP:          0.8,
 	RepeatPenalty: 1.03,
 	RepeatLastN:   96,
+}
+
+var newsDigestOptions = ollamaOptions{
+	Temperature:   0.6,
+	TopP:          0.84,
+	RepeatPenalty: 1.12,
+	RepeatLastN:   128,
 }
 
 var historyFactsOptions = ollamaOptions{
@@ -141,6 +150,18 @@ func (p *OllamaProvider) TranslateNewsTitles(ctx context.Context, settings Setti
 		return nil, err
 	}
 	return parseNewsTranslations(text)
+}
+
+func (p *OllamaProvider) GenerateNewsDigest(ctx context.Context, settings Settings, titles []NewsTitle) (NewsDigest, error) {
+	if len(titles) == 0 {
+		return NewsDigest{}, nil
+	}
+	text, err := p.generateWithPrompt(ctx, settings, newsDigestPrompt(titles, p.lastNewsDigest()), newsDigestOptions)
+	if err != nil {
+		return NewsDigest{}, err
+	}
+	p.rememberNewsDigest(text)
+	return NewsDigest{Text: text}, nil
 }
 
 func (p *OllamaProvider) generateWithPrompt(ctx context.Context, settings Settings, prompt string, options ollamaOptions) (string, error) {
@@ -240,6 +261,18 @@ func (p *OllamaProvider) rememberCalendarAdvice(value string) {
 	p.adviceMu.Lock()
 	defer p.adviceMu.Unlock()
 	p.previousCalendarAdvice = sanitizeQuote(value)
+}
+
+func (p *OllamaProvider) lastNewsDigest() string {
+	p.adviceMu.Lock()
+	defer p.adviceMu.Unlock()
+	return p.previousNewsDigest
+}
+
+func (p *OllamaProvider) rememberNewsDigest(value string) {
+	p.adviceMu.Lock()
+	defer p.adviceMu.Unlock()
+	p.previousNewsDigest = sanitizeQuote(value)
 }
 
 func (p *OllamaProvider) client() *http.Client {

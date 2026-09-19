@@ -213,6 +213,27 @@ func TestDailyReceiptAppendsFinanceAndNewsBlocks(t *testing.T) {
 	}
 }
 
+func TestDailyReceiptPrintsNewsDigestAfterPrintedNews(t *testing.T) {
+	lines := DailyReceipt(DailyReceiptData{
+		HideWeather: true,
+		NewsItems: []news.Item{
+			{Title: "Центробанк сохранил ставку", SourceName: "Reuters"},
+			{Title: "Стартап представил новую модель", SourceName: "Hacker News"},
+		},
+		NewsDigest: &motivation.NewsDigest{
+			Text: "Финансовый фон осторожный, а технологии продолжают искать точки роста.",
+		},
+	})
+
+	got := texts(lines)
+	lastNewsIndex := indexOfTextContaining(got, "Стартап представил")
+	digestTitleIndex := indexOfText(got, "Картина дня")
+	digestTextIndex := indexOfTextContaining(got, "Финансовый фон осторожный")
+	if lastNewsIndex < 0 || digestTitleIndex <= lastNewsIndex || digestTextIndex <= digestTitleIndex {
+		t.Fatalf("expected news digest after printed titles, got %#v", got)
+	}
+}
+
 func TestDailyReceiptPrintsUnavailableSectionPlaceholders(t *testing.T) {
 	lines := DailyReceipt(DailyReceiptData{
 		HideWeather: true,

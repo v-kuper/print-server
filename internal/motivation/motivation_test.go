@@ -325,8 +325,13 @@ func TestOllamaProviderBuildsCalendarAdvicePrompt(t *testing.T) {
 		"Синк по релизу",
 		"Завтра",
 		"Планирование",
-		"живой комментарий",
-		"как близкий человек помогает быстро сориентироваться",
+		"строгого персонального планировщика",
+		"work-life balance",
+		"фактической нагруз",
+		"подготовить вопросы",
+		"восстановление",
+		"советуй отдых только",
+		"Не упоминай семью",
 		"выбери один",
 		"Не начинай каждый ответ с оценки загруженности",
 		"Меняй структуру",
@@ -339,7 +344,7 @@ func TestOllamaProviderBuildsCalendarAdvicePrompt(t *testing.T) {
 			t.Fatalf("expected calendar prompt to contain %q, got %q", want, prompt)
 		}
 	}
-	for _, unwanted := range []string{"милый", "бодрый", "оценка нагрузки + действие", "Если день перегружен или встречи идут плотно"} {
+	for _, unwanted := range []string{"милый", "бодрый", "как близкий человек", "оценка нагрузки + действие", "Если день перегружен или встречи идут плотно"} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("expected calendar prompt to avoid %q, got %q", unwanted, prompt)
 		}
@@ -437,6 +442,87 @@ func TestOllamaProviderTranslatesNewsTitles(t *testing.T) {
 	}
 	if requestPayload.Options.Temperature > 0.4 {
 		t.Fatalf("expected stable translation sampling options, got %#v", requestPayload.Options)
+	}
+}
+
+func TestOllamaProviderGeneratesDigestFromPrintedNewsTitles(t *testing.T) {
+	var requestPayload ollamaChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestPayload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"День проходит под знаком осторожности: рынки ждут решений регуляторов, а технологический сектор продолжает искать точки роста. Общий фон напряжённый, но без ощущения системного кризиса."}}`))
+	}))
+	defer server.Close()
+
+	provider := NewOllamaProvider(server.Client())
+	digest, err := provider.GenerateNewsDigest(context.Background(), Settings{
+		Enabled: true,
+		BaseURL: server.URL,
+		Model:   "gemma4:31b-cloud",
+	}, []NewsTitle{
+		{Index: 0, SourceName: "Reuters", Title: "Центробанк сохранил ставку"},
+		{Index: 1, SourceName: "Hacker News", Title: "Стартап представил новую модель"},
+	})
+	if err != nil {
+		t.Fatalf("generate news digest: %v", err)
+	}
+
+	if digest.Text != "День проходит под знаком осторожности: рынки ждут решений регуляторов, а технологический сектор продолжает искать точки роста. Общий фон напряжённый, но без ощущения системного кризиса." {
+		t.Fatalf("unexpected news digest: %#v", digest)
+	}
+	prompt := requestPayload.Messages[0].Content
+	for _, want := range []string{
+		"Reuters",
+		"Центробанк сохранил ставку",
+		"Hacker News",
+		"Стартап представил новую модель",
+		"только по этим заголовкам",
+		"не дели события на чёрное и белое",
+		"общее настроение дня",
+		"Не выдумывай",
+		"2-3 короткие строки",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected news digest prompt to contain %q, got %q", want, prompt)
+		}
+	}
+	if requestPayload.Options.Temperature < 0.5 || requestPayload.Options.Temperature > 0.7 || requestPayload.Options.RepeatPenalty < 1.08 {
+		t.Fatalf("expected grounded news digest options, got %#v", requestPayload.Options)
+	}
+}
+
+func TestOllamaProviderAvoidsRepeatingPreviousNewsDigest(t *testing.T) {
+	var prompts []string
+	responses := []string{
+		"Рынки осторожны, а технологический сектор сохраняет интерес к новым продуктам.",
+		"В новостях смешались ожидание экономических решений и технологический оптимизм.",
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var requestPayload ollamaChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&requestPayload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		prompts = append(prompts, requestPayload.Messages[0].Content)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"` + responses[len(prompts)-1] + `"}}`))
+	}))
+	defer server.Close()
+
+	provider := NewOllamaProvider(server.Client())
+	settings := Settings{Enabled: true, BaseURL: server.URL, Model: "gemma4:31b-cloud"}
+	titles := []NewsTitle{{Index: 0, SourceName: "Reuters", Title: "Центробанк сохранил ставку"}}
+
+	if _, err := provider.GenerateNewsDigest(context.Background(), settings, titles); err != nil {
+		t.Fatalf("generate first news digest: %v", err)
+	}
+	if _, err := provider.GenerateNewsDigest(context.Background(), settings, titles); err != nil {
+		t.Fatalf("generate second news digest: %v", err)
+	}
+
+	if len(prompts) != 2 || !strings.Contains(prompts[1], responses[0]) || !strings.Contains(prompts[1], "Не повторяй") {
+		t.Fatalf("expected second prompt to reject the previous news digest, got %#v", prompts)
 	}
 }
 
@@ -600,6 +686,11 @@ func (p *fakeProvider) GenerateDailyQuests(context.Context, Settings, []dailyque
 func (p *fakeProvider) TranslateNewsTitles(context.Context, Settings, []NewsTitle) ([]NewsTranslation, error) {
 	p.calls++
 	return nil, p.err
+}
+
+func (p *fakeProvider) GenerateNewsDigest(context.Context, Settings, []NewsTitle) (NewsDigest, error) {
+	p.calls++
+	return NewsDigest{}, p.err
 }
 
 func ptrFloat(value float64) *float64 {

@@ -107,6 +107,7 @@ type MotivationProvider interface {
 	GenerateHistoryFacts(context.Context, motivation.Settings, []motivation.HistoryEvent) ([]motivation.HistoryFact, error)
 	GenerateDailyQuests(context.Context, motivation.Settings, []dailyquest.Quest) ([]dailyquest.DailyQuest, error)
 	TranslateNewsTitles(context.Context, motivation.Settings, []motivation.NewsTitle) ([]motivation.NewsTranslation, error)
+	GenerateNewsDigest(context.Context, motivation.Settings, []motivation.NewsTitle) (motivation.NewsDigest, error)
 }
 
 type ReceiptServiceOption func(*ReceiptService)
@@ -525,6 +526,10 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 			}
 		}
 	}
+	newsDigest, newsDigestWarning, err := s.resolveNewsDigest(ctx, newsItems)
+	if err != nil {
+		return dailyReceiptBuild{}, buildError(http.StatusInternalServerError, err)
+	}
 
 	var denisTrendSections []denistrends.Section
 	var denisTrendsTranslationWarning string
@@ -570,9 +575,10 @@ func (s *ReceiptService) buildDailyReceiptAt(ctx context.Context, content receip
 		CalendarAdvice:      calendarAdvice,
 		HistoryFacts:        historyFacts,
 		NewsItems:           newsItems,
+		NewsDigest:          newsDigest,
 		DenisTrendSections:  denisTrendSections,
 	}, receiptStyle)
-	warnings := optionalWarnings(weatherWarning, motivationWarning, tonPriceWarning, tonChartWarning, oilPriceWarning, oilChartWarning, usdBynRateWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning, denisTrendsTranslationWarning)
+	warnings := optionalWarnings(weatherWarning, motivationWarning, tonPriceWarning, tonChartWarning, oilPriceWarning, oilChartWarning, usdBynRateWarning, usdBynChartWarning, bankRatesWarning, googleWarning, calendarAdviceWarning, historyWarning, newsTranslationWarning, newsDigestWarning, denisTrendsTranslationWarning)
 	return dailyReceiptBuild{
 		Lines:      lines,
 		Warnings:   warnings,

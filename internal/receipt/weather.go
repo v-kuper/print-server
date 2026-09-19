@@ -65,6 +65,7 @@ type DailyReceiptData struct {
 	CalendarAdvice      *motivation.CalendarAdvice
 	HistoryFacts        []motivation.HistoryFact
 	NewsItems           []news.Item
+	NewsDigest          *motivation.NewsDigest
 	DenisTrendSections  []denistrends.Section
 }
 
@@ -285,6 +286,10 @@ func DailyReceiptWithStyle(data DailyReceiptData, styleSettings StyleSettings) [
 			if sourceIndex < len(grouped)-1 {
 				result = append(result, blankLine(normalStyle))
 			}
+		}
+		if data.NewsDigest != nil && strings.TrimSpace(data.NewsDigest.Text) != "" {
+			result = appendSectionHeader(result, "Картина дня", normalStyle)
+			result = append(result, wrappedAligned(data.NewsDigest.Text, normalStyle)...)
 		}
 	} else if data.UnavailableSections.News {
 		result = appendUnavailableSection(result, "Коротко о мире:", normalStyle)

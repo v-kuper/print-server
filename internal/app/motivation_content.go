@@ -212,6 +212,41 @@ func (s *ReceiptService) translateNewsItems(ctx context.Context, newsSettings ne
 	return translatedItems, "", nil
 }
 
+func (s *ReceiptService) resolveNewsDigest(ctx context.Context, items []news.Item) (*motivation.NewsDigest, string, error) {
+	if len(items) == 0 || s.motivationProvider == nil {
+		return nil, "", nil
+	}
+	settings, err := s.store.LoadMotivation()
+	if err != nil {
+		return nil, "", err
+	}
+
+	titles := make([]motivation.NewsTitle, 0, len(items))
+	for index, item := range items {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			continue
+		}
+		titles = append(titles, motivation.NewsTitle{
+			Index:      index,
+			SourceName: strings.TrimSpace(item.SourceName),
+			Title:      title,
+		})
+	}
+	if len(titles) == 0 {
+		return nil, "", nil
+	}
+
+	digest, err := s.motivationProvider.GenerateNewsDigest(ctx, settings.Normalized(), titles)
+	if err != nil {
+		return nil, "AI-картина дня недоступна: " + err.Error(), nil
+	}
+	if strings.TrimSpace(digest.Text) == "" {
+		return nil, "", nil
+	}
+	return &digest, "", nil
+}
+
 func shouldTranslateNewsItem(item news.Item) bool {
 	title := strings.TrimSpace(item.Title)
 	if title == "" || containsCyrillic(title) {
