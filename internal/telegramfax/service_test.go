@@ -1,12 +1,8 @@
 package telegramfax
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"image"
-	"image/color"
-	"image/png"
 	"reflect"
 	"strconv"
 	"testing"
@@ -410,78 +406,96 @@ func TestPollOnceSkipsUnsafeDirectMessages(t *testing.T) {
 	}
 }
 
-func TestPollOncePrintsBusinessPhotoMessage(t *testing.T) {
-	imageData := testTelegramPhotoPNG(t, 4, 2)
-	client := &fakeTelegramClient{
-		updates: []Update{
-			{UpdateID: 70, BusinessConnection: &BusinessConnection{ID: "bc-1", User: User{ID: 1001}}},
-			{
-				UpdateID: 71,
-				BusinessMessage: &Message{
-					BusinessConnectionID: "bc-1",
-					MessageID:            77,
-					Date:                 time.Date(2026, 6, 1, 16, 30, 0, 0, time.UTC).Unix(),
-					From:                 &User{ID: 2001, FirstName: "Photo", Username: "photo_user"},
-					Caption:              "Look\nat this",
-					Photo: []PhotoSize{
-						{FileID: "small", Width: 2, Height: 1, FileSize: 10},
-						{FileID: "big", Width: 4, Height: 2, FileSize: int64(len(imageData))},
+func TestPollOnceRejectsNonTextMessages(t *testing.T) {
+	const expectedReply = "Поддерживаются только текстовые сообщения. Голосовые сообщения, фото, видео и другие медиафайлы не поддерживаются."
+	for _, test := range []struct {
+		name                       string
+		updates                    []Update
+		expectedChatID             int64
+		expectedBusinessConnection string
+	}{
+		{
+			name: "direct message",
+			updates: []Update{{
+				UpdateID: 70,
+				Message: &Message{
+					MessageID: 77,
+					From:      &User{ID: 2001, FirstName: "Voice"},
+					Chat:      &Chat{ID: 2001, Type: "private"},
+				},
+			}},
+			expectedChatID: 2001,
+		},
+		{
+			name: "business message with media caption",
+			updates: []Update{
+				{UpdateID: 70, BusinessConnection: &BusinessConnection{ID: "bc-1", User: User{ID: 1001}}},
+				{
+					UpdateID: 71,
+					BusinessMessage: &Message{
+						BusinessConnectionID: "bc-1",
+						MessageID:            77,
+						From:                 &User{ID: 2001, FirstName: "Photo"},
+						Chat:                 &Chat{ID: 3001, Type: "private"},
+						Caption:              "Подпись к фотографии",
+						Photo:                []PhotoSize{{FileID: "photo", Width: 4, Height: 2}},
 					},
 				},
 			},
+			expectedChatID:             3001,
+			expectedBusinessConnection: "bc-1",
 		},
-		files: map[string]File{
-			"big": {FileID: "big", FilePath: "photos/big.png", FileSize: int64(len(imageData))},
-		},
-		downloads: map[string][]byte{
-			"photos/big.png": imageData,
-		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeTelegramClient{updates: test.updates}
+			gateway := &fakeTelegramFaxPrinter{}
+			service := NewService(testConfig(), client, &fakeStateStore{}, &fakePrinterConfigStore{}, &fakePrintJobStore{}, gateway, fixedFaxClock, WithLocation(time.UTC))
+
+			if err := service.PollOnce(context.Background()); err != nil {
+				t.Fatalf("poll once: %v", err)
+			}
+
+			if len(gateway.printedLines) != 0 {
+				t.Fatalf("non-text message must not print, got %#v", gateway.printedLines)
+			}
+			if len(client.sentMessages) != 1 {
+				t.Fatalf("expected one validation reply, got %#v", client.sentMessages)
+			}
+			got := client.sentMessages[0]
+			if got.ChatID != test.expectedChatID || got.BusinessConnectionID != test.expectedBusinessConnection || got.Text != expectedReply {
+				t.Fatalf("unexpected validation reply: %#v", got)
+			}
+		})
 	}
-	jobs := &fakePrintJobStore{}
+}
+
+func TestNewServiceFormatsFaxTimeInMinskByDefault(t *testing.T) {
+	originalLocal := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = originalLocal })
+
+	client := &fakeTelegramClient{updates: []Update{{
+		UpdateID: 80,
+		Message: &Message{
+			MessageID: 81,
+			Date:      time.Date(2026, 6, 1, 12, 10, 0, 0, time.UTC).Unix(),
+			From:      &User{ID: 2001, FirstName: "Vitali"},
+			Chat:      &Chat{ID: 2001, Type: "private"},
+			Text:      "Проверка времени",
+		},
+	}}}
 	gateway := &fakeTelegramFaxPrinter{}
-	service := NewService(testConfig(), client, &fakeStateStore{}, &fakePrinterConfigStore{}, jobs, gateway, fixedFaxClock, WithLocation(time.UTC))
+	service := NewService(testConfig(), client, &fakeStateStore{}, &fakePrinterConfigStore{}, &fakePrintJobStore{}, gateway, fixedFaxClock)
 
 	if err := service.PollOnce(context.Background()); err != nil {
 		t.Fatalf("poll once: %v", err)
 	}
 
-	if client.requestedFileID != "big" {
-		t.Fatalf("expected largest photo file_id to be requested, got %q", client.requestedFileID)
+	if len(gateway.printedLines) < 3 {
+		t.Fatalf("expected printed fax, got %#v", gateway.printedLines)
 	}
-	if client.downloadedFilePath != "photos/big.png" {
-		t.Fatalf("expected photo file to be downloaded, got %q", client.downloadedFilePath)
-	}
-	if len(gateway.printedLines) == 0 {
-		t.Fatalf("expected photo fax to print")
-	}
-	if gateway.printedLines[0].Text != "INCOMING PHOTO FAX" {
-		t.Fatalf("unexpected header line: %#v", gateway.printedLines[0])
-	}
-	if gateway.printedLines[4].Text != "Look" || gateway.printedLines[5].Text != "at this" {
-		t.Fatalf("expected multiline caption before photo, got %#v", gateway.printedLines)
-	}
-	imageLine := receipt.Line{}
-	for _, line := range gateway.printedLines {
-		if len(line.ImagePixelBuffer) > 0 {
-			imageLine = line
-			break
-		}
-	}
-	if imageLine.ImageWidth != 384 || imageLine.ImageHeight != 192 {
-		t.Fatalf("expected photo to fit receipt width at 384x192, got %dx%d", imageLine.ImageWidth, imageLine.ImageHeight)
-	}
-	if len(imageLine.ImagePixelBuffer) != 384*192 {
-		t.Fatalf("unexpected photo pixel buffer length %d", len(imageLine.ImagePixelBuffer))
-	}
-	if gateway.printedLines[len(gateway.printedLines)-1].Text != faxBottomSeparator {
-		t.Fatalf("expected bottom separator, got %#v", gateway.printedLines[len(gateway.printedLines)-1])
-	}
-	if jobs.startedKind != "telegram_fax" || jobs.finishedID != "job-1" || jobs.finishedErr != "" {
-		t.Fatalf("unexpected photo print job state: %#v", jobs)
-	}
-	request, ok := jobs.startedRequest.(map[string]any)
-	if !ok || request["contentType"] != "photo" || request["telegramFileId"] != "big" {
-		t.Fatalf("unexpected photo print job request: %#v", jobs.startedRequest)
+	if gateway.printedLines[2].Text != "01.06.2026 15:10" {
+		t.Fatalf("expected Minsk time on fax, got %q", gateway.printedLines[2].Text)
 	}
 }
 
@@ -1073,23 +1087,4 @@ func (s *fakeQueueStore) pendingItems() []QueueItem {
 		}
 	}
 	return pending
-}
-
-func testTelegramPhotoPNG(t *testing.T, width int, height int) []byte {
-	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			if (x+y)%2 == 0 {
-				img.Set(x, y, color.White)
-			} else {
-				img.Set(x, y, color.Black)
-			}
-		}
-	}
-	var buffer bytes.Buffer
-	if err := png.Encode(&buffer, img); err != nil {
-		t.Fatalf("encode test PNG: %v", err)
-	}
-	return buffer.Bytes()
 }

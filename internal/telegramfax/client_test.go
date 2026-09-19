@@ -186,12 +186,9 @@ func TestPollOncePrintsDirectMessageWithHTTPClientFakeTelegramAPI(t *testing.T) 
 	}
 }
 
-func TestPollOncePrintsPhotoWithHTTPClientFakeTelegramAPI(t *testing.T) {
-	imageData := testTelegramPhotoPNG(t, 4, 2)
+func TestPollOnceRejectsPhotoWithHTTPClientFakeTelegramAPI(t *testing.T) {
 	var getUpdatesRequest GetUpdatesRequest
-	var getFileRequest map[string]string
 	var sendMessageRequest SendMessageRequest
-	downloadedPhoto := false
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/bot123:abc/getUpdates":
@@ -229,37 +226,13 @@ func TestPollOncePrintsPhotoWithHTTPClientFakeTelegramAPI(t *testing.T) {
 									"file_id":   "photo-file",
 									"width":     4,
 									"height":    2,
-									"file_size": len(imageData),
+									"file_size": 123,
 								},
 							},
 						},
 					},
 				},
 			})
-		case "/bot123:abc/getFile":
-			if r.Method != http.MethodPost {
-				t.Fatalf("expected getFile POST, got %s", r.Method)
-			}
-			if err := json.NewDecoder(r.Body).Decode(&getFileRequest); err != nil {
-				t.Fatalf("decode getFile request: %v", err)
-			}
-			writeTelegramTestJSON(w, map[string]any{
-				"ok": true,
-				"result": map[string]any{
-					"file_id":   "photo-file",
-					"file_path": "photos/photo.png",
-					"file_size": len(imageData),
-				},
-			})
-		case "/file/bot123:abc/photos/photo.png":
-			if r.Method != http.MethodGet {
-				t.Fatalf("expected photo download GET, got %s", r.Method)
-			}
-			downloadedPhoto = true
-			w.Header().Set("Content-Type", "image/png")
-			if _, err := w.Write(imageData); err != nil {
-				t.Fatalf("write image data: %v", err)
-			}
 		case "/bot123:abc/sendMessage":
 			if r.Method != http.MethodPost {
 				t.Fatalf("expected sendMessage POST, got %s", r.Method)
@@ -297,19 +270,13 @@ func TestPollOncePrintsPhotoWithHTTPClientFakeTelegramAPI(t *testing.T) {
 	if getUpdatesRequest.Offset != 8 {
 		t.Fatalf("expected offset 8, got %d", getUpdatesRequest.Offset)
 	}
-	if getFileRequest["file_id"] != "photo-file" {
-		t.Fatalf("expected getFile to request photo-file, got %#v", getFileRequest)
-	}
-	if !downloadedPhoto {
-		t.Fatalf("expected photo file to be downloaded")
-	}
 	if state.state.NextUpdateOffset != 10 {
 		t.Fatalf("expected next offset 10, got %d", state.state.NextUpdateOffset)
 	}
-	if len(gateway.printedLines) == 0 || gateway.printedLines[0].Text != "INCOMING PHOTO FAX" {
-		t.Fatalf("expected fake Telegram photo to print, got %#v", gateway.printedLines)
+	if len(gateway.printedLines) != 0 {
+		t.Fatalf("photo must not print, got %#v", gateway.printedLines)
 	}
-	if sendMessageRequest.BusinessConnectionID != "bc-photo" || sendMessageRequest.ChatID != 2001 || sendMessageRequest.Text != "Факс доставлен." {
+	if sendMessageRequest.BusinessConnectionID != "bc-photo" || sendMessageRequest.ChatID != 2001 || sendMessageRequest.Text != "Поддерживаются только текстовые сообщения. Голосовые сообщения, фото, видео и другие медиафайлы не поддерживаются." {
 		t.Fatalf("unexpected sendMessage request: %#v", sendMessageRequest)
 	}
 }

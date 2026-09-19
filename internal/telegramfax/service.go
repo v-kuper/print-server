@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"atol-server/internal/printcoord"
 	"atol-server/internal/printer"
@@ -21,9 +22,11 @@ var telegramFaxAllowedUpdates = []string{
 }
 
 const (
-	faxDeliveredNotification = "Факс доставлен."
-	faxAcceptedNotification  = "Факс принят. Принтер сейчас недоступен или занят; распечатаем и уведомим вас."
-	faxFailedNotification    = "Факс не доставлен. Проверьте принтер и отправьте факс ещё раз."
+	defaultFaxTimezone             = "Europe/Minsk"
+	faxDeliveredNotification       = "Факс доставлен."
+	faxAcceptedNotification        = "Факс принят. Принтер сейчас недоступен или занят; распечатаем и уведомим вас."
+	faxFailedNotification          = "Факс не доставлен. Проверьте принтер и отправьте факс ещё раз."
+	unsupportedContentNotification = "Поддерживаются только текстовые сообщения. Голосовые сообщения, фото, видео и другие медиафайлы не поддерживаются."
 )
 
 type FlushReport struct {
@@ -146,7 +149,7 @@ func NewService(
 		clock:            clock,
 		queueStore:       newMemoryQueueStore(clock),
 		printCoordinator: printcoord.New(),
-		location:         time.Local,
+		location:         defaultFaxLocation(),
 		retryDelay:       5 * time.Second,
 		queueRetryDelay:  time.Minute,
 		connectionOwners: make(map[string]int64),
@@ -245,10 +248,6 @@ func (s *Service) processBusinessMessage(ctx context.Context, message Message) (
 	if message.From == nil || message.From.IsBot {
 		return enqueueResult{}, nil
 	}
-	photo, hasPhoto := bestPhotoSize(message.Photo)
-	if strings.TrimSpace(message.Text) == "" && !hasPhoto {
-		return enqueueResult{}, nil
-	}
 	if len(s.config.AllowedSenderIDs) > 0 && !s.config.AllowedSenderIDs.Contains(message.From.ID) {
 		return enqueueResult{}, nil
 	}
@@ -262,15 +261,9 @@ func (s *Service) processBusinessMessage(ctx context.Context, message Message) (
 	if message.From.ID == ownerID {
 		return enqueueResult{}, nil
 	}
-	if hasPhoto {
-		return s.enqueueMessage(ctx, QueueItem{
-			DedupeKey:       businessDedupeKey(message),
-			Source:          "telegram_business",
-			ContentType:     "photo",
-			Message:         message,
-			BusinessOwnerID: ownerID,
-			Photo:           photo,
-		})
+	if strings.TrimSpace(message.Text) == "" {
+		s.notifyUnsupportedContent(ctx, message, "telegram_business")
+		return enqueueResult{}, nil
 	}
 	return s.enqueueMessage(ctx, QueueItem{
 		DedupeKey:       businessDedupeKey(message),
@@ -288,22 +281,13 @@ func (s *Service) processDirectMessage(ctx context.Context, message Message) (en
 	if message.Chat == nil || message.Chat.Type != "private" {
 		return enqueueResult{}, nil
 	}
-	photo, hasPhoto := bestPhotoSize(message.Photo)
 	text := strings.TrimSpace(message.Text)
-	if text == "" && !hasPhoto {
+	if text == "" {
+		s.notifyUnsupportedContent(ctx, message, "telegram_bot_direct")
 		return enqueueResult{}, nil
 	}
 	if strings.HasPrefix(text, "/") {
 		return enqueueResult{}, nil
-	}
-	if hasPhoto {
-		return s.enqueueMessage(ctx, QueueItem{
-			DedupeKey:   directDedupeKey(message),
-			Source:      "telegram_bot_direct",
-			ContentType: "photo",
-			Message:     message,
-			Photo:       photo,
-		})
 	}
 	return s.enqueueMessage(ctx, QueueItem{
 		DedupeKey:   directDedupeKey(message),
@@ -489,6 +473,29 @@ func (s *Service) notifyQueueItem(ctx context.Context, item QueueItem, text stri
 	if err := s.client.SendMessage(ctx, request); err != nil {
 		s.logf("telegram fax notification failed: %v", err)
 	}
+}
+
+func (s *Service) notifyUnsupportedContent(ctx context.Context, message Message, source string) {
+	s.notifyQueueItem(ctx, QueueItem{
+		DedupeKey: messageDedupeKey(message, source),
+		Source:    source,
+		Message:   message,
+	}, unsupportedContentNotification)
+}
+
+func messageDedupeKey(message Message, source string) string {
+	if source == "telegram_business" {
+		return businessDedupeKey(message)
+	}
+	return directDedupeKey(message)
+}
+
+func defaultFaxLocation() *time.Location {
+	location, err := time.LoadLocation(defaultFaxTimezone)
+	if err != nil {
+		return time.FixedZone(defaultFaxTimezone, 3*60*60)
+	}
+	return location
 }
 
 func sendMessageRequestForQueueItem(item QueueItem, text string) (SendMessageRequest, bool) {
