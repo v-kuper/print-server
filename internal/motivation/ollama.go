@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"atol-server/internal/dailyquest"
@@ -27,6 +28,10 @@ type Provider interface {
 
 type OllamaProvider struct {
 	Client *http.Client
+
+	adviceMu               sync.Mutex
+	previousWeatherAdvice  string
+	previousCalendarAdvice string
 }
 
 type ollamaChatRequest struct {
@@ -56,17 +61,17 @@ var quoteOptions = ollamaOptions{
 }
 
 var weatherAdviceOptions = ollamaOptions{
-	Temperature:   0.68,
-	TopP:          0.86,
-	RepeatPenalty: 1.08,
-	RepeatLastN:   96,
+	Temperature:   0.82,
+	TopP:          0.9,
+	RepeatPenalty: 1.16,
+	RepeatLastN:   160,
 }
 
 var calendarAdviceOptions = ollamaOptions{
-	Temperature:   0.55,
-	TopP:          0.82,
-	RepeatPenalty: 1.12,
-	RepeatLastN:   96,
+	Temperature:   0.76,
+	TopP:          0.88,
+	RepeatPenalty: 1.16,
+	RepeatLastN:   160,
 }
 
 var newsTranslationOptions = ollamaOptions{
@@ -99,18 +104,20 @@ func (p *OllamaProvider) Generate(ctx context.Context, settings Settings) (Quote
 }
 
 func (p *OllamaProvider) GenerateWeatherAdvice(ctx context.Context, settings Settings, weather WeatherContext) (WeatherAdvice, error) {
-	text, err := p.generateWithPrompt(ctx, settings, weatherAdvicePrompt(weather), weatherAdviceOptions)
+	text, err := p.generateWithPrompt(ctx, settings, weatherAdvicePrompt(weather, p.lastWeatherAdvice()), weatherAdviceOptions)
 	if err != nil {
 		return WeatherAdvice{}, err
 	}
+	p.rememberWeatherAdvice(text)
 	return WeatherAdvice{Text: text}, nil
 }
 
 func (p *OllamaProvider) GenerateCalendarAdvice(ctx context.Context, settings Settings, calendar CalendarContext) (CalendarAdvice, error) {
-	text, err := p.generateWithPrompt(ctx, settings, calendarAdvicePrompt(calendar), calendarAdviceOptions)
+	text, err := p.generateWithPrompt(ctx, settings, calendarAdvicePrompt(calendar, p.lastCalendarAdvice()), calendarAdviceOptions)
 	if err != nil {
 		return CalendarAdvice{}, err
 	}
+	p.rememberCalendarAdvice(text)
 	return CalendarAdvice{Text: text}, nil
 }
 
@@ -205,6 +212,34 @@ func quotePrompt(settings Settings) string {
 	}
 	prompt += "\nВариант генерации: " + time.Now().UTC().Format(time.RFC3339Nano) + ". Не печатай этот служебный маркер."
 	return strings.TrimSpace(prompt)
+}
+
+func generationVariantInstruction() string {
+	return "Вариант генерации: " + time.Now().UTC().Format(time.RFC3339Nano) + ". Не печатай этот служебный маркер."
+}
+
+func (p *OllamaProvider) lastWeatherAdvice() string {
+	p.adviceMu.Lock()
+	defer p.adviceMu.Unlock()
+	return p.previousWeatherAdvice
+}
+
+func (p *OllamaProvider) rememberWeatherAdvice(value string) {
+	p.adviceMu.Lock()
+	defer p.adviceMu.Unlock()
+	p.previousWeatherAdvice = sanitizeQuote(value)
+}
+
+func (p *OllamaProvider) lastCalendarAdvice() string {
+	p.adviceMu.Lock()
+	defer p.adviceMu.Unlock()
+	return p.previousCalendarAdvice
+}
+
+func (p *OllamaProvider) rememberCalendarAdvice(value string) {
+	p.adviceMu.Lock()
+	defer p.adviceMu.Unlock()
+	p.previousCalendarAdvice = sanitizeQuote(value)
 }
 
 func (p *OllamaProvider) client() *http.Client {

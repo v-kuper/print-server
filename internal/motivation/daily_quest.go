@@ -10,9 +10,9 @@ import (
 )
 
 var dailyQuestOptions = ollamaOptions{
-	Temperature:   0.72,
-	TopP:          0.86,
-	RepeatPenalty: 1.08,
+	Temperature:   0.8,
+	TopP:          0.9,
+	RepeatPenalty: 1.14,
 	RepeatLastN:   128,
 }
 
@@ -52,6 +52,7 @@ func dailyQuestPrompt(quests []dailyquest.Quest) string {
 	return strings.TrimSpace(`Квест на день.
 Переформулируй выбранные квесты коротко, живо и по-русски для печати на кассовой ленте.
 Сохрани смысл и ограничения каждого ID.
+Сделай формулировки разными по ритму и началу; не добавляй одинаковые мотивационные вводные.
 Constraints: free, solo-friendly, doable today, safe/respectful.
 Не добавляй траты, покупки, опасные задания, давление на незнакомых людей или моральные оценки.
 Ответ строго JSON-массивом без markdown: [{"id":7,"text":"..."},{"id":21,"text":"..."},{"id":48,"text":"..."}]

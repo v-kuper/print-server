@@ -95,10 +95,13 @@ func TestOllamaProviderGeneratesDailyQuestsFromSelectedIDs(t *testing.T) {
 	}
 
 	prompt := requestPayload.Messages[0].Content
-	for _, want := range []string{"Квест на день", `"id":7`, `"id":21`, `"id":48`, "free", "solo-friendly", "safe/respectful"} {
+	for _, want := range []string{"Квест на день", `"id":7`, `"id":21`, `"id":48`, "free", "solo-friendly", "safe/respectful", "разными по ритму и началу"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("expected daily quest prompt to contain %q, got %s", want, prompt)
 		}
+	}
+	if requestPayload.Options.Temperature < 0.78 || requestPayload.Options.RepeatPenalty < 1.12 {
+		t.Fatalf("expected varied daily quest sampling options, got %#v", requestPayload.Options)
 	}
 	if len(quests) != 3 || quests[0].ID != 7 || !strings.Contains(quests[0].Text, "карту") {
 		t.Fatalf("unexpected daily quests: %#v", quests)
@@ -197,19 +200,23 @@ func TestOllamaProviderBuildsWeatherAdvicePrompt(t *testing.T) {
 		"Ближайшие часы",
 		"20:00",
 		"осадки 60%",
-		"практичный совет",
+		"семейной прогулке",
+		"пользователь, его жена и их собака",
+		"джек-рассел",
+		"Бонни",
+		"как близкий человек сказал бы дома",
+		"выбери один",
+		"меняй ракурс",
+		"Вариант генерации:",
 		"Опирайся только на эти данные",
 		"Не выдумывай",
 		"не противоречит погоде",
-		"милый вердикт",
 		"не повторяй цифры",
 		"не начинай с состояния погоды",
-		"собака-девочка породы джек-рассел",
-		"Бонни",
-		"сейчас они идут гулять",
-		"общий совет или мягкое напоминание",
-		"не упоминай имя Бонни",
-		"не упоминай породу",
+		"не перечисляй членов семьи",
+		"Не упоминай детей",
+		"променад",
+		"не спеша",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("expected weather prompt to contain %q, got %q", want, prompt)
@@ -220,13 +227,49 @@ func TestOllamaProviderBuildsWeatherAdvicePrompt(t *testing.T) {
 		"полотенце",
 		"вытереть лапы",
 		"короткий маршрут",
+		"милый вердикт",
+		"насколько спокойно идти",
+		"общий совет или мягкое напоминание",
 	} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("expected weather prompt not to prescribe %q, got %q", unwanted, prompt)
 		}
 	}
-	if requestPayload.Options.Temperature >= requestPayload.Options.TopP {
-		t.Fatalf("expected grounded weather advice options, got %#v", requestPayload.Options)
+	if requestPayload.Options.Temperature < 0.78 || requestPayload.Options.Temperature >= requestPayload.Options.TopP || requestPayload.Options.RepeatPenalty < 1.12 {
+		t.Fatalf("expected varied but grounded weather advice options, got %#v", requestPayload.Options)
+	}
+}
+
+func TestOllamaProviderAvoidsRepeatingPreviousWeatherAdvice(t *testing.T) {
+	var prompts []string
+	responses := []string{
+		"После дождя лучше обойти глубокие лужи — Бонни наверняка захочет проверить каждую.",
+		"Ветер заметный, так что открытый маршрут сегодня можно заменить дворами.",
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var requestPayload ollamaChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&requestPayload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		prompts = append(prompts, requestPayload.Messages[0].Content)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"` + responses[len(prompts)-1] + `"}}`))
+	}))
+	defer server.Close()
+
+	provider := NewOllamaProvider(server.Client())
+	settings := Settings{Enabled: true, BaseURL: server.URL, Model: "gemma4:31b-cloud"}
+	weather := WeatherContext{Condition: "Дождь", TemperatureC: 12, WindSpeedMs: ptrFloat(7)}
+
+	if _, err := provider.GenerateWeatherAdvice(context.Background(), settings, weather); err != nil {
+		t.Fatalf("generate first weather advice: %v", err)
+	}
+	if _, err := provider.GenerateWeatherAdvice(context.Background(), settings, weather); err != nil {
+		t.Fatalf("generate second weather advice: %v", err)
+	}
+
+	if len(prompts) != 2 || !strings.Contains(prompts[1], responses[0]) || !strings.Contains(prompts[1], "не повторяй") {
+		t.Fatalf("expected second prompt to reject the previous weather advice, got %#v", prompts)
 	}
 }
 
@@ -282,30 +325,66 @@ func TestOllamaProviderBuildsCalendarAdvicePrompt(t *testing.T) {
 		"Синк по релизу",
 		"Завтра",
 		"Планирование",
-		"конструктивную рекомендацию",
-		"спокойный и деловой",
-		"без слащавой поддержки",
-		"без гипербол",
-		"Оцени загрузку по фактам",
-		"Если день перегружен",
-		"Если загрузка умеренная или низкая",
-		"Если событий нет",
-		"не советуй отдых ради отдыха",
+		"живой комментарий",
+		"как близкий человек помогает быстро сориентироваться",
+		"выбери один",
+		"Не начинай каждый ответ с оценки загруженности",
+		"Меняй структуру",
+		"Вариант генерации:",
 		"Не выдумывай",
 		"1-2 короткие строки",
-		"без markdown",
+		"Без markdown",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("expected calendar prompt to contain %q, got %q", want, prompt)
 		}
 	}
-	for _, unwanted := range []string{"милый", "бодрый"} {
+	for _, unwanted := range []string{"милый", "бодрый", "оценка нагрузки + действие", "Если день перегружен или встречи идут плотно"} {
 		if strings.Contains(prompt, unwanted) {
 			t.Fatalf("expected calendar prompt to avoid %q, got %q", unwanted, prompt)
 		}
 	}
-	if requestPayload.Options.Temperature > 0.6 || requestPayload.Options.TopP > 0.84 || requestPayload.Options.RepeatPenalty < 1.1 {
-		t.Fatalf("expected grounded calendar advice options, got %#v", requestPayload.Options)
+	if requestPayload.Options.Temperature < 0.72 || requestPayload.Options.Temperature >= requestPayload.Options.TopP || requestPayload.Options.RepeatPenalty < 1.12 {
+		t.Fatalf("expected varied but grounded calendar advice options, got %#v", requestPayload.Options)
+	}
+}
+
+func TestOllamaProviderAvoidsRepeatingPreviousCalendarAdvice(t *testing.T) {
+	var prompts []string
+	responses := []string{
+		"Перед планированием набросай три вопроса — утром останется только открыть заметку.",
+		"После синка сразу запиши решение, чтобы не возвращаться к нему вечером.",
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var requestPayload ollamaChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&requestPayload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		prompts = append(prompts, requestPayload.Messages[0].Content)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"` + responses[len(prompts)-1] + `"}}`))
+	}))
+	defer server.Close()
+
+	provider := NewOllamaProvider(server.Client())
+	settings := Settings{Enabled: true, BaseURL: server.URL, Model: "gemma4:31b-cloud"}
+	calendar := CalendarContext{
+		GeneratedAt: time.Date(2026, 5, 25, 15, 30, 0, 0, time.UTC),
+		Sections: []CalendarSectionContext{{
+			Title:  "Сегодня",
+			Events: []CalendarEventContext{{TimeLabel: "16:00", Title: "Синк"}},
+		}},
+	}
+
+	if _, err := provider.GenerateCalendarAdvice(context.Background(), settings, calendar); err != nil {
+		t.Fatalf("generate first calendar advice: %v", err)
+	}
+	if _, err := provider.GenerateCalendarAdvice(context.Background(), settings, calendar); err != nil {
+		t.Fatalf("generate second calendar advice: %v", err)
+	}
+
+	if len(prompts) != 2 || !strings.Contains(prompts[1], responses[0]) || !strings.Contains(prompts[1], "не повторяй") {
+		t.Fatalf("expected second prompt to reject the previous calendar advice, got %#v", prompts)
 	}
 }
 
